@@ -1,0 +1,9 @@
+torch
+transformers
+yfinance
+pandas
+matplotlib
+seaborn
+scipy
+pygooglenews
+chronos-forecasting
