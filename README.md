@@ -1,16 +1,18 @@
-# 🤖 Memento AI Agent
+# 🤖 Stock Expert AI Agent
 
-> **Memento Paper 기반의 MCP Agent 시스템**  
-> 과거 성공 경험을 Vector DB로 저장하고, 유사 작업 시 참조하여 더 나은 계획을 세웁니다.
+> **AI 기반 주식 전문가 에이전트**  
+> Chronos + FinBERT 멀티모달 분석, 기술적/기본적 분석, 실시간 데이터
 
 ---
 
 ## ✨ Features
 
-- **Memory-Augmented Planning**: 과거 성공 trajectory를 벡터 검색으로 참조
-- **MCP Protocol**: Tool 호출 표준화 (Search, Crawl, Code, Math, Stock 등)
-- **Multi-LLM Support**: Gemini (무료) 또는 OpenAI 선택 가능
-- **Stock Analysis**: Chronos + FinBERT 기반 주가 예측 도구 통합
+- 📊 **Technical Analysis**: RSI, MACD, Bollinger Bands, Moving Averages
+- 📈 **Fundamental Analysis**: PER, PBR, ROE, EPS, 재무제표
+- 🤖 **AI Prediction**: Chronos 시계열 + FinBERT 감성 분석
+- 📰 **Real-time News**: 종목별 뉴스 및 시장 동향
+- ⚖️ **Stock Comparison**: 다중 종목 비교 분석
+- 🏭 **Sector Analysis**: 업종별 분석 (반도체, 2차전지, 바이오 등)
 
 ---
 
@@ -18,60 +20,59 @@
 
 ```
 agent/
-├── main.py              # Entry Point
-├── README.md
-├── .gitignore
+├── main.py
+├── requirements.txt
 ├── .env.example
 └── src/
-    ├── agent_client.py      # Main Agent (LLM + Memory + MCP)
-    ├── mcp_server.py        # MCP Tool Server
-    ├── memory_store.py      # Vector-based Memory Store
-    ├── stock_tool.py        # Stock Analysis Wrapper
-    ├── requirements.txt
-    └── stock-price-predictor/  # AI Stock Predictor
+    ├── agent_client.py          # Stock Expert Agent
+    ├── mcp_server.py             # MCP Tool Server
+    ├── memory_store.py           # Memory Store
+    └── tools/
+        ├── stock/                # 📈 Stock Analysis Tools
+        │   ├── price.py          # 실시간 주가
+        │   ├── chart.py          # 차트 데이터
+        │   ├── financials.py     # 재무제표
+        │   ├── news.py           # 뉴스
+        │   ├── technical.py      # 기술적 분석
+        │   ├── compare.py        # 종목 비교
+        │   ├── sector.py         # 섹터 분석
+        │   └── predictor.py      # AI 예측
+        ├── search.py, crawl.py   # 유틸리티
+        └── ...
 ```
 
 ---
 
 ## 🚀 Quick Start
 
-### 1. Setup
 ```bash
-cd src
-python -m venv venv
-source venv/bin/activate
+# Setup
+python -m venv venv && source venv/bin/activate
 pip install -r requirements.txt
-playwright install chromium
-```
 
-### 2. Configure API Key
-```bash
-# 루트에 .env 파일 생성
-echo "GEMINI_API_KEY=your-api-key-here" > .env
-```
+# Configure API Key
+echo "GEMINI_API_KEY=your-key" > .env
 
-### 3. Run Agent
-```bash
-python main.py "AI 뉴스 찾아줘"
-python main.py "삼성전자 주가 분석해줘"
-python main.py "NVDA 주가 예측해줘"
+# Run Stock Expert
+python main.py "삼성전자 분석해줘"
+python main.py "NVDA 기술적 분석"
+python main.py "반도체 섹터 분석"
 ```
 
 ---
 
-## 🛠️ Available Tools
+## 📈 Available Stock Tools
 
 | Tool | Description |
 |------|-------------|
-| `search_web` | 웹 검색 |
-| `crawl_url` | URL 크롤링 (Playwright) |
-| `search_video` | 동영상 검색 |
-| `process_image` | 이미지 생성/분석 |
-| `execute_python` | Python 코드 실행 |
-| `calculate_math` | 수학 계산 |
-| `read_document` | 문서 읽기 |
-| `save_feedback` | 메모리에 저장 |
-| `analyze_stock` | 📈 주가 분석 (AI) |
+| `stock_price` | 실시간 주가, 등락률, 거래량 |
+| `stock_chart` | OHLCV 차트 데이터 |
+| `stock_financials` | PER, PBR, ROE, 배당 등 |
+| `stock_news` | 종목/시장 뉴스 |
+| `stock_technical` | RSI, MACD, 볼린저밴드, MA |
+| `stock_compare` | 다중 종목 비교 |
+| `stock_sector` | 섹터별 분석 |
+| `stock_ai_predict` | AI 예측 (Chronos + FinBERT) |
 
 ---
 
@@ -79,13 +80,18 @@ python main.py "NVDA 주가 예측해줘"
 
 | Variable | Description |
 |----------|-------------|
-| `GEMINI_API_KEY` | Gemini API 키 (기본) |
+| `GEMINI_API_KEY` | Gemini API 키 |
 | `OPENAI_API_KEY` | OpenAI API 키 (선택) |
-| `LLM_PROVIDER` | `gemini` 또는 `openai` |
 
 ---
 
 ## 📚 References
 
-- [Memento Paper](https://arxiv.org/abs/2401.08017) - Fine-tuning LLM Agents without Fine-tuning LLMs
-- [MCP Protocol](https://modelcontextprotocol.io) - Model Context Protocol
+- [Memento Paper](https://arxiv.org/abs/2401.08017)
+- [MCP Protocol](https://modelcontextprotocol.io)
+- [Chronos Forecasting](https://github.com/amazon-science/chronos-forecasting)
+- [FinBERT](https://huggingface.co/ProsusAI/finbert)
+
+---
+
+⚠️ **Disclaimer**: 본 시스템의 분석은 참고용이며, 투자 결정은 본인 책임입니다.
