@@ -3,10 +3,17 @@ Memento MCP Server - Stock Expert Edition
 
 This server exposes professional stock analysis tools via MCP protocol.
 """
+import sys
+import os
+
+# Add src directory to path for imports when running as script
+SRC_DIR = os.path.dirname(os.path.abspath(__file__))
+sys.path.insert(0, SRC_DIR)
+
 from mcp.server.fastmcp import FastMCP
 
 # Stock Tools
-from .tools.stock import (
+from tools.stock import (
     get_stock_price,
     get_stock_chart,
     get_financials,
@@ -18,7 +25,7 @@ from .tools.stock import (
 )
 
 # Utility Tools
-from .tools import (
+from tools import (
     search_web,
     crawl_url,
     execute_python,

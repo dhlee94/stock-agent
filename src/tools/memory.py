@@ -2,7 +2,15 @@
 Memory Tool - Trajectory saving for Memento architecture
 """
 import json
-from ..memory_store import MemoryStore
+import sys
+import os
+
+# Add parent directories to path
+TOOLS_DIR = os.path.dirname(os.path.abspath(__file__))
+SRC_DIR = os.path.dirname(TOOLS_DIR)
+sys.path.insert(0, SRC_DIR)
+
+from memory_store import MemoryStore
 
 # Shared memory store instance
 _memory_store = None
