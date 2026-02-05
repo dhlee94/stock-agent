@@ -13,7 +13,7 @@ from mcp import ClientSession, StdioServerParameters
 from mcp.client.stdio import stdio_client
 from .memory_store import MemoryStore
 
-# Provider selection: "gemini" (default, free) or "openai"
+# Provider selection: "gemini" (default, free), "openai", or "groq"
 LLM_PROVIDER = os.environ.get("LLM_PROVIDER", "gemini").lower()
 MOCK_MODE = False
 LAST_API_CALL = 0  # Rate limiting
@@ -32,6 +32,12 @@ elif LLM_PROVIDER == "openai":
         MOCK_MODE = True
     else:
         from openai import OpenAI
+elif LLM_PROVIDER == "groq":
+    GROQ_API_KEY = os.environ.get("GROQ_API_KEY")
+    if not GROQ_API_KEY:
+        MOCK_MODE = True
+    else:
+        from groq import Groq
 
 class MockLLM:
     """A simple mock LLM for demo purposes when no API key is set."""
@@ -57,6 +63,9 @@ class MementoAgent:
         elif LLM_PROVIDER == "openai":
             print("[Agent] Using OpenAI GPT-4o.")
             self.client = OpenAI()
+        elif LLM_PROVIDER == "groq":
+            print("[Agent] Using Groq Llama 3.3 70B (fast inference).")
+            self.client = Groq(api_key=GROQ_API_KEY)
         else:
             print("[Agent] Using Gemini 2.0 Flash (free tier).")
             self.model = genai.GenerativeModel('gemini-2.0-flash')
@@ -66,10 +75,15 @@ class MementoAgent:
         if MOCK_MODE:
             return self.llm.chat(messages)
         
-        # Rate limiting: wait at least 7 seconds between calls (max ~8-9 req/min)
+        # Rate limiting: Groq is fast, less limiting needed
+        if LLM_PROVIDER == "groq":
+            min_wait = 1  # Groq is fast
+        else:
+            min_wait = 7  # Gemini/OpenAI need more spacing
+        
         elapsed = time.time() - LAST_API_CALL
-        if elapsed < 7:
-            wait_time = 7 - elapsed
+        if elapsed < min_wait:
+            wait_time = min_wait - elapsed
             print(f"   ⏳ Rate limiting: waiting {wait_time:.1f}s...")
             time.sleep(wait_time)
         LAST_API_CALL = time.time()
@@ -79,6 +93,14 @@ class MementoAgent:
                 model="gpt-4o",
                 messages=messages,
                 temperature=0.7
+            )
+            return response.choices[0].message.content
+        elif LLM_PROVIDER == "groq":
+            response = self.client.chat.completions.create(
+                model="llama-3.3-70b-versatile",
+                messages=messages,
+                temperature=0.7,
+                max_tokens=4096
             )
             return response.choices[0].message.content
         else:

@@ -98,8 +98,10 @@ agent/
 
 | Variable | Description |
 |----------|-------------|
-| `GEMINI_API_KEY` | Gemini API 키 |
-| `OPENAI_API_KEY` | OpenAI API 키 (선택) |
+| `LLM_PROVIDER` | `gemini` (기본), `openai`, 또는 `groq` |
+| `GEMINI_API_KEY` | Gemini API 키 (무료) |
+| `OPENAI_API_KEY` | OpenAI API 키 (유료) |
+| `GROQ_API_KEY` | Groq API 키 (무료, Llama 3.3 70B) |
 
 ---
 
