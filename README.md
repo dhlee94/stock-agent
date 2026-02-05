@@ -17,15 +17,18 @@
 ## 📂 Project Structure
 
 ```
-Agents/
-├── agent_client.py      # Main Agent (LLM + Memory + MCP)
-├── mcp_server.py        # MCP Tool Server
-├── memory_store.py      # Vector-based Memory Store
-├── stock_tool.py        # Stock Analysis Wrapper
-├── stock-price-predictor/  # Submodule: AI Stock Predictor
-├── requirements.txt
-├── .env                 # API Keys (gitignored)
-└── run_demo.sh          # Quick Start Script
+agent/
+├── main.py              # Entry Point
+├── README.md
+├── .gitignore
+├── .env.example
+└── src/
+    ├── agent_client.py      # Main Agent (LLM + Memory + MCP)
+    ├── mcp_server.py        # MCP Tool Server
+    ├── memory_store.py      # Vector-based Memory Store
+    ├── stock_tool.py        # Stock Analysis Wrapper
+    ├── requirements.txt
+    └── stock-price-predictor/  # AI Stock Predictor
 ```
 
 ---
@@ -34,6 +37,7 @@ Agents/
 
 ### 1. Setup
 ```bash
+cd src
 python -m venv venv
 source venv/bin/activate
 pip install -r requirements.txt
@@ -42,15 +46,15 @@ playwright install chromium
 
 ### 2. Configure API Key
 ```bash
-# .env 파일 생성
+# 루트에 .env 파일 생성
 echo "GEMINI_API_KEY=your-api-key-here" > .env
 ```
 
 ### 3. Run Agent
 ```bash
-python agent_client.py "AI 뉴스 찾아줘"
-python agent_client.py "삼성전자 주가 분석해줘"
-python agent_client.py "NVDA 주가 예측해줘"
+python main.py "AI 뉴스 찾아줘"
+python main.py "삼성전자 주가 분석해줘"
+python main.py "NVDA 주가 예측해줘"
 ```
 
 ---
@@ -71,17 +75,6 @@ python agent_client.py "NVDA 주가 예측해줘"
 
 ---
 
-## 📈 Stock Analysis
-
-`analyze_stock` 도구는 다음을 반환합니다:
-- **Current Price**: 현재 주가
-- **AI Score**: 0~1 (높을수록 상승 가능성)
-- **Sentiment**: Bullish / Bearish
-- **Recommendation**: STRONG BUY / BUY / HOLD / SELL / STRONG SELL
-- **Top News**: 최신 관련 뉴스
-
----
-
 ## 🔧 Environment Variables
 
 | Variable | Description |
@@ -96,5 +89,3 @@ python agent_client.py "NVDA 주가 예측해줘"
 
 - [Memento Paper](https://arxiv.org/abs/2401.08017) - Fine-tuning LLM Agents without Fine-tuning LLMs
 - [MCP Protocol](https://modelcontextprotocol.io) - Model Context Protocol
-- [Chronos](https://github.com/amazon-science/chronos-forecasting) - Time Series Forecasting
-- [FinBERT](https://huggingface.co/ProsusAI/finbert) - Financial Sentiment Analysis

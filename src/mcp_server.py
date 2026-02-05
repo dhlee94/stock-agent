@@ -3,7 +3,7 @@ from playwright.sync_api import sync_playwright
 import json
 import os
 import math
-from memory_store import MemoryStore
+from .memory_store import MemoryStore
 
 # Initialize Server
 mcp = FastMCP("Memento Agent Tools")
@@ -201,7 +201,7 @@ def analyze_stock(ticker: str, name: str, market: str = "KR") -> str:
     """
     print(f"📈 [Stock] Analyzing: {name} ({ticker}) in {market} market")
     try:
-        from stock_tool import analyze_stock as _analyze
+        from .stock_tool import analyze_stock as _analyze
         result = _analyze(ticker, name, market)
         return json.dumps(result, ensure_ascii=False)
     except Exception as e:

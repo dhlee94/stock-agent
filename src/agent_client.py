@@ -6,12 +6,12 @@ import time
 from typing import List, Dict, Any
 from dotenv import load_dotenv
 
-# Load .env file
-load_dotenv()
+# Load .env file from project root
+load_dotenv(os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), ".env"))
 
 from mcp import ClientSession, StdioServerParameters
 from mcp.client.stdio import stdio_client
-from memory_store import MemoryStore
+from .memory_store import MemoryStore
 
 # Provider selection: "gemini" (default, free) or "openai"
 LLM_PROVIDER = os.environ.get("LLM_PROVIDER", "gemini").lower()
