@@ -11,8 +11,41 @@
 - 📈 **Fundamental Analysis**: PER, PBR, ROE, EPS, 재무제표
 - 🤖 **AI Prediction**: Chronos 시계열 + FinBERT 감성 분석
 - 📰 **Real-time News**: 종목별 뉴스 및 시장 동향
-- ⚖️ **Stock Comparison**: 다중 종목 비교 분석
-- 🏭 **Sector Analysis**: 업종별 분석 (반도체, 2차전지, 바이오 등)
+- 📱 **Web Dashboard**: 모바일/PC 접속 가능한 웹 UI
+
+---
+
+## 🚀 Quick Start
+
+### 1. Setup
+```bash
+python -m venv venv
+source venv/bin/activate   # Mac/Linux
+pip install -r requirements.txt
+```
+
+### 2. Configure API Key
+```bash
+echo "GEMINI_API_KEY=your-key" > .env
+```
+
+### 3. Run (택 1)
+
+#### 📱 웹 대시보드 (추천)
+```bash
+source venv/bin/activate
+python src/web/app.py
+```
+**접속**: http://localhost:8000
+
+**핸드폰 접속**: 같은 WiFi에서 `http://<맥IP주소>:8000`
+
+#### 💻 CLI Agent
+```bash
+source venv/bin/activate
+python main.py "삼성전자 분석해줘"
+python main.py "NVDA 앞으로 전망 어때?"
+```
 
 ---
 
@@ -20,43 +53,28 @@
 
 ```
 agent/
-├── main.py
+├── main.py                   # CLI 진입점
 ├── requirements.txt
-├── .env.example
+├── .env                      # API 키 (직접 생성)
 └── src/
-    ├── agent_client.py          # Stock Expert Agent
-    ├── mcp_server.py             # MCP Tool Server
-    ├── memory_store.py           # Memory Store
+    ├── agent_client.py       # Stock Expert Agent
+    ├── mcp_server.py         # MCP Tool Server
+    ├── memory_store.py       # Memory Store
+    ├── web/                  # 📱 웹 대시보드
+    │   ├── app.py            # FastAPI 서버
+    │   ├── templates/        # HTML
+    │   └── static/           # CSS
     └── tools/
-        ├── stock/                # 📈 Stock Analysis Tools
-        │   ├── price.py          # 실시간 주가
-        │   ├── chart.py          # 차트 데이터
-        │   ├── financials.py     # 재무제표
-        │   ├── news.py           # 뉴스
-        │   ├── technical.py      # 기술적 분석
-        │   ├── compare.py        # 종목 비교
-        │   ├── sector.py         # 섹터 분석
-        │   └── predictor.py      # AI 예측
-        ├── search.py, crawl.py   # 유틸리티
-        └── ...
-```
-
----
-
-## 🚀 Quick Start
-
-```bash
-# Setup
-python -m venv venv && source venv/bin/activate
-pip install -r requirements.txt
-
-# Configure API Key
-echo "GEMINI_API_KEY=your-key" > .env
-
-# Run Stock Expert
-python main.py "삼성전자 분석해줘"
-python main.py "NVDA 기술적 분석"
-python main.py "반도체 섹터 분석"
+        ├── stock/            # 📈 Stock Tools
+        │   ├── price.py      # 실시간 주가
+        │   ├── chart.py      # 차트 데이터
+        │   ├── financials.py # 재무제표
+        │   ├── news.py       # 뉴스
+        │   ├── technical.py  # 기술적 분석
+        │   ├── compare.py    # 종목 비교
+        │   ├── sector.py     # 섹터 분석
+        │   └── predictor.py  # AI 예측
+        └── ...               # 유틸리티
 ```
 
 ---
