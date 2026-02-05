@@ -1,5 +1,6 @@
 <!DOCTYPE html>
 <html lang="ko">
+
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
@@ -7,6 +8,7 @@
     <link rel="stylesheet" href="/static/style.css">
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
 </head>
+
 <body>
     <div class="container">
         <!-- Header -->
@@ -59,6 +61,14 @@
                 </div>
             </div>
 
+            <!-- Forecast Chart Card -->
+            <div class="card chart-card">
+                <h3>📉 AI 주가 예측 (30일)</h3>
+                <div class="chart-container">
+                    <canvas id="forecastChart"></canvas>
+                </div>
+            </div>
+
             <!-- Technical Analysis Card -->
             <div class="card tech-card">
                 <h3>📊 기술적 분석</h3>
@@ -84,7 +94,7 @@
 
             <!-- AI Prediction Card -->
             <div class="card ai-card">
-                <h3>🤖 AI 전망</h3>
+                <h3>🤖 AI 분석 요약</h3>
                 <div id="aiResult" class="ai-result">
                     <p>AI 분석 결과가 여기에 표시됩니다.</p>
                 </div>
@@ -105,7 +115,12 @@
         </footer>
     </div>
 
+    <!-- Chart.js -->
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+
     <script>
+        let chartInstance = null;
+
         // Quick pick buttons
         function quickPick(ticker, name, market) {
             document.getElementById('ticker').value = ticker;
@@ -117,28 +132,27 @@
         // Form submission
         document.getElementById('searchForm').addEventListener('submit', async (e) => {
             e.preventDefault();
-            
+
             const ticker = document.getElementById('ticker').value;
             const name = document.getElementById('name').value;
             const market = document.querySelector('input[name="market"]:checked').value;
-            
+
             // Show loading
             document.getElementById('loading').classList.remove('hidden');
             document.getElementById('results').classList.add('hidden');
-            
+
             try {
-                // Fetch analysis
                 const formData = new FormData();
                 formData.append('ticker', ticker);
                 formData.append('name', name);
                 formData.append('market', market);
-                
+
                 const response = await fetch('/api/analyze', {
                     method: 'POST',
                     body: formData
                 });
                 const data = await response.json();
-                
+
                 if (data.status === 'success') {
                     displayResults(data, market);
                 } else {
@@ -156,96 +170,153 @@
             const currency = market === 'US' ? '$' : '₩';
             const price = data.price;
             const tech = data.technical;
-            
-            // Price
+            const ai = data.ai_prediction;
+
+            // Price info
             document.getElementById('stockName').textContent = `${data.name} (${data.ticker})`;
             document.getElementById('currentPrice').textContent = currency + formatNumber(price.current_price);
-            
             const changeEl = document.getElementById('priceChange');
             const change = price.change_percent;
             changeEl.textContent = (change >= 0 ? '+' : '') + change.toFixed(2) + '%';
             changeEl.className = 'change ' + (change >= 0 ? 'up' : 'down');
-            
             document.getElementById('dayHigh').textContent = currency + formatNumber(price.day_high);
             document.getElementById('dayLow').textContent = currency + formatNumber(price.day_low);
             document.getElementById('volume').textContent = formatVolume(price.volume);
-            
+
+            // Render Chart
+            renderChart(price.chart_data, ai.forecast_data);
+
             // Technical
             if (tech.status === 'success') {
                 const indicators = tech.indicators;
-                
                 document.getElementById('rsiValue').textContent = indicators.rsi?.value || '-';
                 document.getElementById('rsiSignal').textContent = indicators.rsi?.signal || '-';
                 document.getElementById('rsiSignal').className = 'signal ' + getSignalClass(indicators.rsi?.signal);
-                
                 document.getElementById('macdValue').textContent = indicators.macd?.macd?.toFixed(2) || '-';
                 document.getElementById('macdSignal').textContent = indicators.macd?.trend || '-';
                 document.getElementById('macdSignal').className = 'signal ' + getSignalClass(indicators.macd?.trend);
-                
                 document.getElementById('bbValue').textContent = indicators.bollinger_bands?.position || '-';
                 document.getElementById('bbSignal').textContent = indicators.bollinger_bands?.signal || '-';
                 document.getElementById('bbSignal').className = 'signal ' + getSignalClass(indicators.bollinger_bands?.signal);
-                
                 const recEl = document.getElementById('recommendation');
                 recEl.textContent = tech.recommendation;
                 recEl.className = 'recommendation ' + getRecClass(tech.recommendation);
             }
-            
-            // AI Prediction
+
+            // AI Info
             const aiEl = document.getElementById('aiResult');
-            const ai = data.ai_prediction;
             if (ai.status === 'success') {
                 aiEl.innerHTML = `
                     <div class="ai-score">AI 점수: <b>${ai.ai_score || '-'}</b></div>
                     <div class="ai-sentiment">감성: <b>${ai.sentiment || '-'}</b></div>
-                    <div class="ai-forecast">예측: <b>${ai.forecast || '-'}</b></div>
+                    <div class="ai-forecast">예측(30일): <b>${ai.forecast || '-'}</b></div>
                     <div class="ai-recommendation">${ai.recommendation || '-'}</div>
                 `;
             } else {
-                aiEl.innerHTML = `<p class="ai-unavailable">AI 예측 모델 로딩 중...</p>`;
+                aiEl.innerHTML = `<p class="ai-unavailable">AI 데이터 없음 (${ai.message || ''})</p>`;
             }
-            
+
             // News
             const newsEl = document.getElementById('newsList');
             const news = data.news?.news || [];
-            if (news.length > 0) {
-                newsEl.innerHTML = news.map(n => 
-                    `<li><a href="${n.link}" target="_blank">${n.title}</a><span class="news-source">${n.publisher || ''}</span></li>`
-                ).join('');
-            } else {
-                newsEl.innerHTML = '<li>뉴스가 없습니다.</li>';
-            }
-            
+            newsEl.innerHTML = news.length ? news.map(n =>
+                `<li><a href="${n.link}" target="_blank">${n.title}</a><span class="news-source">${n.publisher || ''}</span></li>`
+            ).join('') : '<li>뉴스가 없습니다.</li>';
+
             document.getElementById('results').classList.remove('hidden');
         }
 
-        // Helpers
-        function formatNumber(num) {
-            if (!num) return '-';
-            return num.toLocaleString();
+        function renderChart(historyData, forecastData) {
+            const ctx = document.getElementById('forecastChart').getContext('2d');
+            if (chartInstance) chartInstance.destroy();
+
+            // Prepare data
+            // History: last 30 days
+            const labels = [];
+            const historicalPrices = [];
+
+            // If historical chart data is available in price object (needs modifying app.py to include history)
+            // For now, assuming price object has chart_data or we use forecast start
+
+            // Let's mix history and forecast
+            // Since we don't have full history in 'price' object yet, let's use forecastData only for now or mock history
+            // Actually, app.py should pass history. Let's fix app.py next.
+
+            // Placeholder logic assuming forecastData exists
+            if (!forecastData) return;
+
+            const predLabels = forecastData.map(d => d.date);
+            const predPrices = forecastData.map(d => d.price);
+            const lowerBound = forecastData.map(d => d.lower);
+            const upperBound = forecastData.map(d => d.upper);
+
+            chartInstance = new Chart(ctx, {
+                type: 'line',
+                data: {
+                    labels: predLabels,
+                    datasets: [
+                        {
+                            label: 'AI 예측 (중위값)',
+                            data: predPrices,
+                            borderColor: '#a855f7', // Purple
+                            borderDash: [5, 5],
+                            tension: 0.4,
+                            pointRadius: 0
+                        },
+                        {
+                            label: '신뢰구간 상한',
+                            data: upperBound,
+                            borderColor: 'transparent',
+                            backgroundColor: 'rgba(168, 85, 247, 0.1)',
+                            fill: '+1',
+                            pointRadius: 0
+                        },
+                        {
+                            label: '신뢰구간 하한',
+                            data: lowerBound,
+                            borderColor: 'transparent',
+                            backgroundColor: 'rgba(168, 85, 247, 0.1)',
+                            fill: false,
+                            pointRadius: 0
+                        }
+                    ]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    plugins: {
+                        legend: { labels: { color: '#ccc' } }
+                    },
+                    scales: {
+                        x: { ticks: { color: '#888' }, grid: { color: '#333' } },
+                        y: { ticks: { color: '#888' }, grid: { color: '#333' } }
+                    }
+                }
+            });
         }
-        
+
+        // Helpers
+        function formatNumber(num) { return num ? num.toLocaleString() : '-'; }
         function formatVolume(vol) {
             if (!vol) return '-';
-            if (vol >= 1000000000) return (vol / 1000000000).toFixed(1) + 'B';
-            if (vol >= 1000000) return (vol / 1000000).toFixed(1) + 'M';
-            if (vol >= 1000) return (vol / 1000).toFixed(1) + 'K';
+            if (vol >= 1e9) return (vol / 1e9).toFixed(1) + 'B';
+            if (vol >= 1e6) return (vol / 1e6).toFixed(1) + 'M';
+            if (vol >= 1e3) return (vol / 1e3).toFixed(1) + 'K';
             return vol.toString();
         }
-        
-        function getSignalClass(signal) {
-            if (!signal) return '';
-            if (['bullish', 'oversold'].includes(signal)) return 'bullish';
-            if (['bearish', 'overbought'].includes(signal)) return 'bearish';
+        function getSignalClass(s) {
+            if (!s) return '';
+            if (['bullish', 'oversold'].includes(s)) return 'bullish';
+            if (['bearish', 'overbought'].includes(s)) return 'bearish';
             return 'neutral';
         }
-        
-        function getRecClass(rec) {
-            if (!rec) return '';
-            if (rec.includes('BUY')) return 'buy';
-            if (rec.includes('SELL')) return 'sell';
+        function getRecClass(r) {
+            if (!r) return '';
+            if (r.includes('BUY')) return 'buy';
+            if (r.includes('SELL')) return 'sell';
             return 'hold';
         }
     </script>
 </body>
+
 </html>

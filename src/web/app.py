@@ -81,7 +81,13 @@ async def api_analyze(ticker: str = Form(...), name: str = Form(...), market: st
         # Get all data
         price_data = json.loads(get_stock_price(ticker, market))
         tech_data = json.loads(technical_analysis(ticker))
-        news_data = json.loads(get_market_news(ticker=ticker, limit=3))
+        
+        # Get market news
+        try:
+            # Pass name as query fallback if ticker has no news
+            news_data = json.loads(get_market_news(ticker, query=name, limit=5))
+        except Exception:
+            news_data = {"status": "error", "news": []}
         
         # Try AI prediction (may fail if model not loaded)
         try:

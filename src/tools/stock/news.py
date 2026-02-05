@@ -27,15 +27,46 @@ def get_market_news(ticker: str = None, query: str = None, limit: int = 10) -> s
             news = stock.news[:limit] if hasattr(stock, 'news') else []
             
             for item in news:
+                # Handle new yfinance structure (nested in 'content')
+                content = item.get('content', item)
+                
+                # Extract fields with fallbacks
+                title = content.get('title')
+                
+                # Provider/Publisher
+                provider = content.get('provider', {})
+                publisher = provider.get('displayName') if isinstance(provider, dict) else provider
+                
+                # Link
+                click_url = content.get('clickThroughUrl')
+                link = click_url.get('url') if isinstance(click_url, dict) else content.get('link')
+                
+                # Date
+                pub_date = content.get('pubDate') or content.get('providerPublishTime')
+                if pub_date:
+                    try:
+                        # If simple string format, leave as is, otherwise try parsing
+                        if isinstance(pub_date, (int, float)):
+                            pub_date = datetime.fromtimestamp(pub_date).strftime("%Y-%m-%d %H:%M")
+                        # If ISO format string, simplistic handling or leave as is
+                    except:
+                        pass
+                
+                # Thumbnail
+                thumb = content.get('thumbnail', {})
+                thumbnail = None
+                if isinstance(thumb, dict) and 'resolutions' in thumb:
+                    res = thumb['resolutions']
+                    if res and len(res) > 0:
+                        thumbnail = res[0].get('url')
+                
                 news_items.append({
-                    "title": item.get('title'),
-                    "publisher": item.get('publisher'),
-                    "link": item.get('link'),
-                    "published": datetime.fromtimestamp(
-                        item.get('providerPublishTime', 0)
-                    ).strftime("%Y-%m-%d %H:%M") if item.get('providerPublishTime') else None,
-                    "type": item.get('type'),
-                    "thumbnail": item.get('thumbnail', {}).get('resolutions', [{}])[0].get('url') if item.get('thumbnail') else None
+                    "title": title,
+                    "publisher": publisher,
+                    "link": link,
+                    "published": pub_date,
+                    "type": content.get('contentType', 'STORY'),
+                    "thumbnail": thumbnail
                 })
         
         # If no ticker-specific news, use pygooglenews for general search
