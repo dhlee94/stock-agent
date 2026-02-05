@@ -95,7 +95,7 @@ class MockStockBrain:
         class MockTensor:
             def __init__(self, data):
                 self.data = data
-            def quantile(self, q):
+            def quantile(self, q, dim=None):
                 # Return slightly different values for quantiles
                 if q == 0.1: return MockValue([x * 0.95 for x in self.data])
                 if q == 0.5: return MockValue(self.data)
@@ -115,9 +115,11 @@ def get_stock_brain(ticker: str, name: str, market: str):
     if cache_key not in _stock_brain_cache:
         try:
             from main import StockBrain
+            print(f"🔄 [StockTool] Initializing Real AI Model for {ticker}...")
             _stock_brain_cache[cache_key] = StockBrain(ticker, name, market)
-        except ImportError:
-            print(f"⚠️ [StockTool] 'stock-price-predictor' not found. Using MockModel.")
+        except Exception as e:
+            print(f"⚠️ [StockTool] Failed to load Real AI Model: {e}")
+            print(f"⚠️ [StockTool] Falling back to MockModel.")
             _stock_brain_cache[cache_key] = MockStockBrain(ticker, name, market)
             
     return _stock_brain_cache[cache_key]
@@ -161,7 +163,7 @@ def analyze_stock(ticker: str, name: str, market: str = "KR") -> dict:
         # Chronos forecast (30 days)
         # Use context or dummy if empty
         context_data = prep['price_context']
-        if not context_data:
+        if context_data is None or len(context_data) == 0:
             context_data = [prep['current_price']] * 30
             
         # Call predict (MockBrain handles this seamlessly now)
@@ -176,10 +178,10 @@ def analyze_stock(ticker: str, name: str, market: str = "KR") -> dict:
             context_tensor = torch.tensor(context_data)
             forecast = brain.chronos.predict(context_tensor, forecast_steps)
         
-        # Get quantiles for confidence intervals
-        low_conf = forecast[0].quantile(0.1).tolist()
-        median_conf = forecast[0].quantile(0.5).tolist()
-        high_conf = forecast[0].quantile(0.9).tolist()
+        # Get quantiles for confidence intervals (dim=0 across samples)
+        low_conf = forecast[0].quantile(0.1, dim=0).tolist()
+        median_conf = forecast[0].quantile(0.5, dim=0).tolist()
+        high_conf = forecast[0].quantile(0.9, dim=0).tolist()
         
         # Generate future dates
         from datetime import timedelta
