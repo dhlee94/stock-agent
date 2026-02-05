@@ -1,0 +1,251 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>📈 Stock Expert AI</title>
+    <link rel="stylesheet" href="/static/style.css">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+</head>
+<body>
+    <div class="container">
+        <!-- Header -->
+        <header class="header">
+            <h1>📈 Stock Expert AI</h1>
+            <p class="subtitle">AI 기반 주식 분석 전문가</p>
+        </header>
+
+        <!-- Search Form -->
+        <form id="searchForm" class="search-form">
+            <div class="input-group">
+                <input type="text" id="ticker" name="ticker" placeholder="종목 코드 (예: 005930.KS)" required>
+                <input type="text" id="name" name="name" placeholder="종목명 (예: 삼성전자)" required>
+            </div>
+            <div class="market-select">
+                <label><input type="radio" name="market" value="KR" checked> 🇰🇷 한국</label>
+                <label><input type="radio" name="market" value="US"> 🇺🇸 미국</label>
+            </div>
+            <button type="submit" class="btn-analyze">🔍 분석하기</button>
+        </form>
+
+        <!-- Quick Picks -->
+        <div class="quick-picks">
+            <button onclick="quickPick('005930.KS', '삼성전자', 'KR')">삼성전자</button>
+            <button onclick="quickPick('000660.KS', 'SK하이닉스', 'KR')">SK하이닉스</button>
+            <button onclick="quickPick('373220.KS', 'LG에너지솔루션', 'KR')">LG에너지</button>
+            <button onclick="quickPick('NVDA', 'NVIDIA', 'US')">NVIDIA</button>
+            <button onclick="quickPick('AAPL', 'Apple', 'US')">Apple</button>
+        </div>
+
+        <!-- Loading -->
+        <div id="loading" class="loading hidden">
+            <div class="spinner"></div>
+            <p>분석 중...</p>
+        </div>
+
+        <!-- Results -->
+        <div id="results" class="results hidden">
+            <!-- Price Card -->
+            <div class="card price-card">
+                <h2 id="stockName">-</h2>
+                <div class="price-main">
+                    <span id="currentPrice" class="price">-</span>
+                    <span id="priceChange" class="change">-</span>
+                </div>
+                <div class="price-details">
+                    <span>고가: <b id="dayHigh">-</b></span>
+                    <span>저가: <b id="dayLow">-</b></span>
+                    <span>거래량: <b id="volume">-</b></span>
+                </div>
+            </div>
+
+            <!-- Technical Analysis Card -->
+            <div class="card tech-card">
+                <h3>📊 기술적 분석</h3>
+                <div class="indicators">
+                    <div class="indicator">
+                        <span class="label">RSI</span>
+                        <span id="rsiValue" class="value">-</span>
+                        <span id="rsiSignal" class="signal">-</span>
+                    </div>
+                    <div class="indicator">
+                        <span class="label">MACD</span>
+                        <span id="macdValue" class="value">-</span>
+                        <span id="macdSignal" class="signal">-</span>
+                    </div>
+                    <div class="indicator">
+                        <span class="label">볼린저</span>
+                        <span id="bbValue" class="value">-</span>
+                        <span id="bbSignal" class="signal">-</span>
+                    </div>
+                </div>
+                <div id="recommendation" class="recommendation">-</div>
+            </div>
+
+            <!-- AI Prediction Card -->
+            <div class="card ai-card">
+                <h3>🤖 AI 전망</h3>
+                <div id="aiResult" class="ai-result">
+                    <p>AI 분석 결과가 여기에 표시됩니다.</p>
+                </div>
+            </div>
+
+            <!-- News Card -->
+            <div class="card news-card">
+                <h3>📰 관련 뉴스</h3>
+                <ul id="newsList" class="news-list">
+                    <li>뉴스를 불러오는 중...</li>
+                </ul>
+            </div>
+        </div>
+
+        <!-- Footer -->
+        <footer class="footer">
+            <p>⚠️ 투자 결정은 본인 책임이며, 이 분석은 참고용입니다.</p>
+        </footer>
+    </div>
+
+    <script>
+        // Quick pick buttons
+        function quickPick(ticker, name, market) {
+            document.getElementById('ticker').value = ticker;
+            document.getElementById('name').value = name;
+            document.querySelector(`input[name="market"][value="${market}"]`).checked = true;
+            document.getElementById('searchForm').dispatchEvent(new Event('submit'));
+        }
+
+        // Form submission
+        document.getElementById('searchForm').addEventListener('submit', async (e) => {
+            e.preventDefault();
+            
+            const ticker = document.getElementById('ticker').value;
+            const name = document.getElementById('name').value;
+            const market = document.querySelector('input[name="market"]:checked').value;
+            
+            // Show loading
+            document.getElementById('loading').classList.remove('hidden');
+            document.getElementById('results').classList.add('hidden');
+            
+            try {
+                // Fetch analysis
+                const formData = new FormData();
+                formData.append('ticker', ticker);
+                formData.append('name', name);
+                formData.append('market', market);
+                
+                const response = await fetch('/api/analyze', {
+                    method: 'POST',
+                    body: formData
+                });
+                const data = await response.json();
+                
+                if (data.status === 'success') {
+                    displayResults(data, market);
+                } else {
+                    alert('분석 실패: ' + data.error);
+                }
+            } catch (error) {
+                alert('오류 발생: ' + error.message);
+            } finally {
+                document.getElementById('loading').classList.add('hidden');
+            }
+        });
+
+        // Display results
+        function displayResults(data, market) {
+            const currency = market === 'US' ? '$' : '₩';
+            const price = data.price;
+            const tech = data.technical;
+            
+            // Price
+            document.getElementById('stockName').textContent = `${data.name} (${data.ticker})`;
+            document.getElementById('currentPrice').textContent = currency + formatNumber(price.current_price);
+            
+            const changeEl = document.getElementById('priceChange');
+            const change = price.change_percent;
+            changeEl.textContent = (change >= 0 ? '+' : '') + change.toFixed(2) + '%';
+            changeEl.className = 'change ' + (change >= 0 ? 'up' : 'down');
+            
+            document.getElementById('dayHigh').textContent = currency + formatNumber(price.day_high);
+            document.getElementById('dayLow').textContent = currency + formatNumber(price.day_low);
+            document.getElementById('volume').textContent = formatVolume(price.volume);
+            
+            // Technical
+            if (tech.status === 'success') {
+                const indicators = tech.indicators;
+                
+                document.getElementById('rsiValue').textContent = indicators.rsi?.value || '-';
+                document.getElementById('rsiSignal').textContent = indicators.rsi?.signal || '-';
+                document.getElementById('rsiSignal').className = 'signal ' + getSignalClass(indicators.rsi?.signal);
+                
+                document.getElementById('macdValue').textContent = indicators.macd?.macd?.toFixed(2) || '-';
+                document.getElementById('macdSignal').textContent = indicators.macd?.trend || '-';
+                document.getElementById('macdSignal').className = 'signal ' + getSignalClass(indicators.macd?.trend);
+                
+                document.getElementById('bbValue').textContent = indicators.bollinger_bands?.position || '-';
+                document.getElementById('bbSignal').textContent = indicators.bollinger_bands?.signal || '-';
+                document.getElementById('bbSignal').className = 'signal ' + getSignalClass(indicators.bollinger_bands?.signal);
+                
+                const recEl = document.getElementById('recommendation');
+                recEl.textContent = tech.recommendation;
+                recEl.className = 'recommendation ' + getRecClass(tech.recommendation);
+            }
+            
+            // AI Prediction
+            const aiEl = document.getElementById('aiResult');
+            const ai = data.ai_prediction;
+            if (ai.status === 'success') {
+                aiEl.innerHTML = `
+                    <div class="ai-score">AI 점수: <b>${ai.ai_score || '-'}</b></div>
+                    <div class="ai-sentiment">감성: <b>${ai.sentiment || '-'}</b></div>
+                    <div class="ai-forecast">예측: <b>${ai.forecast || '-'}</b></div>
+                    <div class="ai-recommendation">${ai.recommendation || '-'}</div>
+                `;
+            } else {
+                aiEl.innerHTML = `<p class="ai-unavailable">AI 예측 모델 로딩 중...</p>`;
+            }
+            
+            // News
+            const newsEl = document.getElementById('newsList');
+            const news = data.news?.news || [];
+            if (news.length > 0) {
+                newsEl.innerHTML = news.map(n => 
+                    `<li><a href="${n.link}" target="_blank">${n.title}</a><span class="news-source">${n.publisher || ''}</span></li>`
+                ).join('');
+            } else {
+                newsEl.innerHTML = '<li>뉴스가 없습니다.</li>';
+            }
+            
+            document.getElementById('results').classList.remove('hidden');
+        }
+
+        // Helpers
+        function formatNumber(num) {
+            if (!num) return '-';
+            return num.toLocaleString();
+        }
+        
+        function formatVolume(vol) {
+            if (!vol) return '-';
+            if (vol >= 1000000000) return (vol / 1000000000).toFixed(1) + 'B';
+            if (vol >= 1000000) return (vol / 1000000).toFixed(1) + 'M';
+            if (vol >= 1000) return (vol / 1000).toFixed(1) + 'K';
+            return vol.toString();
+        }
+        
+        function getSignalClass(signal) {
+            if (!signal) return '';
+            if (['bullish', 'oversold'].includes(signal)) return 'bullish';
+            if (['bearish', 'overbought'].includes(signal)) return 'bearish';
+            return 'neutral';
+        }
+        
+        function getRecClass(rec) {
+            if (!rec) return '';
+            if (rec.includes('BUY')) return 'buy';
+            if (rec.includes('SELL')) return 'sell';
+            return 'hold';
+        }
+    </script>
+</body>
+</html>
