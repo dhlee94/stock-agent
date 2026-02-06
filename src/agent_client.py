@@ -14,9 +14,9 @@ from mcp.client.stdio import stdio_client
 
 # Handle both relative and absolute imports
 try:
-    from .memory_store import MemoryStore
+    from .memory_store import MemoryStore, ProceduralMemory
 except ImportError:
-    from memory_store import MemoryStore
+    from memory_store import MemoryStore, ProceduralMemory
 
 # Provider selection: "gemini" (default, free), "openai", or "groq"
 LLM_PROVIDER = os.environ.get("LLM_PROVIDER", "gemini").lower()
@@ -60,6 +60,7 @@ class MockLLM:
 class MementoAgent:
     def __init__(self):
         self.memory = MemoryStore()
+        self.procedural_memory = ProceduralMemory()
         self.server_script = os.path.join(os.path.dirname(os.path.abspath(__file__)), "mcp_server.py")
         
         if MOCK_MODE:
@@ -236,6 +237,52 @@ Provide your final analysis and recommendation:"""}
         
         response = self._call_llm(summary_prompt)
         return response
+
+    def _call_reflector(self, user_task: str, analysis: str) -> str:
+        """
+        Self-Reflection: Reviews the analysis for logical consistency and completeness.
+        Returns improved analysis if issues found, otherwise returns original.
+        """
+        print("\n🔍 [Reflector] Self-reflection in progress...")
+        
+        reflection_prompt = [
+            {"role": "system", "content": """You are a Critical Review Agent for stock analysis.
+Your job is to review the analysis and check for:
+
+1. **Logical Consistency**: Do the indicators match the recommendation?
+   - Example: RSI < 30 (oversold) should NOT lead to SELL recommendation
+   - Example: Positive news + Bullish technicals should support BUY
+
+2. **Completeness**: Are key elements present?
+   - Price and trend information
+   - At least 2-3 technical indicators
+   - Risk warnings for volatile stocks
+   - Clear BUY/HOLD/SELL recommendation
+
+3. **Confidence Level**: Is the recommendation appropriately confident?
+   - Don't be overconfident with limited data
+   - Acknowledge uncertainties
+
+If issues are found, provide a REVISED analysis.
+If no issues, respond with: "APPROVED: [original analysis]"
+"""},
+            {"role": "user", "content": f"""Task: {user_task}
+
+Analysis to review:
+{analysis}
+
+Review this analysis and either approve it or provide a revised version:"""}
+        ]
+        
+        response = self._call_llm(reflection_prompt)
+        
+        if response.startswith("APPROVED:"):
+            print("   ✅ Analysis approved without changes")
+            return analysis
+        else:
+            print("   📝 Analysis revised after reflection")
+            return response
+
     async def run(self, user_task: str):
         print(f"\n🚀 Starting Memento Agent for Task: {user_task}")
         
@@ -385,6 +432,11 @@ DONE: [Your comprehensive stock analysis summary with recommendation]
                         if not tool_name:
                             continue
                         
+                        # Get tips from procedural memory
+                        tips = self.procedural_memory.get_tool_tips(tool_name)
+                        if tips:
+                            print(f"   💡 Found {len(tips)} past successful executions for {tool_name}")
+                        
                         try:
                             # Execute tool
                             print(f"   ⚡ Executing: {tool_name}")
@@ -395,17 +447,29 @@ DONE: [Your comprehensive stock analysis summary with recommendation]
                             interpretation = self._call_executor(step, tool_output, all_findings)
                             all_findings += f"\n### Step {step.get('step')}: {step.get('reason', tool_name)}\n{interpretation}\n"
                             
+                            # Save to procedural memory
+                            self.procedural_memory.save_tool_execution(
+                                tool_name, args, True, interpretation
+                            )
+                            
                         except Exception as e:
                             print(f"   ⚠️ Step failed: {e}")
                             all_findings += f"\n### Step {step.get('step')}: Failed - {str(e)}\n"
+                            # Save failure to procedural memory
+                            self.procedural_memory.save_tool_execution(
+                                tool_name, args, False, str(e)
+                            )
                     
                     # 5. PLANNER (Summarizer): Generate final analysis
                     final_result = self._call_summarizer(user_task, all_findings)
                     
+                    # 6. REFLECTOR: Self-reflection on the analysis
+                    final_result = self._call_reflector(user_task, final_result)
+                    
                     # Save result before leaving context
                     saved_result = final_result if final_result else "분석을 완료하지 못했습니다."
                     
-                    # 6. Save to Memory
+                    # 7. Save to Memory
                     self.memory.save_trajectory(user_task, plan_text, final_result, 1.0)
                     
         except Exception as e:
