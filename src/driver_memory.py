@@ -21,6 +21,57 @@ load_dotenv(os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file_
 LLM_PROVIDER = os.environ.get("LLM_PROVIDER", "gemini").lower()
 GROQ_API_KEY = os.environ.get("GROQ_API_KEY")
 
+# Strict Financial Stopwords - filter these out from driver keywords
+FINANCIAL_STOPWORDS = {
+    # Generic market terms (Korean)
+    '뉴스', '속보', '특징주', '전망', '상승', '하락', '마감', '체결', '시장', '동향',
+    '분석', '오늘', '내일', '어제', '급등', '급락', '매수', '매도', '추천', '투자',
+    '주가', '주식', '증시', '코스피', '코스닥', '나스닥', '다우', 'S&P',
+    # Generic market terms (English)
+    'stock', 'market', 'news', 'update', 'report', 'analysis', 'today', 'yesterday',
+    'price', 'buy', 'sell', 'hold', 'watch', 'breaking', 'alert', 'surge', 'drop',
+}
+
+# Ticker to Korean Company Name Mapping
+TICKER_TO_NAME = {
+    # Korean Stocks
+    '005930.KS': '삼성전자',
+    '000660.KS': 'SK하이닉스',
+    '035420.KS': 'NAVER',
+    '035720.KS': '카카오',
+    '005380.KS': '현대차',
+    '000270.KS': '기아',
+    '051910.KS': 'LG화학',
+    '006400.KS': '삼성SDI',
+    '003670.KS': '포스코퓨처엠',
+    '207940.KS': '삼성바이오로직스',
+    '068270.KS': '셀트리온',
+    '105560.KS': 'KB금융',
+    '055550.KS': '신한지주',
+    '066570.KS': 'LG전자',
+    '012330.KS': '현대모비스',
+    '034730.KS': 'SK',
+    '030200.KS': 'KT',
+    '017670.KS': 'SK텔레콤',
+    '015760.KS': '한국전력',
+    '032830.KS': '삼성생명',
+    # US Stocks
+    'AAPL': 'Apple',
+    'MSFT': 'Microsoft',
+    'GOOGL': 'Alphabet',
+    'AMZN': 'Amazon',
+    'NVDA': 'NVIDIA',
+    'META': 'Meta',
+    'TSLA': 'Tesla',
+    'AMD': 'AMD',
+    'INTC': 'Intel',
+    'NFLX': 'Netflix',
+}
+
+def get_company_name(ticker: str) -> str:
+    """Get company name from ticker, or return ticker if not found."""
+    return TICKER_TO_NAME.get(ticker, ticker.split('.')[0])
+
 
 class DriverMemory:
     """
@@ -164,7 +215,7 @@ class DriverMemory:
         # 4. Use LLM to extract recurring keywords
         if news_texts:
             news_context = "\n".join(news_texts[:15])
-            extraction_prompt = f"""Analyze these news headlines for {name} ({ticker}) and extract the TOP 5 most important recurring themes or keywords that drive this stock's price.
+            extraction_prompt = f"""Analyze these news headlines for {name} ({ticker}) and extract the TOP 5 most SPECIFIC keywords that drive this stock's price.
 
 News Headlines:
 {news_context}
@@ -172,14 +223,22 @@ News Headlines:
 High Volatility Dates (days with big price moves):
 {', '.join(volatility_dates)}
 
-Focus on:
-- Product names (HBM, GPU, iPhone)
-- Market themes (AI, 반도체, 2차전지)
-- Company events (파업, 실적, 인수합병)
-- Competitive factors (경쟁사, 점유율)
+## CRITICAL RULES:
+1. **EXCLUDE generic financial terms** like: 뉴스, 전망, 상승, 하락, 시장, 동향, 분석, 주가, 투자, stock, market, news, update
+2. **ONLY extract specific proper nouns or event names**:
+   - Product names: HBM, DDR5, OLED, iPhone, GPU
+   - Technologies: AI, 반도체, 2차전지, EV
+   - Company events: 파업, 실적발표, 인수합병, 공급계약
+   - Competitors/Partners: TSMC, 퀄컴, 엔비디아, 애플
+   - Technical terms: 수율, 공정, 파운드리, 3nm
 
-Output ONLY a JSON array of 5 keywords, like:
-["HBM", "AI", "파업", "TSMC", "반도체"]"""
+## Example BAD keywords (too generic):
+["뉴스", "전망", "상승", "시장", "동향"]
+
+## Example GOOD keywords (specific):
+["HBM", "파업", "수율", "TSMC", "AI반도체"]
+
+Output ONLY a JSON array of 5 SPECIFIC keywords:"""
             
             llm_response = self._call_llm(extraction_prompt)
             
@@ -187,14 +246,24 @@ Output ONLY a JSON array of 5 keywords, like:
             try:
                 json_match = re.search(r'\[.*?\]', llm_response, re.DOTALL)
                 if json_match:
-                    keywords = json.loads(json_match.group(0))
+                    raw_keywords = json.loads(json_match.group(0))
+                    # Filter out stopwords
+                    keywords = [
+                        kw for kw in raw_keywords 
+                        if kw.lower() not in FINANCIAL_STOPWORDS and len(kw) > 1
+                    ]
+                    # If all filtered out, use defaults
+                    if len(keywords) < 2:
+                        keywords = ["실적발표", "기술", "경쟁사"]
                 else:
-                    keywords = ["주가", "실적", "뉴스"]
+                    keywords = ["실적발표", "기술", "경쟁사"]
             except:
-                keywords = ["주가", "실적", "뉴스"]
+                keywords = ["실적발표", "기술", "경쟁사"]
         else:
-            # Default keywords if no news
-            keywords = ["실적", "전망", "뉴스", "시장", "동향"]
+            # Default keywords if no news - still use specific terms
+            keywords = ["실적발표", "신사업", "경쟁사", "기술개발", "공급계약"]
+        
+        print(f"   🔑 Extracted drivers: {keywords}")
         
         # 5. Save to memory
         self.save_drivers(ticker, name, keywords, volatility_dates)

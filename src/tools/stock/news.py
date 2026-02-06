@@ -6,6 +6,38 @@ import yfinance as yf
 from datetime import datetime
 import pytz
 
+# Ticker to Korean Company Name Mapping (for better search results)
+TICKER_TO_NAME = {
+    # Korean Stocks
+    '005930.KS': '삼성전자',
+    '000660.KS': 'SK하이닉스',
+    '035420.KS': 'NAVER',
+    '035720.KS': '카카오',
+    '005380.KS': '현대차',
+    '000270.KS': '기아',
+    '051910.KS': 'LG화학',
+    '006400.KS': '삼성SDI',
+    '003670.KS': '포스코퓨처엠',
+    '207940.KS': '삼성바이오로직스',
+    '068270.KS': '셀트리온',
+    '105560.KS': 'KB금융',
+    '055550.KS': '신한지주',
+    '066570.KS': 'LG전자',
+    '012330.KS': '현대모비스',
+    # US Stocks
+    'AAPL': 'Apple',
+    'MSFT': 'Microsoft',
+    'GOOGL': 'Alphabet',
+    'AMZN': 'Amazon',
+    'NVDA': 'NVIDIA',
+    'META': 'Meta',
+    'TSLA': 'Tesla',
+}
+
+def get_company_name(ticker: str) -> str:
+    """Get company name from ticker, or return ticker basename if not found."""
+    return TICKER_TO_NAME.get(ticker, ticker.split('.')[0])
+
 
 def get_market_news(ticker: str = None, query: str = None, limit: int = 10) -> str:
     """
@@ -16,8 +48,12 @@ def get_market_news(ticker: str = None, query: str = None, limit: int = 10) -> s
         limit: Maximum number of news items to return
     Returns:
         JSON with news articles, headlines, and sources
+    Raises:
+        RuntimeError: If no news found (to trigger retry logic)
     """
-    print(f"📰 [News] Getting news for: {ticker or query or 'market'}")
+    # Convert ticker to company name for better search
+    search_name = get_company_name(ticker) if ticker else None
+    print(f"📰 [News] Getting news for: {search_name or query or 'market'}")
     
     try:
         news_items = []
@@ -45,10 +81,8 @@ def get_market_news(ticker: str = None, query: str = None, limit: int = 10) -> s
                 pub_date = content.get('pubDate') or content.get('providerPublishTime')
                 if pub_date:
                     try:
-                        # If simple string format, leave as is, otherwise try parsing
                         if isinstance(pub_date, (int, float)):
                             pub_date = datetime.fromtimestamp(pub_date).strftime("%Y-%m-%d %H:%M")
-                        # If ISO format string, simplistic handling or leave as is
                     except:
                         pass
                 
@@ -71,6 +105,10 @@ def get_market_news(ticker: str = None, query: str = None, limit: int = 10) -> s
         
         # If no ticker-specific news, use pygooglenews for general search
         if not news_items and query:
+            # Use company name if query looks like a ticker
+            if query in TICKER_TO_NAME:
+                query = TICKER_TO_NAME[query]
+            
             try:
                 from pygooglenews import GoogleNews
                 gn = GoogleNews(lang='ko', country='KR')
@@ -85,17 +123,25 @@ def get_market_news(ticker: str = None, query: str = None, limit: int = 10) -> s
                         "type": "news",
                         "thumbnail": None
                     })
-            except Exception:
-                pass
+            except Exception as e:
+                print(f"   ⚠️ GoogleNews search failed: {e}")
+        
+        # Raise exception if no news found (for retry logic)
+        if not news_items:
+            raise RuntimeError(f"No news found for '{search_name or query}'. Try a different search query.")
         
         return json.dumps({
             "status": "success",
             "ticker": ticker,
+            "company_name": search_name,
             "query": query,
             "count": len(news_items),
             "news": news_items,
             "timestamp": datetime.now(pytz.timezone('Asia/Seoul')).isoformat()
         }, ensure_ascii=False)
         
+    except RuntimeError:
+        raise  # Re-raise RuntimeError for retry logic
     except Exception as e:
         return json.dumps({"status": "error", "error": str(e)})
+

@@ -15,6 +15,8 @@ def get_stock_price(ticker: str, market: str = "KR") -> str:
         market: "KR" for Korean stocks, "US" for US stocks
     Returns:
         JSON with current price, change, volume, and market status
+    Raises:
+        ValueError: If no price data available (to trigger retry logic)
     """
     print(f"💰 [Price] Getting price for: {ticker}")
     
@@ -24,7 +26,7 @@ def get_stock_price(ticker: str, market: str = "KR") -> str:
         hist = stock.history(period="2d")
         
         if hist.empty:
-            return json.dumps({"status": "error", "error": "No data available"})
+            raise ValueError(f"Failed to fetch price data for {ticker}. Check if the ticker symbol is correct.")
         
         current_price = hist['Close'].iloc[-1]
         prev_close = hist['Close'].iloc[-2] if len(hist) > 1 else current_price
@@ -35,11 +37,9 @@ def get_stock_price(ticker: str, market: str = "KR") -> str:
         if market == "US":
             tz = pytz.timezone('US/Eastern')
             currency = "USD"
-            fmt = ",.2f"
         else:
             tz = pytz.timezone('Asia/Seoul')
             currency = "KRW"
-            fmt = ",.0f"
         
         return json.dumps({
             "status": "success",
@@ -59,5 +59,8 @@ def get_stock_price(ticker: str, market: str = "KR") -> str:
             "timestamp": datetime.now(tz).isoformat()
         }, ensure_ascii=False)
         
+    except ValueError:
+        raise  # Re-raise ValueError for retry logic
     except Exception as e:
-        return json.dumps({"status": "error", "ticker": ticker, "error": str(e)})
+        raise ValueError(f"Failed to fetch price data for {ticker}: {str(e)}")
+
