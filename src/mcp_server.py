@@ -149,6 +149,49 @@ def analyze_drivers(ticker: str, name: str = "") -> str:
     return _analyze_drivers(ticker, name)
 
 
+@mcp.tool()
+def calculate_risk(ticker: str, market: str = "KR") -> str:
+    """
+    Calculate Target Price, Stop-loss, and Risk/Reward ratio.
+    Uses technical analysis (Bollinger Bands, Support/Resistance) and AI prediction.
+    Call this AFTER stock_technical and stock_ai_predict for accurate results.
+    Args:
+        ticker: Stock ticker symbol
+        market: "KR" or "US"
+    """
+    import json
+    from risk_manager import calculate_risk_levels
+    
+    try:
+        # Get current price
+        price_data = json.loads(get_stock_price(ticker, market))
+        if price_data.get("status") == "error":
+            return json.dumps({"error": f"Failed to get price: {price_data.get('error')}"})
+        current_price = price_data.get("current_price", 0)
+        
+        # Get technical data
+        tech_data = json.loads(technical_analysis(ticker))
+        if tech_data.get("status") == "error":
+            return json.dumps({"error": f"Failed to get technical data: {tech_data.get('error')}"})
+        
+        # Get AI prediction (optional)
+        try:
+            ai_data = json.loads(analyze_stock_ai(ticker, price_data.get("name", ticker), market))
+            ai_prediction = {"predicted_change_pct": ai_data.get("predicted_change_pct", 0)}
+        except:
+            ai_prediction = None
+        
+        # Calculate risk levels
+        result = calculate_risk_levels(current_price, tech_data, ai_prediction)
+        result["ticker"] = ticker
+        result["market"] = market
+        
+        return json.dumps(result, ensure_ascii=False)
+        
+    except Exception as e:
+        return json.dumps({"error": str(e)})
+
+
 # =========================================================
 # 🛠️ Utility Tools
 # =========================================================
