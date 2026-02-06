@@ -39,6 +39,20 @@
             <button onclick="quickPick('AAPL', 'Apple', 'US')">Apple</button>
         </div>
 
+        <!-- AI Agent Chat -->
+        <div class="card chat-card">
+            <h3>🤖 AI 에이전트에게 질문하기</h3>
+            <form id="chatForm" class="chat-form">
+                <input type="text" id="chatInput" placeholder="예: 삼성전자 앞으로 전망 어때?" required>
+                <button type="submit" class="btn-chat">💬 질문</button>
+            </form>
+            <div id="chatLoading" class="chat-loading hidden">
+                <div class="spinner"></div>
+                <p>AI가 분석 중입니다... (최대 1분 소요)</p>
+            </div>
+            <div id="chatResponse" class="chat-response hidden"></div>
+        </div>
+
         <!-- Loading -->
         <div id="loading" class="loading hidden">
             <div class="spinner"></div>
@@ -162,6 +176,41 @@
                 alert('오류 발생: ' + error.message);
             } finally {
                 document.getElementById('loading').classList.add('hidden');
+            }
+        });
+
+        // Chat form submission
+        document.getElementById('chatForm').addEventListener('submit', async (e) => {
+            e.preventDefault();
+
+            const message = document.getElementById('chatInput').value;
+            if (!message.trim()) return;
+
+            document.getElementById('chatLoading').classList.remove('hidden');
+            document.getElementById('chatResponse').classList.add('hidden');
+
+            try {
+                const formData = new FormData();
+                formData.append('message', message);
+
+                const response = await fetch('/api/chat', {
+                    method: 'POST',
+                    body: formData
+                });
+                const data = await response.json();
+
+                const responseEl = document.getElementById('chatResponse');
+                if (data.status === 'success') {
+                    responseEl.innerHTML = `<div class="chat-success">${data.response.replace(/\n/g, '<br>')}</div>`;
+                } else {
+                    responseEl.innerHTML = `<div class="chat-error">오류: ${data.error}</div>`;
+                }
+                responseEl.classList.remove('hidden');
+            } catch (error) {
+                document.getElementById('chatResponse').innerHTML = `<div class="chat-error">오류: ${error.message}</div>`;
+                document.getElementById('chatResponse').classList.remove('hidden');
+            } finally {
+                document.getElementById('chatLoading').classList.add('hidden');
             }
         });
 

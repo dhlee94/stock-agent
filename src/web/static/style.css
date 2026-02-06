@@ -157,7 +157,9 @@ body {
 }
 
 @keyframes spin {
-    to { transform: rotate(360deg); }
+    to {
+        transform: rotate(360deg);
+    }
 }
 
 .hidden {
@@ -303,7 +305,9 @@ body {
     text-align: center;
 }
 
-.ai-score, .ai-sentiment, .ai-forecast {
+.ai-score,
+.ai-sentiment,
+.ai-forecast {
     margin-bottom: 10px;
     font-size: 1.1rem;
 }
@@ -351,6 +355,82 @@ body {
     margin-top: 5px;
 }
 
+/* Chat Card */
+.chat-card {
+    background: linear-gradient(135deg, rgba(124, 58, 237, 0.1), rgba(0, 212, 255, 0.1));
+    border: 1px solid rgba(124, 58, 237, 0.3);
+}
+
+.chat-form {
+    display: flex;
+    gap: 10px;
+    margin-bottom: 15px;
+}
+
+.chat-form input {
+    flex: 1;
+    padding: 15px 20px;
+    border: none;
+    border-radius: 12px;
+    background: rgba(255, 255, 255, 0.1);
+    color: #fff;
+    font-size: 1rem;
+}
+
+.chat-form input::placeholder {
+    color: #888;
+}
+
+.chat-form input:focus {
+    outline: 2px solid #7c3aed;
+    background: rgba(255, 255, 255, 0.15);
+}
+
+.btn-chat {
+    padding: 15px 25px;
+    border: none;
+    border-radius: 12px;
+    background: linear-gradient(135deg, #7c3aed, #a855f7);
+    color: #fff;
+    font-size: 1rem;
+    font-weight: 600;
+    cursor: pointer;
+    transition: transform 0.2s, box-shadow 0.2s;
+    white-space: nowrap;
+}
+
+.btn-chat:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 10px 30px rgba(124, 58, 237, 0.3);
+}
+
+.chat-loading {
+    text-align: center;
+    padding: 20px;
+    color: #888;
+}
+
+.chat-loading .spinner {
+    width: 30px;
+    height: 30px;
+    margin-bottom: 10px;
+}
+
+.chat-response {
+    padding: 20px;
+    border-radius: 12px;
+    background: rgba(0, 0, 0, 0.2);
+    line-height: 1.7;
+}
+
+.chat-success {
+    color: #e0e0e0;
+}
+
+.chat-error {
+    color: #ef4444;
+}
+
 /* Footer */
 .footer {
     text-align: center;
@@ -364,19 +444,19 @@ body {
     .header h1 {
         font-size: 1.8rem;
     }
-    
+
     .input-group {
         flex-direction: column;
     }
-    
+
     .indicators {
         grid-template-columns: 1fr;
     }
-    
+
     .price {
         font-size: 2rem;
     }
-    
+
     .quick-picks button {
         padding: 8px 12px;
         font-size: 0.8rem;

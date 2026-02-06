@@ -7,6 +7,8 @@
 
 ## ✨ Features
 
+- 🧠 **Dual-LLM Architecture**: Memento 논문 기반 Planner(계획) + Executor(실행) 분리 구조
+- 💬 **Interactive Chat**: 자연어 에이전트 채팅 인터페이스
 - 📊 **Technical Analysis**: RSI, MACD, Bollinger Bands, Moving Averages
 - 📈 **Fundamental Analysis**: PER, PBR, ROE, EPS, 재무제표
 - 🤖 **AI Prediction**: Chronos 시계열 + FinBERT 감성 분석

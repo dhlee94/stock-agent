@@ -14,6 +14,10 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 import uvicorn
 import json
+import asyncio
+
+# Import agent
+from agent_client import MementoAgent
 
 # Import stock tools
 from tools.stock import (
@@ -30,6 +34,9 @@ app = FastAPI(title="Stock Expert AI", description="AI 주식 전문가")
 # Setup templates and static files
 templates = Jinja2Templates(directory=os.path.join(os.path.dirname(__file__), "templates"))
 app.mount("/static", StaticFiles(directory=os.path.join(os.path.dirname(__file__), "static")), name="static")
+
+# Initialize agent (singleton)
+agent = MementoAgent()
 
 
 # =========================================================
@@ -106,6 +113,22 @@ async def api_analyze(ticker: str = Form(...), name: str = Form(...), market: st
         })
     except Exception as e:
         return JSONResponse(content={"status": "error", "error": str(e)})
+
+
+@app.post("/api/chat")
+async def api_chat(message: str = Form(...)):
+    """Natural language chat with AI agent"""
+    try:
+        result = await agent.run_for_web(message)
+        return JSONResponse(content={
+            "status": "success",
+            "response": result
+        })
+    except Exception as e:
+        return JSONResponse(content={
+            "status": "error",
+            "error": str(e)
+        })
 
 
 # =========================================================

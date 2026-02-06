@@ -11,7 +11,12 @@ load_dotenv(os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file_
 
 from mcp import ClientSession, StdioServerParameters
 from mcp.client.stdio import stdio_client
-from .memory_store import MemoryStore
+
+# Handle both relative and absolute imports
+try:
+    from .memory_store import MemoryStore
+except ImportError:
+    from memory_store import MemoryStore
 
 # Provider selection: "gemini" (default, free), "openai", or "groq"
 LLM_PROVIDER = os.environ.get("LLM_PROVIDER", "gemini").lower()
@@ -119,6 +124,118 @@ class MementoAgent:
             response = self.model.generate_content(prompt)
             return response.text
 
+    def _call_planner(self, user_task: str, tool_descriptions: str, context_examples: str) -> List[Dict]:
+        """
+        Planner LLM: Generates a structured execution plan.
+        Returns a list of steps: [{"step": 1, "tool": "tool_name", "args": {...}, "reason": "..."}, ...]
+        """
+        print("\n📋 [Planner] Generating execution plan...")
+        
+        planner_prompt = [
+            {"role": "system", "content": f"""You are a Planning Agent for stock analysis.
+Your job is to create a detailed execution plan for the given task.
+
+## Available Tools
+{tool_descriptions}
+
+## Past Successful Plans (for reference)
+{context_examples}
+
+## Output Format
+You MUST output a valid JSON array of steps. Each step should have:
+- "step": step number (1, 2, 3...)
+- "tool": exact tool name to call
+- "args": arguments for the tool as a JSON object
+- "reason": brief explanation of why this step is needed
+
+Example output:
+[
+  {{"step": 1, "tool": "stock_price", "args": {{"ticker": "005930.KS", "market": "KR"}}, "reason": "Get current price"}},
+  {{"step": 2, "tool": "stock_technical", "args": {{"ticker": "005930.KS"}}, "reason": "Analyze technical indicators"}},
+  {{"step": 3, "tool": "stock_news", "args": {{"ticker": "005930.KS"}}, "reason": "Check recent news"}}
+]
+
+Output ONLY the JSON array, no other text."""},
+            {"role": "user", "content": f"Create an execution plan for: {user_task}"}
+        ]
+        
+        response = self._call_llm(planner_prompt)
+        
+        # Parse the plan
+        try:
+            # Try to extract JSON from response
+            json_match = re.search(r'\[[\s\S]*\]', response)
+            if json_match:
+                plan = json.loads(json_match.group(0))
+                print(f"   ✅ Plan created with {len(plan)} steps")
+                return plan
+        except json.JSONDecodeError as e:
+            print(f"   ⚠️ Failed to parse plan: {e}")
+        
+        # Fallback: return empty plan
+        return []
+
+    def _call_executor(self, step: Dict, tool_result: str, accumulated_context: str) -> str:
+        """
+        Executor LLM: Interprets tool results and decides next action.
+        Returns interpretation of the result.
+        """
+        print(f"\n🔧 [Executor] Processing step {step.get('step', '?')}: {step.get('tool', 'unknown')}")
+        
+        executor_prompt = [
+            {"role": "system", "content": """You are an Execution Agent for stock analysis.
+Your job is to interpret tool results and extract key insights.
+
+Be concise. Focus on:
+- Key numbers and metrics
+- Important signals (bullish/bearish)
+- Notable trends or news
+
+Output a brief summary (2-3 sentences max)."""},
+            {"role": "user", "content": f"""Step: {step.get('reason', 'Execute tool')}
+Tool: {step.get('tool')}
+
+
+
+
+Tool Output:
+{tool_result[:2000]}
+
+Previous context:
+{accumulated_context[-1000:] if accumulated_context else 'None'}
+
+Summarize the key findings from this tool output:"""}
+        ]
+        
+        response = self._call_llm(executor_prompt)
+        return response
+
+    def _call_summarizer(self, user_task: str, all_findings: str) -> str:
+        """
+        Final summarization using Planner LLM.
+        """
+        print("\n📊 [Planner] Generating final summary...")
+        
+        summary_prompt = [
+            {"role": "system", "content": """You are a Stock Expert AI providing final analysis.
+Based on all the gathered information, provide a comprehensive summary with:
+1. Current situation (price, trend)
+2. Technical analysis summary
+3. Fundamental factors
+4. News sentiment
+5. Clear recommendation (BUY/HOLD/SELL) with reasoning
+
+Be professional but concise."""},
+            {"role": "user", "content": f"""Task: {user_task}
+
+Gathered Information:
+{all_findings}
+
+Provide your final analysis and recommendation:"""}
+        ]
+        
+        response = self._call_llm(summary_prompt)
+        return response
     async def run(self, user_task: str):
         print(f"\n🚀 Starting Memento Agent for Task: {user_task}")
         
@@ -181,7 +298,6 @@ To call a tool, output ONLY a JSON block:
 When you have completed the analysis, output:
 DONE: [Your comprehensive stock analysis summary with recommendation]
 
-Remember: 투자 결정은 본인 책임이며, 이 분석은 참고용입니다.
 """},
                     {"role": "user", "content": f"Please execute the task: {user_task}"}
                 ]
@@ -220,6 +336,84 @@ Remember: 투자 결정은 본인 책임이며, 이 분석은 참고용입니다
                 # 4. Save to Memory
                 self.memory.save_trajectory(user_task, plan_text, final_result, 1.0)
                 print("\n✅ Task Completed & Trajectory Saved!")
+
+    async def run_for_web(self, user_task: str) -> str:
+        """
+        Web-friendly version using dual-LLM architecture (Memento paper).
+        Planner → Executor flow with separate LLM roles.
+        """
+        saved_result = ""
+        
+        # 1. Memory Retrieval
+        trajectories = self.memory.retrieve_similar(user_task)
+        context_examples = ""
+        if trajectories:
+            context_examples = "Here are some past successful plans for similar tasks:\n"
+            for i, traj in enumerate(trajectories):
+                context_examples += f"--- Example {i+1} ---\nTask: {traj['task']}\nPlan: {traj['plan']}\nResult: {traj['result']}\n------------------\n"
+
+        # 2. Connect to MCP Server
+        server_params = StdioServerParameters(
+            command="python3",
+            args=[self.server_script],
+        )
+
+        try:
+            async with stdio_client(server_params) as (read, write):
+                async with ClientSession(read, write) as session:
+                    await session.initialize()
+                    
+                    tools_response = await session.list_tools()
+                    tools = tools_response.tools
+                    tool_descriptions = "\n".join([f"- {t.name}: {t.description}" for t in tools])
+
+                    # 3. PLANNER: Generate execution plan
+                    plan = self._call_planner(user_task, tool_descriptions, context_examples)
+                    
+                    if not plan:
+                        saved_result = "계획 생성에 실패했습니다. 다시 시도해주세요."
+                        return saved_result
+                    
+                    # 4. EXECUTOR: Execute each step
+                    all_findings = ""
+                    plan_text = json.dumps(plan, ensure_ascii=False, indent=2)
+                    
+                    for step in plan:
+                        tool_name = step.get("tool")
+                        args = step.get("args", {})
+                        
+                        if not tool_name:
+                            continue
+                        
+                        try:
+                            # Execute tool
+                            print(f"   ⚡ Executing: {tool_name}")
+                            result = await session.call_tool(tool_name, arguments=args)
+                            tool_output = result.content[0].text
+                            
+                            # Executor interprets the result
+                            interpretation = self._call_executor(step, tool_output, all_findings)
+                            all_findings += f"\n### Step {step.get('step')}: {step.get('reason', tool_name)}\n{interpretation}\n"
+                            
+                        except Exception as e:
+                            print(f"   ⚠️ Step failed: {e}")
+                            all_findings += f"\n### Step {step.get('step')}: Failed - {str(e)}\n"
+                    
+                    # 5. PLANNER (Summarizer): Generate final analysis
+                    final_result = self._call_summarizer(user_task, all_findings)
+                    
+                    # Save result before leaving context
+                    saved_result = final_result if final_result else "분석을 완료하지 못했습니다."
+                    
+                    # 6. Save to Memory
+                    self.memory.save_trajectory(user_task, plan_text, final_result, 1.0)
+                    
+        except Exception as e:
+            if saved_result:
+                return saved_result
+            return f"오류가 발생했습니다: {str(e)}"
+        
+        return saved_result
 
 if __name__ == "__main__":
     agent = MementoAgent()
