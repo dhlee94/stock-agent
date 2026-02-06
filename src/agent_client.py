@@ -153,7 +153,8 @@ Your job is to create a detailed execution plan for the given task.
 1. **Identify Entity**: Extract the stock ticker from user's request
 2. **Check Driver Memory**: If analyzing a stock, ALWAYS call `analyze_drivers` first to get key impact factors
 3. **Strategic Planning**: Use the driver keywords for TARGETED news/research queries
-4. **Reasoning**: Explain WHY certain topics matter based on historical volatility
+4. **Risk Management**: ALWAYS call `calculate_risk` to get Target Price, Stop-loss, and Risk/Reward ratio
+5. **Reasoning**: Explain WHY certain topics matter based on historical volatility
 {driver_context}
 ## Available Tools
 {tool_descriptions}
@@ -176,7 +177,9 @@ Example output:
 [
   {{"step": 1, "tool": "analyze_drivers", "args": {{"ticker": "005930.KS", "name": "삼성전자"}}, "reason": "Identify key price drivers"}},
   {{"step": 2, "tool": "stock_price", "args": {{"ticker": "005930.KS", "market": "KR"}}, "reason": "Get current price"}},
-  {{"step": 3, "tool": "stock_news", "args": {{"query": "삼성전자 HBM"}}, "reason": "Check HBM news (top driver)"}}
+  {{"step": 3, "tool": "stock_technical", "args": {{"ticker": "005930.KS"}}, "reason": "Technical analysis for support/resistance"}},
+  {{"step": 4, "tool": "stock_news", "args": {{"query": "삼성전자 HBM"}}, "reason": "Check HBM news (top driver)"}},
+  {{"step": 5, "tool": "calculate_risk", "args": {{"ticker": "005930.KS", "market": "KR"}}, "reason": "Calculate Target Price and Stop-loss"}}
 ]
 
 Output ONLY the JSON array, no other text."""},
@@ -247,15 +250,19 @@ Based on all the gathered information, provide a comprehensive summary with:
 2. Technical analysis summary
 3. Fundamental factors
 4. News sentiment
-5. Clear recommendation (BUY/HOLD/SELL) with reasoning
+5. **Risk Management** (IMPORTANT - always include if data available):
+   - 🎯 Target Price: [price] ([+X.X%])
+   - 🛑 Stop-loss: [price] ([-X.X%])
+   - ⚖️ Risk/Reward Ratio: [X.X]:1 (Entry Rating: [EXCELLENT/GOOD/FAIR/POOR])
+6. Clear recommendation (BUY/HOLD/SELL) with reasoning
 
-Be professional but concise."""},
+Be professional but concise. ALWAYS include Target Price, Stop-loss, and Risk/Reward if the data is available in the findings."""},
             {"role": "user", "content": f"""Task: {user_task}
 
 Gathered Information:
 {all_findings}
 
-Provide your final analysis and recommendation:"""}
+Provide your final analysis and recommendation (include Target Price, Stop-loss, and Risk/Reward):"""}
         ]
         
         response = self._call_llm(summary_prompt)
