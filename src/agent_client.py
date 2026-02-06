@@ -15,8 +15,10 @@ from mcp.client.stdio import stdio_client
 # Handle both relative and absolute imports
 try:
     from .memory_store import MemoryStore, ProceduralMemory
+    from .driver_memory import DriverMemory
 except ImportError:
     from memory_store import MemoryStore, ProceduralMemory
+    from driver_memory import DriverMemory
 
 # Provider selection: "gemini" (default, free), "openai", or "groq"
 LLM_PROVIDER = os.environ.get("LLM_PROVIDER", "gemini").lower()
@@ -61,6 +63,7 @@ class MementoAgent:
     def __init__(self):
         self.memory = MemoryStore()
         self.procedural_memory = ProceduralMemory()
+        self.driver_memory = DriverMemory()
         self.server_script = os.path.join(os.path.dirname(os.path.abspath(__file__)), "mcp_server.py")
         
         if MOCK_MODE:
@@ -125,17 +128,33 @@ class MementoAgent:
             response = self.model.generate_content(prompt)
             return response.text
 
-    def _call_planner(self, user_task: str, tool_descriptions: str, context_examples: str) -> List[Dict]:
+    def _call_planner(self, user_task: str, tool_descriptions: str, context_examples: str, driver_info: str = "") -> List[Dict]:
         """
         Planner LLM: Generates a structured execution plan.
         Returns a list of steps: [{"step": 1, "tool": "tool_name", "args": {...}, "reason": "..."}, ...]
         """
         print("\n📋 [Planner] Generating execution plan...")
         
+        # Build driver context
+        driver_context = ""
+        if driver_info:
+            driver_context = f"""
+## 📍 Historical Driver Keywords (IMPORTANT)
+{driver_info}
+Use these keywords for TARGETED news searches instead of generic queries.
+Example: Instead of "삼성전자 뉴스", search "삼성전자 HBM" or "삼성전자 파업".
+"""
+        
         planner_prompt = [
             {"role": "system", "content": f"""You are a Planning Agent for stock analysis.
 Your job is to create a detailed execution plan for the given task.
 
+## CRITICAL WORKFLOW
+1. **Identify Entity**: Extract the stock ticker from user's request
+2. **Check Driver Memory**: If analyzing a stock, ALWAYS call `analyze_drivers` first to get key impact factors
+3. **Strategic Planning**: Use the driver keywords for TARGETED news/research queries
+4. **Reasoning**: Explain WHY certain topics matter based on historical volatility
+{driver_context}
 ## Available Tools
 {tool_descriptions}
 
@@ -149,11 +168,15 @@ You MUST output a valid JSON array of steps. Each step should have:
 - "args": arguments for the tool as a JSON object
 - "reason": brief explanation of why this step is needed
 
+IMPORTANT: For stock_news, use SPECIFIC keyword queries based on driver analysis.
+BAD: {{"tool": "stock_news", "args": {{"query": "삼성전자"}}}}
+GOOD: {{"tool": "stock_news", "args": {{"query": "삼성전자 HBM 현황"}}}}
+
 Example output:
 [
-  {{"step": 1, "tool": "stock_price", "args": {{"ticker": "005930.KS", "market": "KR"}}, "reason": "Get current price"}},
-  {{"step": 2, "tool": "stock_technical", "args": {{"ticker": "005930.KS"}}, "reason": "Analyze technical indicators"}},
-  {{"step": 3, "tool": "stock_news", "args": {{"ticker": "005930.KS"}}, "reason": "Check recent news"}}
+  {{"step": 1, "tool": "analyze_drivers", "args": {{"ticker": "005930.KS", "name": "삼성전자"}}, "reason": "Identify key price drivers"}},
+  {{"step": 2, "tool": "stock_price", "args": {{"ticker": "005930.KS", "market": "KR"}}, "reason": "Get current price"}},
+  {{"step": 3, "tool": "stock_news", "args": {{"query": "삼성전자 HBM"}}, "reason": "Check HBM news (top driver)"}}
 ]
 
 Output ONLY the JSON array, no other text."""},

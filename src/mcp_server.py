@@ -34,6 +34,9 @@ from tools import (
     save_feedback,
 )
 
+# Driver Memory
+from driver_memory import analyze_drivers as _analyze_drivers
+
 # Initialize MCP Server
 mcp = FastMCP("Stock Expert Agent Tools")
 
@@ -131,6 +134,19 @@ def stock_ai_predict(ticker: str, name: str, market: str = "KR") -> str:
         market: "KR" or "US"
     """
     return analyze_stock_ai(ticker, name, market)
+
+
+@mcp.tool()
+def analyze_drivers(ticker: str, name: str = "") -> str:
+    """
+    Analyze historical volatility to identify key price drivers.
+    Returns keywords that historically move this stock (e.g., HBM, 파업, 실적).
+    Use this BEFORE searching for news to make targeted queries.
+    Args:
+        ticker: Stock ticker symbol (e.g., "005930.KS")
+        name: Company name (optional)
+    """
+    return _analyze_drivers(ticker, name)
 
 
 # =========================================================

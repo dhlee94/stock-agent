@@ -48,6 +48,7 @@ graph TD
 |--------|-------|---------|
 | **Semantic** | `MemoryStore` | Planner: past plans & results |
 | **Procedural** | `ProceduralMemory` | Executor: tool usage history |
+| **Driver** | `DriverMemory` | Historical volatility drivers per stock |
 
 ## Verification Results
 

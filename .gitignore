@@ -54,3 +54,4 @@ memory_store.json
 # Jupyter
 .ipynb_checkpoints/
 procedural_memory.json
+driver_memory.json
