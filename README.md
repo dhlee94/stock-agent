@@ -21,6 +21,7 @@
 ```bash
 python -m venv venv
 source venv/bin/activate   # Mac/Linux
+pip install --upgrade pip
 pip install -r requirements.txt
 ```
 

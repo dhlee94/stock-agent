@@ -17,3 +17,6 @@ pygooglenews
 chronos-forecasting
 pytz
 statsmodels
+fastapi
+uvicorn
+groq
