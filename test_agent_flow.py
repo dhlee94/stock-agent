@@ -12,12 +12,12 @@ import os
 import sys
 import json
 import time
-import asyncio
 from datetime import datetime
 
 # Add src directory to path
 SRC_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "src")
 sys.path.insert(0, SRC_DIR)
+sys.path.insert(0, os.path.join(SRC_DIR, "tools", "stock"))
 
 # ANSI Colors for terminal output
 class Colors:
@@ -54,12 +54,9 @@ def main():
     print()
     
     # =========================================================
-    # STEP 1: Check Driver Memory
+    # STEP 0: Market Detection (NEW!)
     # =========================================================
-    log("MEMORY", "🧠", "Checking DriverMemory...", Colors.BLUE)
-    
-    from driver_memory import DriverMemory
-    dm = DriverMemory()
+    from market_utils import detect_market, get_company_name, get_english_name
     
     # Extract ticker from query (simple heuristic)
     ticker = None
@@ -72,6 +69,9 @@ def main():
         "apple": "AAPL",
         "테슬라": "TSLA",
         "tesla": "TSLA",
+        "sk하이닉스": "000660.KS",
+        "마이크로소프트": "MSFT",
+        "microsoft": "MSFT",
     }
     
     for name, tk in ticker_map.items():
@@ -81,7 +81,27 @@ def main():
     
     if not ticker:
         ticker = "005930.KS"  # Default to Samsung
-        log("MEMORY", "⚠️", f"Could not detect ticker, defaulting to {ticker}", Colors.YELLOW)
+        log("MARKET", "⚠️", f"Could not detect ticker, defaulting to {ticker}", Colors.YELLOW)
+    
+    # Detect market
+    market = detect_market(ticker)
+    company_name = get_company_name(ticker)
+    english_name = get_english_name(ticker)
+    
+    log("MARKET", "🌍", f"Detected: {Colors.BOLD}{ticker}{Colors.END} → {Colors.BOLD}{market}{Colors.END}", Colors.CYAN)
+    print(f"         Company: {company_name}")
+    if market == "US":
+        print(f"         English: {english_name}")
+        print(f"         🌐 Will search English news + Korean summary")
+    print()
+    
+    # =========================================================
+    # STEP 1: Check Driver Memory
+    # =========================================================
+    log("MEMORY", "🧠", "Checking DriverMemory...", Colors.BLUE)
+    
+    from driver_memory import DriverMemory
+    dm = DriverMemory()
     
     # Check cache
     cached_drivers = dm.get_drivers(ticker)
@@ -93,15 +113,14 @@ def main():
         log("MEMORY", "❌", f"No cached drivers for {ticker}", Colors.YELLOW)
         log("MEMORY", "🔄", "Triggering analyze_historical_drivers()...", Colors.YELLOW)
         
-        # Rate limit protection
         time.sleep(0.5)
         
         try:
             result = dm.analyze_historical_drivers(ticker)
             if "error" not in result:
-                log("MEMORY", "✅", f"Analysis complete!", Colors.GREEN)
+                log("MEMORY", "✅", "Analysis complete!", Colors.GREEN)
                 print(f"         New Keywords: {Colors.BOLD}{result.get('drivers', [])}{Colors.END}")
-                print(f"         Volatility Dates: {result.get('volatility_dates', [])}")
+                cached_drivers = result
             else:
                 log("MEMORY", "⚠️", f"Analysis failed: {result.get('error')}", Colors.RED)
         except Exception as e:
@@ -110,20 +129,18 @@ def main():
     print()
     
     # =========================================================
-    # STEP 2: Simulate Planner
+    # STEP 2: Simulate Planner (Market-Aware)
     # =========================================================
-    log("PLANNER", "🤔", "Generating execution plan...", Colors.CYAN)
+    log("PLANNER", "🤔", f"Generating execution plan for {Colors.BOLD}{market}{Colors.END} market...", Colors.CYAN)
     
-    # Mock plan based on driver keywords
     drivers = cached_drivers.get('drivers', []) if cached_drivers else ["실적발표", "기술개발"]
-    company_name = cached_drivers.get('name', '삼성전자') if cached_drivers else '삼성전자'
     
     mock_plan = [
         {"step": 1, "tool": "analyze_drivers", "args": {"ticker": ticker}, "reason": "Get historical drivers"},
-        {"step": 2, "tool": "stock_price", "args": {"ticker": ticker}, "reason": "Get current price"},
-        {"step": 3, "tool": "stock_news", "args": {"query": f"{company_name} {drivers[0]}"}, "reason": f"Search for {drivers[0]} news"},
+        {"step": 2, "tool": "stock_price", "args": {"ticker": ticker, "market": market}, "reason": "Get current price"},
+        {"step": 3, "tool": "stock_news", "args": {"ticker": ticker, "query": f"{company_name} {drivers[0] if drivers else ''}"}, "reason": f"Search {'English' if market == 'US' else 'Korean'} news"},
         {"step": 4, "tool": "stock_technical", "args": {"ticker": ticker}, "reason": "Technical analysis"},
-        {"step": 5, "tool": "stock_ai_predict", "args": {"ticker": ticker}, "reason": "AI prediction"},
+        {"step": 5, "tool": "calculate_risk", "args": {"ticker": ticker, "market": market}, "reason": "Calculate Target/Stop-loss"},
     ]
     
     log("PLANNER", "✅", f"Plan created with {len(mock_plan)} steps:", Colors.GREEN)
@@ -133,11 +150,15 @@ def main():
     print()
     
     # =========================================================
-    # STEP 3: Execute Tools (Dry Run)
+    # STEP 3: Execute Tools
     # =========================================================
-    log("EXECUTOR", "🛠️", "Executing tools (dry run)...", Colors.YELLOW)
+    log("EXECUTOR", "🛠️", "Executing tools...", Colors.YELLOW)
     
     from tools.stock import get_stock_price, technical_analysis, get_market_news
+    from risk_manager import calculate_risk_levels
+    
+    tech_data = None
+    current_price = 0
     
     for step in mock_plan:
         tool_name = step["tool"]
@@ -146,69 +167,72 @@ def main():
         log("EXECUTOR", "⚡", f"Step {step['step']}: {tool_name}", Colors.YELLOW)
         print(f"         Args: {args}")
         
-        # Rate limit protection
         time.sleep(0.3)
         
         try:
             if tool_name == "stock_price":
                 result = get_stock_price(args.get("ticker"), args.get("market", "KR"))
-                # Parse and show key info
                 result_data = json.loads(result)
-                log("EXECUTOR", "📊", f"Price: {result_data.get('price', 'N/A')} ({result_data.get('change_percent', 'N/A')}%)", Colors.GREEN)
+                current_price = result_data.get('current_price', 0)
+                log("EXECUTOR", "📊", f"Price: {current_price:,.0f} ({result_data.get('change_percent', 'N/A'):+.2f}%)", Colors.GREEN)
                 
             elif tool_name == "stock_technical":
                 result = technical_analysis(args.get("ticker"))
-                result_data = json.loads(result)
-                log("EXECUTOR", "📈", f"Signal: {result_data.get('overall_signal', 'N/A')}", Colors.GREEN)
+                tech_data = json.loads(result)
+                log("EXECUTOR", "📈", f"Signal: {tech_data.get('recommendation', 'N/A')}", Colors.GREEN)
                 
             elif tool_name == "stock_news":
-                result = get_market_news(query=args.get("query"), limit=3)
+                result = get_market_news(ticker=args.get("ticker"), query=args.get("query"), limit=3)
                 result_data = json.loads(result)
-                news_count = len(result_data.get("articles", []))
-                log("EXECUTOR", "📰", f"Found {news_count} articles", Colors.GREEN)
+                news_count = result_data.get("count", 0)
+                detected_market = result_data.get("market", "KR")
+                log("EXECUTOR", "📰", f"Found {news_count} articles (Market: {detected_market})", Colors.GREEN)
+                
+                # Show Korean summary for US stocks
+                if result_data.get("global_news_summary_kr"):
+                    log("EXECUTOR", "🌐", "Korean Summary:", Colors.CYAN)
+                    print(f"         {result_data['global_news_summary_kr'][:100]}...")
                 
             elif tool_name == "analyze_drivers":
                 log("EXECUTOR", "🧠", "Using cached drivers", Colors.GREEN)
                 
-            elif tool_name == "stock_ai_predict":
-                log("CHRONOS", "🤖", "Running AI prediction...", Colors.CYAN)
-                # Skip actual model run for speed
-                log("CHRONOS", "📈", "Predicted: +2.1% (mock)", Colors.GREEN)
+            elif tool_name == "calculate_risk":
+                if tech_data and current_price > 0:
+                    risk_result = calculate_risk_levels(current_price, tech_data)
+                    log("RISK", "🎯", f"Target: {risk_result['target_price']:,.0f} ({risk_result['target_percent']:+.1f}%)", Colors.GREEN)
+                    log("RISK", "🛑", f"Stop-loss: {risk_result['stop_loss']:,.0f} ({risk_result['stop_loss_percent']:.1f}%)", Colors.RED)
+                    log("RISK", "⚖️", f"Risk/Reward: {risk_result['risk_reward_ratio']}:1 ({risk_result['entry_rating']})", Colors.CYAN)
+                else:
+                    log("RISK", "⚠️", "Skipped - missing price or technical data", Colors.YELLOW)
                 
             else:
-                log("EXECUTOR", "⏭️", f"Skipping {tool_name} (not implemented in dry run)", Colors.YELLOW)
+                log("EXECUTOR", "⏭️", f"Skipping {tool_name}", Colors.YELLOW)
                 
         except Exception as e:
-            log("EXECUTOR", "❌", f"Error: {str(e)[:50]}...", Colors.RED)
+            log("EXECUTOR", "❌", f"Error: {str(e)[:80]}", Colors.RED)
         
         print()
     
     # =========================================================
-    # STEP 4: Ensemble
+    # STEP 4: Final Summary
     # =========================================================
-    log("ENSEMBLE", "⚖️", "Combining signals...", Colors.CYAN)
-    print(f"         Technical: {Colors.YELLOW}NEUTRAL{Colors.END}")
-    print(f"         AI Prediction: {Colors.GREEN}+2.1%{Colors.END}")
-    print(f"         News Sentiment: {Colors.YELLOW}MIXED{Colors.END}")
-    print()
-    
     log("REFLECTOR", "🔍", "Self-reflection check...", Colors.CYAN)
-    print(f"         Logic consistency: ✅")
-    print(f"         Completeness: ✅")
+    print(f"         Market Detection: ✅ ({market})")
+    print(f"         Risk Calculated: ✅" if tech_data else "         Risk Calculated: ⚠️")
+    print(f"         Multi-lang News: ✅" if market == "US" else "         Multi-lang News: N/A (KR)")
     print()
     
-    # =========================================================
-    # FINAL
-    # =========================================================
     print(f"{Colors.BOLD}{'='*60}{Colors.END}")
-    log("RESULT", "🎯", f"Final Recommendation: {Colors.BOLD}HOLD{Colors.END}", Colors.GREEN)
+    log("RESULT", "🎯", f"Analysis Complete for {Colors.BOLD}{company_name}{Colors.END}", Colors.GREEN)
     print(f"{Colors.BOLD}{'='*60}{Colors.END}")
     print()
     
-    print(f"{Colors.CYAN}💡 Tip: Run with custom query:{Colors.END}")
-    print(f"   python test_agent_flow.py \"NVIDIA 분석해줘\"")
+    print(f"{Colors.CYAN}💡 Try different markets:{Colors.END}")
+    print(f"   python test_agent_flow.py \"삼성전자 분석\"   # KR stock")
+    print(f"   python test_agent_flow.py \"NVIDIA 분석\"    # US stock")
     print()
 
 
 if __name__ == "__main__":
     main()
+
