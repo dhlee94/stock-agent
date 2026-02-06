@@ -1,5 +1,9 @@
 """
 Market News Tool - Stock and market news retrieval with multi-language support
+
+Note: English news for US stocks is passed directly to the Summarizer LLM,
+which handles translation to Korean in the final analysis.
+This avoids an extra LLM API call.
 """
 import os
 import json
@@ -10,67 +14,8 @@ import pytz
 
 from market_utils import detect_market, get_company_name, get_english_name, TICKER_TO_NAME
 
-# LLM configuration
-LLM_PROVIDER = os.environ.get("LLM_PROVIDER", "gemini").lower()
-GROQ_API_KEY = os.environ.get("GROQ_API_KEY")
 
-
-def _summarize_english_news_to_korean(news_titles: List[str], company_name: str) -> str:
-    """
-    Summarize English news headlines into Korean using LLM.
-    
-    Args:
-        news_titles: List of English news headlines
-        company_name: Company name for context
-        
-    Returns:
-        Korean summary (3 sentences)
-    """
-    if not news_titles:
-        return ""
-    
-    headlines = "\n".join([f"- {title}" for title in news_titles[:10]])
-    
-    prompt = f"""You are a global financial analyst. Summarize the following English news headlines about {company_name} into 3 concise Korean sentences.
-
-IMPORTANT RULES:
-1. Focus on the impact on stock price
-2. Keep key technical terms and proper nouns in their ORIGINAL ENGLISH form alongside Korean
-   Example: "Blackwell 칩 출시로 인한 수요 증가" NOT "블랙웰 칩..."
-3. Include specific figures if mentioned (revenue, %, etc.)
-
-News Headlines:
-{headlines}
-
-Write ONLY 3 Korean sentences, nothing else:"""
-
-    try:
-        if LLM_PROVIDER == "groq" and GROQ_API_KEY:
-            from groq import Groq
-            client = Groq(api_key=GROQ_API_KEY)
-            response = client.chat.completions.create(
-                model="llama-3.3-70b-versatile",
-                messages=[{"role": "user", "content": prompt}],
-                temperature=0.3,
-                max_tokens=300
-            )
-            return response.choices[0].message.content.strip()
-        else:
-            import google.generativeai as genai
-            GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY") or os.environ.get("GOOGLE_API_KEY")
-            if GEMINI_API_KEY:
-                genai.configure(api_key=GEMINI_API_KEY)
-                model = genai.GenerativeModel("gemini-2.0-flash")
-                response = model.generate_content(prompt)
-                return response.text.strip()
-    except Exception as e:
-        print(f"   ⚠️ LLM summarization failed: {e}")
-    
-    return ""
-
-
-def get_market_news(ticker: str = None, query: str = None, limit: int = 10, 
-                    summarize_for_korean: bool = True) -> str:
+def get_market_news(ticker: str = None, query: str = None, limit: int = 10) -> str:
     """
     Get latest market news or news about a specific stock.
     Automatically detects market (KR/US) and optimizes search accordingly.
@@ -202,14 +147,7 @@ def get_market_news(ticker: str = None, query: str = None, limit: int = 10,
         if not news_items:
             raise RuntimeError(f"No news found for '{search_name or query}'. Try a different search query.")
         
-        # Step 3: Generate Korean summary for US stocks
-        korean_summary = ""
-        if market == 'US' and summarize_for_korean and english_titles_for_summary:
-            korean_summary = _summarize_english_news_to_korean(
-                english_titles_for_summary, 
-                english_name or search_name
-            )
-        
+        # Note: English headlines passed directly - Summarizer LLM handles translation
         result = {
             "status": "success",
             "ticker": ticker,
@@ -220,10 +158,6 @@ def get_market_news(ticker: str = None, query: str = None, limit: int = 10,
             "news": news_items,
             "timestamp": datetime.now(pytz.timezone('Asia/Seoul')).isoformat()
         }
-        
-        # Add Korean summary only for US stocks
-        if korean_summary:
-            result["global_news_summary_kr"] = korean_summary
         
         return json.dumps(result, ensure_ascii=False)
         
