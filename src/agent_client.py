@@ -157,6 +157,16 @@ Your job is to create a detailed execution plan for the given task.
 5. **[REQUIRED] Risk Management**: ALWAYS call `calculate_risk` to get Target Price, Stop-loss, and Risk/Reward ratio
 6. **Synthesis**: Adjust outlook based on Reference Proxy's momentum if correlation > 0.7
 
+## PEER ANALYSIS FALLBACK (IMPORTANT)
+IF `analyze_peers` returns 0 results (found_peers: 0):
+1. **DO NOT skip peer analysis** - this step is critical for verification
+2. **Use your internal knowledge** to identify the 'Industry Benchmark' competitors:
+   - 삼성전자 → SK하이닉스(000660.KS), 마이크론(MU)
+   - NVDA → AMD, INTC
+   - 현대차 → 기아(000270.KS), TSLA
+3. **Re-call analyze_peers** with `compare_with` parameter containing the identified tickers
+   Example: {{"tool": "analyze_peers", "args": {{"ticker": "005930.KS", "compare_with": ["000660.KS", "MU"]}}}}
+
 ⚠️ MANDATORY STEPS: You MUST include BOTH `analyze_peers` AND `calculate_risk` in EVERY plan.
 {driver_context}
 ## Available Tools
@@ -536,9 +546,42 @@ DONE: [Your comprehensive stock analysis summary with recommendation]
                             if tool_name == "analyze_peers":
                                 try:
                                     peer_data = json.loads(tool_output)
+                                    peers_found = peer_data.get("entity_mining", {}).get("found_peers", 0)
+                                    
+                                    # FALLBACK: If no peers found, use LLM to identify competitors
+                                    if peers_found == 0 and not args.get("compare_with"):
+                                        print(f"   ⚠️ No peers found, using LLM fallback...")
+                                        ticker = args.get("ticker", "")
+                                        
+                                        # Ask LLM for industry competitors
+                                        fallback_prompt = [
+                                            {"role": "system", "content": "You are a financial analyst. Return ONLY a JSON array of competitor tickers."},
+                                            {"role": "user", "content": f"List 2-3 key industry competitors for {ticker}. Return ONLY a JSON array like [\"TICKER1\", \"TICKER2\"]. For Korean stocks, use .KS suffix."}
+                                        ]
+                                        llm_response = self._call_llm(fallback_prompt)
+                                        
+                                        try:
+                                            # Parse LLM response for tickers
+                                            ticker_match = re.search(r'\[.*?\]', llm_response)
+                                            if ticker_match:
+                                                competitor_tickers = json.loads(ticker_match.group(0))
+                                                print(f"   🤖 LLM identified competitors: {competitor_tickers}")
+                                                
+                                                # Re-call analyze_peers with competitors
+                                                retry_result = await session.call_tool(
+                                                    "analyze_peers", 
+                                                    arguments={"ticker": ticker, "compare_with": competitor_tickers}
+                                                )
+                                                tool_output = retry_result.content[0].text
+                                                peer_data = json.loads(tool_output)
+                                                peers_found = peer_data.get("entity_mining", {}).get("found_peers", 0)
+                                                print(f"   ✅ Retry successful: {peers_found} peers found")
+                                        except Exception as e:
+                                            print(f"   ⚠️ LLM fallback failed: {e}")
+                                    
                                     reference_proxy = peer_data.get("reference_proxy")
                                     peer_context = {
-                                        "peers_found": peer_data.get("entity_mining", {}).get("found_peers", 0),
+                                        "peers_found": peers_found,
                                         "reference_proxy": reference_proxy,
                                         "synthesis": peer_data.get("synthesis", ""),
                                         "has_high_correlation": reference_proxy is not None
