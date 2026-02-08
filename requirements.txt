@@ -62,6 +62,8 @@ python-multipart==0.0.22
 pytz==2025.2
 referencing==0.37.0
 regex==2026.1.15
+finance-datareader
+pykrx
 requests==2.32.5
 rpds-py==0.30.0
 scipy==1.15.3
