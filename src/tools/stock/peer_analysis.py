@@ -1,19 +1,44 @@
 """
-Peer Group Analysis Tool - News-based Entity Mining + Cosine Similarity
+Peer Group Analysis Tool - STL Trend Decomposition + LLM Fallback
 
 This module implements the Context-Aware Financial Analyst workflow:
 1. Entity Mining: Find co-mentioned companies from recent news
-2. Data Acquisition: Get 30-day prices for target + peers
-3. Vectorization: Convert prices to daily % change vectors
-4. Cosine Similarity: Calculate similarity on returns (not prices)
-5. Reference Proxy: Select peer with highest similarity (>0.7)
+2. LLM Fallback: If no peers found, use LLM to identify industry competitors
+3. STL Decomposition: Extract trend component (Seasonal-Trend-Loess)
+4. Pearson Correlation: Calculate trend similarity
+5. Reference Proxy: Select peer with correlation > 0.7 for Reflector verification
 """
 import json
 import re
 import numpy as np
 import yfinance as yf
-from typing import List, Dict, Tuple, Optional
+from typing import List, Dict, Tuple, Optional, Any
 from datetime import datetime, timedelta
+
+# Sector-based competitor mapping (fallback when LLM unavailable)
+SECTOR_COMPETITORS = {
+    # Korean Semiconductors
+    "005930.KS": ["000660.KS", "MU", "INTC"],      # 삼성전자 → SK하이닉스, 마이크론, 인텔
+    "000660.KS": ["005930.KS", "MU", "INTC"],      # SK하이닉스 → 삼성전자, 마이크론, 인텔
+    # Korean Auto
+    "005380.KS": ["000270.KS", "TSLA", "F"],       # 현대차 → 기아, 테슬라, 포드
+    "000270.KS": ["005380.KS", "TSLA", "GM"],      # 기아 → 현대차, 테슬라, GM
+    # Korean IT/Platform
+    "035420.KS": ["035720.KS", "GOOGL", "META"],   # 네이버 → 카카오, 구글, 메타
+    "035720.KS": ["035420.KS", "GOOGL", "META"],   # 카카오 → 네이버, 구글, 메타
+    # Korean Battery
+    "373220.KS": ["006400.KS", "CATL", "PANASONIC"], # LG에너지 → 삼성SDI, CATL
+    "006400.KS": ["373220.KS", "PANASONIC"],       # 삼성SDI → LG에너지
+    # US Tech Giants
+    "NVDA": ["AMD", "INTC", "TSM"],                # 엔비디아 → AMD, 인텔, TSMC
+    "AMD": ["NVDA", "INTC", "QCOM"],               # AMD → 엔비디아, 인텔
+    "AAPL": ["MSFT", "GOOGL", "AMZN"],             # 애플 → MS, 구글, 아마존
+    "MSFT": ["AAPL", "GOOGL", "AMZN"],             # MS → 애플, 구글, 아마존
+    "GOOGL": ["META", "MSFT", "AMZN"],             # 구글 → 메타, MS, 아마존
+    "META": ["GOOGL", "SNAP", "PINS"],             # 메타 → 구글, 스냅
+    "TSLA": ["005380.KS", "000270.KS", "F", "GM"], # 테슬라 → 현대, 기아, 포드, GM
+    "AMZN": ["MSFT", "GOOGL", "AAPL"],             # 아마존 → MS, 구글, 애플
+}
 
 # Known company name to ticker mapping - KOREAN MARKET
 KR_COMPANY_TICKER_MAP = {
@@ -267,15 +292,16 @@ def _get_momentum_status(ticker: str) -> Dict:
 def analyze_peer_group(
     ticker: str, 
     similarity_threshold: float = 0.7,
-    compare_with: List[str] = None
+    compare_with: Optional[List[str]] = None,
+    stl_days: int = 60
 ) -> str:
     """
     Analyze peer group using news entity mining or user-specified targets.
     
     Workflow:
     1. Entity Mining: Find top 5 co-mentioned companies from news (or use compare_with)
-    2. Data Acquisition: Get 60-day closing prices
-    3. STL Decomposition: Extract trend component
+    2. LLM/Sector Fallback: If no peers found, use SECTOR_COMPETITORS mapping
+    3. STL Decomposition: Extract trend component (configurable period)
     4. Pearson Correlation: Calculate trend similarity
     5. Reference Proxy: Select peer with correlation > threshold
     
@@ -283,6 +309,7 @@ def analyze_peer_group(
         ticker: Target stock ticker
         similarity_threshold: Minimum correlation for reference proxy (default 0.7)
         compare_with: List of tickers to compare with (bypasses news mining if provided)
+        stl_days: Number of days for STL analysis (default 60, min 14 for seasonal decomposition)
         
     Returns:
         JSON with peer analysis results
@@ -332,7 +359,7 @@ def analyze_peer_group(
             }
         
         # Step 2: Get price series and extract STL Trend for target
-        target_prices = _get_price_series(ticker, days=60)
+        target_prices = _get_price_series(ticker, days=stl_days)
         if target_prices is None:
             result["status"] = "partial"
             result["synthesis"] = "타겟 주식의 가격 데이터를 가져올 수 없습니다."
@@ -350,7 +377,7 @@ def analyze_peer_group(
         similarities = []
         
         for peer_ticker, mention_count in co_mentioned:
-            peer_prices = _get_price_series(peer_ticker, days=60)
+            peer_prices = _get_price_series(peer_ticker, days=stl_days)
             
             if peer_prices is None:
                 continue
