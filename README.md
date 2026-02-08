@@ -93,6 +93,21 @@ python test_agent_flow.py "SK하이닉스 분석"
 
 ---
 
+## 📊 Data Source Architecture (Hybrid)
+
+최적의 데이터 품질을 위해 **국내/해외 이원화 아키텍처**를 사용합니다.
+
+| Region | Data Type | Source | Description |
+|--------|-----------|--------|-------------|
+| **KR** 🇰🇷 | Price | `FinanceDataReader` | KRX/Naver 기반 정확한 수정주가 |
+| | Financials | `PyKRX` | PER, PBR, BPS 등 핵심 투자지표 크롤링 |
+| | Corporate | `yfinance` | 기업 개요, 섹터 정보 보완 |
+| **US** 🇺🇸 | All | `yfinance` | 글로벌 표준 데이터 |
+
+> **자동 번역 레이어**: `PyKRX`의 한글 데이터(예: "영업이익")는 내부적으로 영어 키(`operating_income`)로 자동 매핑되어 LLM이 일관되게 분석합니다.
+
+---
+
 ## 📂 Project Structure
 
 ```
@@ -215,6 +230,8 @@ agent/
 - [MCP Protocol](https://modelcontextprotocol.io) - Model Context Protocol
 - [Chronos Forecasting](https://github.com/amazon-science/chronos-forecasting) - 시계열 예측
 - [yfinance](https://github.com/ranaroussi/yfinance) - 주식 데이터
+- [FinanceDataReader](https://github.com/FinanceData/FinanceDataReader) - 한국 주식 가격
+- [PyKRX](https://github.com/sharebook-kr/pykrx) - 한국 주식 재무지표
 
 ---
 
