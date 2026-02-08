@@ -37,9 +37,16 @@ cp .env.example .env
 
 ### 3. Run
 
-#### 📱 웹 대시보드 (추천)
+#### 🎛️ 관리자 대시보드 (Admin)
+데이터 관리, 메모리 열람, 에이전트 설정을 위한 제어판입니다.
 ```bash
-source venv/bin/activate
+streamlit run src/dashboard/app.py
+```
+**접속**: http://localhost:8501
+
+#### 📱 사용자 웹 서비스 (Client)
+일반 사용자용 AI 채팅 인터페이스입니다.
+```bash
 python src/web/app.py
 ```
 **접속**: http://localhost:8000
@@ -99,8 +106,12 @@ agent/
     ├── mcp_server.py          # MCP Tool Server
     ├── memory_store.py        # Embedding 기반 메모리
     ├── driver_memory.py       # 📈 Driver Memory (주가 변동 원인)
+    ├── driver_memory.py       # 📈 Driver Memory (주가 변동 원인)
     ├── risk_manager.py        # 🎯 Risk Management
-    ├── web/                   # 📱 웹 대시보드
+    ├── dashboard/             # 🎛️ 관리자 대시보드 (Streamlit)
+    │   ├── app.py             # 대시보드 메인
+    │   └── pages/             # 대시보드 페이지 (Market Data, Memory, Settings)
+    ├── web/                   # 📱 사용자 웹 서비스 (FastAPI)
     │   ├── app.py             # FastAPI 서버
     │   ├── templates/         # HTML
     │   └── static/            # CSS
