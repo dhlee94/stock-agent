@@ -132,9 +132,29 @@ agent/
 | `stock_ai_predict` | 🤖 AI 예측 (Chronos) |
 | `stock_compare` | 다중 종목 비교 |
 | `stock_sector` | 섹터별 분석 |
-| `analyze_peers` | 📊 뉴스 Entity Mining + STL Trend 유사도 분석 |
+| `analyze_peers` | 📊 Peer Group 분석 (STL Trend + LLM 경쟁사 탐색) |
 
 ---
+
+## 📊 Peer Analysis System
+
+뉴스에서 경쟁사를 찾지 못하면 **LLM이 자동으로 Industry Benchmark 추론**:
+
+```
+"삼성전자 분석" → 뉴스 탐색 → 0건
+                ↓
+    🤖 LLM: "경쟁사는?" → [SK하이닉스, 마이크론]
+                ↓
+    STL Trend 상관관계 계산 → Reference Proxy 선정
+                ↓
+    Reflector 검증 (Confidence: High/Medium/Low)
+```
+
+**사용자 지정 비교:**
+```bash
+# "SK하이닉스랑 비교해서" 입력 시 직접 비교
+"삼성전자 분석해줘 SK하이닉스랑 비교해서"
+```
 
 ## 🎯 Risk Management Output
 
