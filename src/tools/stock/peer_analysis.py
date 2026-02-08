@@ -15,9 +15,8 @@ import yfinance as yf
 from typing import List, Dict, Tuple, Optional
 from datetime import datetime, timedelta
 
-# Known company name to ticker mapping
-COMPANY_TICKER_MAP = {
-    # Korean Companies
+# Known company name to ticker mapping - KOREAN MARKET
+KR_COMPANY_TICKER_MAP = {
     "삼성전자": "005930.KS",
     "삼성": "005930.KS",
     "SK하이닉스": "000660.KS",
@@ -33,8 +32,14 @@ COMPANY_TICKER_MAP = {
     "삼성SDI": "006400.KS",
     "포스코홀딩스": "005490.KS",
     "셀트리온": "068270.KS",
-    
-    # US Companies
+    "한화에어로스페이스": "012450.KS",
+    "현대모비스": "012330.KS",
+    "KB금융": "105560.KS",
+    "신한지주": "055550.KS",
+}
+
+# Known company name to ticker mapping - US MARKET
+US_COMPANY_TICKER_MAP = {
     "NVIDIA": "NVDA",
     "엔비디아": "NVDA",
     "Apple": "AAPL",
@@ -61,16 +66,37 @@ COMPANY_TICKER_MAP = {
     "마이크론": "MU",
 }
 
-# Reverse mapping for display
-TICKER_NAME_MAP = {v: k for k, v in COMPANY_TICKER_MAP.items()}
+
+def _detect_market(ticker: str) -> str:
+    """Detect market from ticker suffix."""
+    if ".KS" in ticker or ".KQ" in ticker:
+        return "KR"
+    return "US"
+
+
+def _get_company_map_for_market(market: str) -> dict:
+    """Get the appropriate company map for the target market."""
+    if market == "KR":
+        return KR_COMPANY_TICKER_MAP
+    return US_COMPANY_TICKER_MAP
+
+
+# Combined mapping for display names
+TICKER_NAME_MAP = {**{v: k for k, v in KR_COMPANY_TICKER_MAP.items()}, 
+                   **{v: k for k, v in US_COMPANY_TICKER_MAP.items()}}
 
 
 def _extract_entities_from_news(ticker: str, limit: int = 20) -> List[Tuple[str, int]]:
     """
     Extract co-mentioned company entities from recent news.
+    Only returns peers from the SAME MARKET (KR or US).
     Returns list of (company_name, mention_count) sorted by frequency.
     """
-    print(f"   🔍 [Entity Mining] Searching news for {ticker}...")
+    # Detect market of target ticker
+    market = _detect_market(ticker)
+    company_map = _get_company_map_for_market(market)
+    
+    print(f"   🔍 [Entity Mining] Searching news for {ticker} (Market: {market})...")
     
     try:
         stock = yf.Ticker(ticker)
@@ -87,8 +113,8 @@ def _extract_entities_from_news(ticker: str, limit: int = 20) -> List[Tuple[str,
             content = item.get('content', item)
             title = content.get('title', '')
             
-            # Search for known company names in title
-            for company_name, company_ticker in COMPANY_TICKER_MAP.items():
+            # Search for known company names in title (SAME MARKET ONLY)
+            for company_name, company_ticker in company_map.items():
                 # Skip if same as target
                 if company_ticker == ticker:
                     continue
@@ -100,7 +126,7 @@ def _extract_entities_from_news(ticker: str, limit: int = 20) -> List[Tuple[str,
         # Sort by mention count
         sorted_mentions = sorted(mention_counts.items(), key=lambda x: x[1], reverse=True)
         
-        print(f"   ✅ Found {len(sorted_mentions)} co-mentioned companies")
+        print(f"   ✅ Found {len(sorted_mentions)} co-mentioned {market} companies")
         return sorted_mentions[:5]  # Top 5
         
     except Exception as e:
