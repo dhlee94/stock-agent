@@ -176,7 +176,13 @@ IMPORTANT: For stock_news, use SPECIFIC keyword queries based on driver analysis
 BAD: {{"tool": "stock_news", "args": {{"query": "삼성전자"}}}}
 GOOD: {{"tool": "stock_news", "args": {{"query": "삼성전자 HBM 현황"}}}}
 
-Example output:
+IMPORTANT: For analyze_peers, check if user specified a comparison target:
+- If user says "SK랑 비교해서" or "AMD와 비교" → extract the company and add compare_with
+- "SK하이닉스", "SK" → "000660.KS"
+- "AMD" → "AMD"  
+- If no comparison target specified, omit compare_with (auto-search from news)
+
+Example output (without user-specified comparison):
 [
   {{"step": 1, "tool": "analyze_drivers", "args": {{"ticker": "005930.KS", "name": "삼성전자"}}, "reason": "Identify key price drivers"}},
   {{"step": 2, "tool": "stock_price", "args": {{"ticker": "005930.KS", "market": "KR"}}, "reason": "Get current price"}},
@@ -184,6 +190,13 @@ Example output:
   {{"step": 4, "tool": "stock_news", "args": {{"query": "삼성전자 HBM"}}, "reason": "Check HBM news (top driver)"}},
   {{"step": 5, "tool": "analyze_peers", "args": {{"ticker": "005930.KS"}}, "reason": "Find correlated stocks via news entity mining"}},
   {{"step": 6, "tool": "calculate_risk", "args": {{"ticker": "005930.KS", "market": "KR"}}, "reason": "Calculate Target Price and Stop-loss"}}
+]
+
+Example output (with user-specified "SK하이닉스랑 비교해서"):
+[
+  ...
+  {{"step": 5, "tool": "analyze_peers", "args": {{"ticker": "005930.KS", "compare_with": ["000660.KS"]}}, "reason": "Compare with user-specified SK하이닉스"}}
+  ...
 ]
 
 Output ONLY the JSON array, no other text."""},

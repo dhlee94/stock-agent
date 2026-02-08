@@ -151,22 +151,24 @@ def analyze_drivers(ticker: str, name: str = "") -> str:
 
 
 @mcp.tool()
-def analyze_peers(ticker: str, similarity_threshold: float = 0.7) -> str:
+def analyze_peers(ticker: str, similarity_threshold: float = 0.7, compare_with: list = None) -> str:
     """
-    Analyze peer group using news entity mining and cosine similarity on returns.
+    Analyze peer group using news entity mining or user-specified targets.
     
     Workflow:
-    1. Entity Mining: Find top 5 co-mentioned companies from news
-    2. Data Acquisition: Get 30-day closing prices
-    3. Vectorization: Convert to daily % change vectors (not prices)
-    4. Cosine Similarity: Calculate similarity on returns
-    5. Reference Proxy: Select peer with similarity > threshold
+    1. Entity Mining: Find co-mentioned companies from news (or use compare_with)
+    2. Data Acquisition: Get 60-day closing prices
+    3. STL Decomposition: Extract trend component
+    4. Pearson Correlation: Calculate trend similarity
+    5. Reference Proxy: Select peer with correlation > threshold
     
     Args:
         ticker: Stock ticker symbol (e.g., "005930.KS", "NVDA")
-        similarity_threshold: Minimum cosine similarity to select reference proxy (default 0.7)
+        similarity_threshold: Minimum correlation for reference proxy (default 0.7)
+        compare_with: List of tickers to compare with (e.g., ["000660.KS"]). 
+                     If provided, bypasses news mining and directly compares with these tickers.
     """
-    return analyze_peer_group(ticker, similarity_threshold)
+    return analyze_peer_group(ticker, similarity_threshold, compare_with)
 
 
 @mcp.tool()

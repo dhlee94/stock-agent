@@ -264,20 +264,25 @@ def _get_momentum_status(ticker: str) -> Dict:
         return {"status": "error"}
 
 
-def analyze_peer_group(ticker: str, similarity_threshold: float = 0.7) -> str:
+def analyze_peer_group(
+    ticker: str, 
+    similarity_threshold: float = 0.7,
+    compare_with: List[str] = None
+) -> str:
     """
-    Analyze peer group using news entity mining and cosine similarity on returns.
+    Analyze peer group using news entity mining or user-specified targets.
     
     Workflow:
-    1. Entity Mining: Find top 5 co-mentioned companies from news
-    2. Data Acquisition: Get 30-day closing prices
-    3. Vectorization: Convert to daily % change vectors
-    4. Cosine Similarity: Calculate similarity on returns
-    5. Reference Proxy: Select peer with similarity > threshold
+    1. Entity Mining: Find top 5 co-mentioned companies from news (or use compare_with)
+    2. Data Acquisition: Get 60-day closing prices
+    3. STL Decomposition: Extract trend component
+    4. Pearson Correlation: Calculate trend similarity
+    5. Reference Proxy: Select peer with correlation > threshold
     
     Args:
         ticker: Target stock ticker
-        similarity_threshold: Minimum similarity for reference proxy (default 0.7)
+        similarity_threshold: Minimum correlation for reference proxy (default 0.7)
+        compare_with: List of tickers to compare with (bypasses news mining if provided)
         
     Returns:
         JSON with peer analysis results
@@ -295,22 +300,36 @@ def analyze_peer_group(ticker: str, similarity_threshold: float = 0.7) -> str:
     }
     
     try:
-        # Step 1: Entity Mining
-        co_mentioned = _extract_entities_from_news(ticker, limit=20)
-        
-        if not co_mentioned:
+        # Step 1: Entity Mining (or use user-specified targets)
+        if compare_with and len(compare_with) > 0:
+            # User specified comparison targets - skip news mining
+            print(f"   📌 [User Specified] Comparing with: {compare_with}")
+            co_mentioned = [(t, 0) for t in compare_with]  # 0 mentions since user-specified
             result["entity_mining"] = {
-                "found_peers": 0,
-                "note": "No co-mentioned companies found in recent news"
+                "found_peers": len(compare_with),
+                "mode": "user_specified",
+                "peers": [{"ticker": t, "name": TICKER_NAME_MAP.get(t, t), "mentions": 0} 
+                          for t in compare_with]
             }
-            result["synthesis"] = "뉴스에서 연관 기업을 찾지 못했습니다. 독립적으로 분석합니다."
-            return json.dumps(result, ensure_ascii=False)
-        
-        result["entity_mining"] = {
-            "found_peers": len(co_mentioned),
-            "peers": [{"ticker": t, "name": TICKER_NAME_MAP.get(t, t), "mentions": c} 
-                      for t, c in co_mentioned]
-        }
+        else:
+            # Auto-search from news
+            co_mentioned = _extract_entities_from_news(ticker, limit=20)
+            
+            if not co_mentioned:
+                result["entity_mining"] = {
+                    "found_peers": 0,
+                    "mode": "news_mining",
+                    "note": "No co-mentioned companies found in recent news"
+                }
+                result["synthesis"] = "뉴스에서 연관 기업을 찾지 못했습니다. 독립적으로 분석합니다."
+                return json.dumps(result, ensure_ascii=False)
+            
+            result["entity_mining"] = {
+                "found_peers": len(co_mentioned),
+                "mode": "news_mining",
+                "peers": [{"ticker": t, "name": TICKER_NAME_MAP.get(t, t), "mentions": c} 
+                          for t, c in co_mentioned]
+            }
         
         # Step 2: Get price series and extract STL Trend for target
         target_prices = _get_price_series(ticker, days=60)
