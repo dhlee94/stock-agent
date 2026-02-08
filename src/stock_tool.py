@@ -3,6 +3,11 @@ Stock Analysis Tool - Wrapper for StockBrain
 """
 import sys
 import os
+import base64
+
+# Monkey patch for libraries using deprecated base64.decodestring
+if not hasattr(base64, "decodestring"):
+    base64.decodestring = base64.decodebytes
 
 # Add stock-price-predictor to path
 STOCK_PREDICTOR_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "stock-price-predictor")

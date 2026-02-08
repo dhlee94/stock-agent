@@ -1,6 +1,11 @@
 import torch
 import sys
 import os
+import base64
+
+# Monkey patch for libraries using deprecated base64.decodestring
+if not hasattr(base64, "decodestring"):
+    base64.decodestring = base64.decodebytes
 #system 경로 설정
 sys.path.append(os.getcwd())
 os.environ["USE_TORCH"] = "1"              # HuggingFace가 PyTorch만 찾도록 강제
