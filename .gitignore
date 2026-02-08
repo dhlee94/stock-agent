@@ -55,3 +55,8 @@ memory_store.json
 .ipynb_checkpoints/
 procedural_memory.json
 driver_memory.json
+
+# Data Directory
+data/*.db
+data/driver_memory.json
+data/procedural_memory.json

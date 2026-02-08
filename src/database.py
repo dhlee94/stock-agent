@@ -14,7 +14,7 @@ from datetime import datetime
 from contextlib import contextmanager
 
 # Database path
-DB_PATH = os.path.join(os.path.dirname(__file__), '..', 'memento.db')
+DB_PATH = os.path.join(os.path.dirname(__file__), '..', 'data', 'memento.db')
 DB_PATH = os.path.normpath(DB_PATH)
 
 
@@ -293,7 +293,7 @@ def get_tool_stats() -> List[Dict[str, Any]]:
 
 def migrate_from_json():
     """Migrate data from JSON files to SQLite."""
-    base_path = os.path.join(os.path.dirname(__file__), '..')
+    base_path = os.path.join(os.path.dirname(__file__), '..', 'data')
     
     # 1. Migrate sector_competitors.json
     sector_json_path = os.path.join(base_path, 'sector_competitors.json')
