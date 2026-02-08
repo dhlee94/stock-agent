@@ -147,25 +147,33 @@ class DriverMemory:
     def _call_llm(self, prompt: str) -> str:
         """Call LLM for keyword extraction."""
         if LLM_PROVIDER == "groq" and GROQ_API_KEY:
-            from groq import Groq
-            client = Groq(api_key=GROQ_API_KEY)
-            response = client.chat.completions.create(
-                model="llama-3.3-70b-versatile",
-                messages=[{"role": "user", "content": prompt}],
-                temperature=0.3,
-                max_tokens=500
-            )
-            return response.choices[0].message.content
-        else:
-            # Fallback to Gemini
-            import google.generativeai as genai
-            GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY") or os.environ.get("GOOGLE_API_KEY")
-            if GEMINI_API_KEY:
+            try:
+                from groq import Groq
+                client = Groq(api_key=GROQ_API_KEY)
+                response = client.chat.completions.create(
+                    model="llama-3.3-70b-versatile",
+                    messages=[{"role": "user", "content": prompt}],
+                    temperature=0.3,
+                    max_tokens=500
+                )
+                return response.choices[0].message.content
+            except Exception as e:
+                print(f"   ⚠️ Groq error: {e}. Falling back to Gemini...")
+                # Fallback continues below
+        
+        # Fallback to Gemini
+        import google.generativeai as genai
+        GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY") or os.environ.get("GOOGLE_API_KEY")
+        if GEMINI_API_KEY:
+            try:
                 genai.configure(api_key=GEMINI_API_KEY)
                 model = genai.GenerativeModel("gemini-2.0-flash")
                 response = model.generate_content(prompt)
                 return response.text
-            return ""
+            except Exception as e:
+                print(f"   ⚠️ Gemini error: {e}")
+                return ""
+        return ""
     
     def analyze_historical_drivers(self, ticker: str, name: str = "") -> Dict[str, Any]:
         """
