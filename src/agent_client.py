@@ -1,6 +1,7 @@
 import asyncio
 import os
 import json
+from database import get_setting
 import re
 import time
 from typing import List, Dict, Any
@@ -135,6 +136,9 @@ class MementoAgent:
         """
         print("\n📋 [Planner] Generating execution plan...")
         
+        # Get settings
+        search_depth = int(get_setting("search_depth", "3"))
+
         # Build driver context
         driver_context = ""
         if driver_info:
@@ -148,6 +152,7 @@ Example: Instead of "삼성전자 뉴스", search "삼성전자 HBM" or "삼성�
         planner_prompt = [
             {"role": "system", "content": f"""You are a Planning Agent for stock analysis.
 Your job is to create a detailed execution plan for the given task.
+Target Plan Length: Approximately {search_depth} to {search_depth + 2} steps.
 
 ## CRITICAL WORKFLOW
 1. **Identify Entity**: Extract the stock ticker from user's request
@@ -303,6 +308,9 @@ Provide your final analysis and recommendation (include Target Price, Stop-loss,
         """
         print("\n🔍 [Reflector] Self-reflection in progress...")
         
+        # Get settings
+        risk_tolerance = get_setting("risk_tolerance", "Medium")
+
         # Reference Proxy Verification
         confidence_level = "Medium"
         verification_notes = []
@@ -362,6 +370,9 @@ Your job is to review the analysis and check for:
 
 If issues are found, provide a REVISED analysis.
 If no issues, respond with: "APPROVED: [original analysis]"
+
+5. **Risk Tolerance Adjustment**:
+   - User's Risk Tolerance: **{risk_tolerance}**
 """},
             {"role": "user", "content": f"""Task: {user_task}
 
@@ -418,6 +429,10 @@ Review this analysis and either approve it or provide a revised version:"""}
 - 📈 Fundamental Analysis: PER, PBR, ROE, EPS, Financial Statements
 - 🤖 AI-Powered Prediction: Chronos time-series + FinBERT sentiment
 - 📰 Real-time News & Market Sentiment Analysis
+
+## User Configuration
+- **Risk Tolerance**: {get_setting("risk_tolerance", "Medium")}
+- **Default Market**: {get_setting("default_market", "KR")}
 
 ## Your Task
 {user_task}
