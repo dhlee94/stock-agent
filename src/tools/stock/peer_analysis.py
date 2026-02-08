@@ -16,28 +16,120 @@ from typing import List, Dict, Tuple, Optional, Any
 from datetime import datetime, timedelta
 
 # Sector-based competitor mapping (fallback when LLM unavailable)
+# Comprehensive database covering major Korean and US stocks
 SECTOR_COMPETITORS = {
-    # Korean Semiconductors
-    "005930.KS": ["000660.KS", "MU", "INTC"],      # 삼성전자 → SK하이닉스, 마이크론, 인텔
-    "000660.KS": ["005930.KS", "MU", "INTC"],      # SK하이닉스 → 삼성전자, 마이크론, 인텔
-    # Korean Auto
-    "005380.KS": ["000270.KS", "TSLA", "F"],       # 현대차 → 기아, 테슬라, 포드
-    "000270.KS": ["005380.KS", "TSLA", "GM"],      # 기아 → 현대차, 테슬라, GM
-    # Korean IT/Platform
-    "035420.KS": ["035720.KS", "GOOGL", "META"],   # 네이버 → 카카오, 구글, 메타
-    "035720.KS": ["035420.KS", "GOOGL", "META"],   # 카카오 → 네이버, 구글, 메타
-    # Korean Battery
-    "373220.KS": ["006400.KS", "CATL", "PANASONIC"], # LG에너지 → 삼성SDI, CATL
-    "006400.KS": ["373220.KS", "PANASONIC"],       # 삼성SDI → LG에너지
-    # US Tech Giants
-    "NVDA": ["AMD", "INTC", "TSM"],                # 엔비디아 → AMD, 인텔, TSMC
-    "AMD": ["NVDA", "INTC", "QCOM"],               # AMD → 엔비디아, 인텔
-    "AAPL": ["MSFT", "GOOGL", "AMZN"],             # 애플 → MS, 구글, 아마존
-    "MSFT": ["AAPL", "GOOGL", "AMZN"],             # MS → 애플, 구글, 아마존
-    "GOOGL": ["META", "MSFT", "AMZN"],             # 구글 → 메타, MS, 아마존
-    "META": ["GOOGL", "SNAP", "PINS"],             # 메타 → 구글, 스냅
-    "TSLA": ["005380.KS", "000270.KS", "F", "GM"], # 테슬라 → 현대, 기아, 포드, GM
-    "AMZN": ["MSFT", "GOOGL", "AAPL"],             # 아마존 → MS, 구글, 애플
+    # ═══════════════════════════════════════════════════════════════
+    # 🇰🇷 KOREAN MARKET
+    # ═══════════════════════════════════════════════════════════════
+    
+    # === Semiconductors (반도체) ===
+    "005930.KS": ["000660.KS", "MU", "INTC", "TSM"],      # 삼성전자
+    "000660.KS": ["005930.KS", "MU", "INTC", "TSM"],      # SK하이닉스
+    
+    # === Electronics (전자) ===
+    "066570.KS": ["005930.KS", "AAPL", "SNE"],            # LG전자
+    
+    # === Automotive (자동차) ===
+    "005380.KS": ["000270.KS", "TSLA", "F", "GM", "TM"],  # 현대차
+    "000270.KS": ["005380.KS", "TSLA", "F", "GM", "TM"],  # 기아
+    "012330.KS": ["005380.KS", "000270.KS", "F"],         # 현대모비스
+    
+    # === IT/Platform (플랫폼) ===
+    "035420.KS": ["035720.KS", "GOOGL", "META", "BIDU"],  # 네이버
+    "035720.KS": ["035420.KS", "GOOGL", "META", "BIDU"],  # 카카오
+    
+    # === Battery/EV (배터리) ===
+    "373220.KS": ["006400.KS", "CATL", "PANASONIC"],      # LG에너지솔루션
+    "006400.KS": ["373220.KS", "PANASONIC", "BYD"],       # 삼성SDI
+    "051910.KS": ["373220.KS", "006400.KS"],              # LG화학
+    
+    # === Steel/Materials (철강/소재) ===
+    "005490.KS": ["005010.KS", "NUE", "X"],               # 포스코홀딩스
+    "005010.KS": ["005490.KS", "NUE"],                    # 휴스틸
+    
+    # === Bio/Pharma (바이오/제약) ===
+    "068270.KS": ["207940.KS", "BIIB", "GILD"],           # 셀트리온
+    "207940.KS": ["068270.KS", "JNJ", "PFE"],             # 삼성바이오로직스
+    "128940.KS": ["068270.KS", "207940.KS"],              # 한미약품
+    
+    # === Finance (금융) ===
+    "105560.KS": ["055550.KS", "086790.KS", "JPM"],       # KB금융
+    "055550.KS": ["105560.KS", "086790.KS", "BAC"],       # 신한지주
+    "086790.KS": ["105560.KS", "055550.KS"],              # 하나금융지주
+    
+    # === Defense/Aerospace (방산/항공) ===
+    "012450.KS": ["047810.KS", "LMT", "RTX"],             # 한화에어로스페이스
+    "047810.KS": ["012450.KS", "LMT", "GD"],              # 한국항공우주
+    
+    # === Shipbuilding (조선) ===
+    "009540.KS": ["010140.KS", "329180.KS"],              # 한국조선해양
+    "010140.KS": ["009540.KS", "329180.KS"],              # 삼성중공업
+    "329180.KS": ["009540.KS", "010140.KS"],              # HD현대중공업
+    
+    # === Entertainment (엔터) ===
+    "352820.KS": ["122870.KS", "NFLX", "DIS"],            # 하이브
+    "122870.KS": ["352820.KS", "041510.KS"],              # YG엔터
+    "041510.KS": ["352820.KS", "122870.KS"],              # SM엔터
+    
+    # ═══════════════════════════════════════════════════════════════
+    # 🇺🇸 US MARKET
+    # ═══════════════════════════════════════════════════════════════
+    
+    # === AI/GPU/Semiconductors ===
+    "NVDA": ["AMD", "INTC", "TSM", "AVGO"],               # NVIDIA
+    "AMD": ["NVDA", "INTC", "QCOM", "TSM"],               # AMD
+    "INTC": ["AMD", "NVDA", "TSM", "QCOM"],               # Intel
+    "TSM": ["NVDA", "AMD", "INTC", "005930.KS"],          # TSMC
+    "AVGO": ["QCOM", "TXN", "ADI"],                       # Broadcom
+    "QCOM": ["AVGO", "AMD", "INTC"],                      # Qualcomm
+    "MU": ["005930.KS", "000660.KS", "INTC"],             # Micron
+    
+    # === Big Tech (FAANG+) ===
+    "AAPL": ["MSFT", "GOOGL", "AMZN", "META"],            # Apple
+    "MSFT": ["AAPL", "GOOGL", "AMZN", "CRM"],             # Microsoft
+    "GOOGL": ["META", "MSFT", "AMZN", "035420.KS"],       # Google
+    "AMZN": ["MSFT", "GOOGL", "AAPL", "WMT"],             # Amazon
+    "META": ["GOOGL", "SNAP", "PINS", "035720.KS"],       # Meta
+    
+    # === EV/Auto ===
+    "TSLA": ["005380.KS", "000270.KS", "F", "GM", "RIVN"],# Tesla
+    "F": ["GM", "TSLA", "005380.KS", "TM"],               # Ford
+    "GM": ["F", "TSLA", "000270.KS", "TM"],               # GM
+    "RIVN": ["TSLA", "LCID", "NIO"],                      # Rivian
+    "NIO": ["TSLA", "XPEV", "LI"],                        # NIO
+    
+    # === Cloud/SaaS ===
+    "CRM": ["MSFT", "NOW", "ORCL"],                       # Salesforce
+    "NOW": ["CRM", "MSFT", "WDAY"],                       # ServiceNow
+    "ORCL": ["CRM", "MSFT", "SAP"],                       # Oracle
+    
+    # === Streaming/Entertainment ===
+    "NFLX": ["DIS", "WBD", "PARA", "352820.KS"],          # Netflix
+    "DIS": ["NFLX", "WBD", "PARA"],                       # Disney
+    
+    # === Finance ===
+    "JPM": ["BAC", "GS", "MS", "105560.KS"],              # JP Morgan
+    "BAC": ["JPM", "WFC", "C"],                           # Bank of America
+    "GS": ["MS", "JPM", "BAC"],                           # Goldman Sachs
+    "V": ["MA", "PYPL", "SQ"],                            # Visa
+    "MA": ["V", "PYPL", "AXP"],                           # Mastercard
+    
+    # === Pharma/Biotech ===
+    "JNJ": ["PFE", "MRK", "ABBV"],                        # Johnson & Johnson
+    "PFE": ["JNJ", "MRK", "MRNA"],                        # Pfizer
+    "MRNA": ["PFE", "BNTX", "NVAX"],                      # Moderna
+    
+    # === Defense ===
+    "LMT": ["RTX", "NOC", "GD", "012450.KS"],             # Lockheed Martin
+    "RTX": ["LMT", "NOC", "BA"],                          # Raytheon
+    
+    # === Retail ===
+    "WMT": ["TGT", "COST", "AMZN"],                       # Walmart
+    "COST": ["WMT", "TGT", "BJ"],                         # Costco
+    
+    # === Energy ===
+    "XOM": ["CVX", "COP", "BP"],                          # Exxon
+    "CVX": ["XOM", "COP", "SLB"],                         # Chevron
 }
 
 # Known company name to ticker mapping - KOREAN MARKET
