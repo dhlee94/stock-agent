@@ -160,6 +160,8 @@ def main():
     
     tech_data = None
     current_price = 0
+    peer_context = None  # Store Reference Proxy for Reflector verification
+    risk_result = None
     
     for step in mock_plan:
         tool_name = step["tool"]
@@ -202,11 +204,28 @@ def main():
                 result_data = json.loads(result)
                 peers_found = result_data.get("entity_mining", {}).get("found_peers", 0)
                 similarities = result_data.get("similarity_analysis", [])
+                reference_proxy = result_data.get("reference_proxy")
+                synthesis = result_data.get("synthesis", "")
+                
+                # Store for Reflector verification
+                peer_context = {
+                    "peers_found": peers_found,
+                    "similarities": similarities,
+                    "reference_proxy": reference_proxy,
+                    "synthesis": synthesis,
+                    "has_high_correlation": reference_proxy is not None
+                }
                 
                 if peers_found > 0 and similarities:
                     top_peer = similarities[0]
                     log("EXECUTOR", "📊", f"[STL Trend] Found {peers_found} peers", Colors.GREEN)
                     log("EXECUTOR", "🔗", f"Top correlation: {top_peer['name']} ({top_peer['trend_correlation']:.2f})", Colors.CYAN)
+                    
+                    if reference_proxy:
+                        proxy_trend = reference_proxy.get("momentum", {}).get("trend", "unknown")
+                        log("EXECUTOR", "✅", f"Reference Proxy: {reference_proxy['name']} ({proxy_trend})", Colors.GREEN)
+                    else:
+                        log("EXECUTOR", "⚠️", "No Reference Proxy (correlation < 0.7)", Colors.YELLOW)
                 else:
                     log("EXECUTOR", "⚠️", "No correlated peers found in same market", Colors.YELLOW)
                 
@@ -228,16 +247,63 @@ def main():
         print()
     
     # =========================================================
-    # STEP 4: Final Summary
+    # STEP 4: Reflector - Self-Verification with Reference Proxy
     # =========================================================
-    log("REFLECTOR", "🔍", "Self-reflection check...", Colors.CYAN)
+    log("REFLECTOR", "🔍", "Self-reflection & Reference Proxy Verification...", Colors.CYAN)
     print(f"         Market Detection: ✅ ({market})")
-    print(f"         Risk Calculated: ✅" if tech_data else "         Risk Calculated: ⚠️")
+    print(f"         Risk Calculated: ✅" if risk_result else "         Risk Calculated: ⚠️")
     print(f"         Multi-lang News: ✅" if market == "US" else "         Multi-lang News: N/A (KR)")
-    print()
     
+    # Reference Proxy Verification
+    confidence_level = "Medium"
+    verification_notes = []
+    
+    if peer_context:
+        if peer_context.get("has_high_correlation") and peer_context.get("reference_proxy"):
+            proxy = peer_context["reference_proxy"]
+            proxy_name = proxy.get("name", "Unknown")
+            proxy_trend = proxy.get("momentum", {}).get("trend", "unknown")
+            proxy_corr = proxy.get("trend_correlation", 0)
+            
+            # Check if our analysis aligns with proxy trend
+            if tech_data:
+                our_signal = tech_data.get("recommendation", "HOLD")
+                
+                # Alignment check
+                proxy_bullish = proxy_trend == "bullish"
+                our_bullish = our_signal in ["BUY", "STRONG_BUY"]
+                our_bearish = our_signal in ["SELL", "STRONG_SELL"]
+                
+                if (proxy_bullish and our_bullish) or (not proxy_bullish and our_bearish):
+                    confidence_level = "High"
+                    verification_notes.append(f"✅ Aligned with {proxy_name} ({proxy_trend})")
+                elif proxy_bullish and our_bearish:
+                    confidence_level = "Low"
+                    verification_notes.append(f"⚠️ Divergent: {proxy_name} is {proxy_trend} but signal is {our_signal}")
+                elif not proxy_bullish and our_bullish:
+                    confidence_level = "Low"
+                    verification_notes.append(f"⚠️ Divergent: {proxy_name} is {proxy_trend} but signal is {our_signal}")
+                else:
+                    verification_notes.append(f"📊 Reference: {proxy_name} ({proxy_trend}, corr={proxy_corr:.2f})")
+            
+            log("REFLECTOR", "🔗", f"Reference Proxy Verified: {proxy_name} (Trend: {proxy_trend})", Colors.CYAN)
+        else:
+            verification_notes.append("⚠️ No high-correlation proxy found - independent analysis only")
+            log("REFLECTOR", "⚠️", "No Reference Proxy - relying on independent signals", Colors.YELLOW)
+    else:
+        verification_notes.append("⚠️ Peer analysis not available")
+    
+    # Show verification result
+    print()
+    log("REFLECTOR", "📋", f"Confidence Level: {Colors.BOLD}{confidence_level}{Colors.END}", 
+        Colors.GREEN if confidence_level == "High" else (Colors.YELLOW if confidence_level == "Medium" else Colors.RED))
+    
+    for note in verification_notes:
+        print(f"         {note}")
+    
+    print()
     print(f"{Colors.BOLD}{'='*60}{Colors.END}")
-    log("RESULT", "🎯", f"Analysis Complete for {Colors.BOLD}{company_name}{Colors.END}", Colors.GREEN)
+    log("RESULT", "🎯", f"Analysis Complete for {Colors.BOLD}{company_name}{Colors.END} (Confidence: {confidence_level})", Colors.GREEN)
     print(f"{Colors.BOLD}{'='*60}{Colors.END}")
     print()
     
