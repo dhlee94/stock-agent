@@ -18,35 +18,73 @@ st.set_page_config(
 # Custom CSS
 st.markdown("""
 <style>
+    @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&display=swap');
+    
+    html, body, [class*="css"] {
+        font-family: 'Inter', sans-serif;
+    }
+    
     .stApp {
         background-color: #0e1117;
     }
+    
+    /* Metrics Card Styling */
     .metric-card {
         background-color: #262730;
         border: 1px solid #464b5f;
         padding: 20px;
         border-radius: 10px;
-        box-shadow: 2px 2px 10px rgba(0,0,0,0.3);
+        box-shadow: 0 4px 6px rgba(0,0,0,0.1);
         text-align: center;
-        transition: transform 0.2s;
+        transition: all 0.3s ease;
     }
     .metric-card:hover {
         transform: translateY(-5px);
+        box-shadow: 0 8px 15px rgba(0,0,0,0.2);
         border-color: #ff4b4b;
     }
     .metric-label {
         font-size: 14px;
+        font-weight: 600;
         color: #babcbf;
-        margin-bottom: 5px;
+        margin-bottom: 8px;
+        text-transform: uppercase;
+        letter-spacing: 0.5px;
     }
     .metric-value {
-        font-size: 32px;
-        font-weight: bold;
+        font-size: 36px;
+        font-weight: 700;
         color: #ffffff;
+        margin-bottom: 4px;
     }
+    .metric-icon {
+        font-size: 20px;
+        margin-top: 10px;
+        opacity: 0.8;
+    }
+    
+    /* DataFrame Styling */
     .stDataFrame {
         border: 1px solid #464b5f;
         border-radius: 5px;
+        overflow: hidden;
+    }
+
+    /* Mobile Responsiveness */
+    @media (max-width: 768px) {
+        .metric-card {
+            padding: 15px;
+            margin-bottom: 10px;
+        }
+        .metric-value {
+            font-size: 28px;
+        }
+        .metric-label {
+            font-size: 12px;
+        }
+        h1 {
+            font-size: 24px !important;
+        }
     }
 </style>
 """, unsafe_allow_html=True)
