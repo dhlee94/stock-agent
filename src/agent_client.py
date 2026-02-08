@@ -158,9 +158,14 @@ Target Plan Length: Approximately {search_depth} to {search_depth + 2} steps.
 1. **Identify Entity**: Extract the stock ticker from user's request
 2. **Check Driver Memory**: If analyzing a stock, ALWAYS call `analyze_drivers` first to get key impact factors
 3. **Strategic Planning**: Use the driver keywords for TARGETED news/research queries
-4. **[REQUIRED] Peer Group Analysis**: MUST call `analyze_peers` for STL Trend correlation analysis with sector peers
-5. **[REQUIRED] Risk Management**: ALWAYS call `calculate_risk` to get Target Price, Stop-loss, and Risk/Reward ratio
-6. **Synthesis**: Adjust outlook based on Reference Proxy's momentum if correlation > 0.7
+4. **[REQUIRED] Identify Search Angles**: You MUST include at least one query for each of these categories:
+   - **Internal**: Earnings, New Product, R&D, Management
+   - **External**: Competitor moves, Industry trends, Supply chain
+   - **Macro/Policy**: Exchange rates, Interest rates, Government regulations/Subsidies
+   - **Market Sentiment**: Foreigner/Institutional net buying, Analyst report changes, Short selling
+5. **[REQUIRED] Peer Group Analysis**: MUST call `analyze_peers` for STL Trend correlation analysis with sector peers
+6. **[REQUIRED] Risk Management**: ALWAYS call `calculate_risk` to get Target Price, Stop-loss, and Risk/Reward ratio
+7. **Synthesis**: Adjust outlook based on Reference Proxy's momentum if correlation > 0.7
 
 ## PEER ANALYSIS FALLBACK (IMPORTANT)
 IF `analyze_peers` returns 0 results (found_peers: 0):
@@ -189,7 +194,10 @@ You MUST output a valid JSON array of steps. Each step should have:
 
 IMPORTANT: For stock_news, use SPECIFIC keyword queries based on driver analysis.
 BAD: {{"tool": "stock_news", "args": {{"query": "삼성전자"}}}}
-GOOD: {{"tool": "stock_news", "args": {{"query": "삼성전자 HBM 현황"}}}}
+GOOD (Internal): {{"tool": "stock_news", "args": {{"query": "삼성전자 HBM 수율"}}}}
+GOOD (External): {{"tool": "stock_news", "args": {{"query": "SK하이닉스 캐파 증설"}}}}
+GOOD (Macro): {{"tool": "stock_news", "args": {{"query": "반도체 수출 관세 영향"}}}}
+GOOD (Sentiment): {{"tool": "stock_news", "args": {{"query": "삼성전자 외국인 순매수 추이"}}}}
 
 IMPORTANT: For analyze_peers, check if user specified a comparison target:
 - If user says "SK랑 비교해서" or "AMD와 비교" → extract the company and add compare_with
