@@ -153,9 +153,11 @@ Your job is to create a detailed execution plan for the given task.
 1. **Identify Entity**: Extract the stock ticker from user's request
 2. **Check Driver Memory**: If analyzing a stock, ALWAYS call `analyze_drivers` first to get key impact factors
 3. **Strategic Planning**: Use the driver keywords for TARGETED news/research queries
-4. **Peer Group Analysis**: Call `analyze_peers` to find correlated stocks using news entity mining and cosine similarity on returns
-5. **Risk Management**: ALWAYS call `calculate_risk` to get Target Price, Stop-loss, and Risk/Reward ratio
-6. **Synthesis**: Adjust outlook based on Reference Proxy's momentum if similarity > 0.7
+4. **[REQUIRED] Peer Group Analysis**: MUST call `analyze_peers` for STL Trend correlation analysis with sector peers
+5. **[REQUIRED] Risk Management**: ALWAYS call `calculate_risk` to get Target Price, Stop-loss, and Risk/Reward ratio
+6. **Synthesis**: Adjust outlook based on Reference Proxy's momentum if correlation > 0.7
+
+⚠️ MANDATORY STEPS: You MUST include BOTH `analyze_peers` AND `calculate_risk` in EVERY plan.
 {driver_context}
 ## Available Tools
 {tool_descriptions}

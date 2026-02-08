@@ -140,7 +140,8 @@ def main():
         {"step": 2, "tool": "stock_price", "args": {"ticker": ticker, "market": market}, "reason": "Get current price"},
         {"step": 3, "tool": "stock_news", "args": {"ticker": ticker, "query": f"{company_name} {drivers[0] if drivers else ''}"}, "reason": f"Search {'English' if market == 'US' else 'Korean'} news"},
         {"step": 4, "tool": "stock_technical", "args": {"ticker": ticker}, "reason": "Technical analysis"},
-        {"step": 5, "tool": "calculate_risk", "args": {"ticker": ticker, "market": market}, "reason": "Calculate Target/Stop-loss"},
+        {"step": 5, "tool": "analyze_peers", "args": {"ticker": ticker}, "reason": "STL Trend correlation with sector peers"},
+        {"step": 6, "tool": "calculate_risk", "args": {"ticker": ticker, "market": market}, "reason": "Calculate Target/Stop-loss"},
     ]
     
     log("PLANNER", "✅", f"Plan created with {len(mock_plan)} steps:", Colors.GREEN)
@@ -154,7 +155,7 @@ def main():
     # =========================================================
     log("EXECUTOR", "🛠️", "Executing tools...", Colors.YELLOW)
     
-    from tools.stock import get_stock_price, technical_analysis, get_market_news
+    from tools.stock import get_stock_price, technical_analysis, get_market_news, analyze_peer_group
     from risk_manager import calculate_risk_levels
     
     tech_data = None
@@ -195,6 +196,19 @@ def main():
                 
             elif tool_name == "analyze_drivers":
                 log("EXECUTOR", "🧠", "Using cached drivers", Colors.GREEN)
+            
+            elif tool_name == "analyze_peers":
+                result = analyze_peer_group(args.get("ticker"))
+                result_data = json.loads(result)
+                peers_found = result_data.get("entity_mining", {}).get("found_peers", 0)
+                similarities = result_data.get("similarity_analysis", [])
+                
+                if peers_found > 0 and similarities:
+                    top_peer = similarities[0]
+                    log("EXECUTOR", "📊", f"[STL Trend] Found {peers_found} peers", Colors.GREEN)
+                    log("EXECUTOR", "🔗", f"Top correlation: {top_peer['name']} ({top_peer['trend_correlation']:.2f})", Colors.CYAN)
+                else:
+                    log("EXECUTOR", "⚠️", "No correlated peers found in same market", Colors.YELLOW)
                 
             elif tool_name == "calculate_risk":
                 if tech_data and current_price > 0:
