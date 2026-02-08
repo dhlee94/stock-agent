@@ -9,6 +9,26 @@ from database import get_connection
 st.set_page_config(page_title="Market Data", page_icon="📊", layout="wide")
 st.title("📊 Market Data Management")
 
+import plotly.express as px
+
+# Overview Chart
+with get_connection() as conn:
+    try:
+        sector_counts = pd.read_sql("""
+            SELECT s.name_kr, COUNT(t.ticker) as count 
+            FROM sectors s 
+            LEFT JOIN tickers t ON s.id = t.sector_id 
+            GROUP BY s.name_kr
+        """, conn)
+        
+        if not sector_counts.empty:
+            st.caption("Sector Distribution")
+            fig = px.pie(sector_counts, values='count', names='name_kr', hole=0.4)
+            fig.update_layout(margin=dict(t=0, b=0, l=0, r=0), height=300)
+            st.plotly_chart(fig, use_container_width=True)
+    except Exception:
+        pass
+
 tab1, tab2, tab3 = st.tabs(["Tickers", "Sectors", "Competitors"])
 
 with tab1:
