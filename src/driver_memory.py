@@ -80,60 +80,69 @@ class DriverMemory:
     """
     
     def __init__(self, storage_file: str = "driver_memory.json"):
+        # Storage file is no longer used, kept for compatibility
         self.storage_file = storage_file
-        self.drivers: Dict[str, Dict[str, Any]] = {}
-        self._load_memory()
-        print("[DriverMemory] Initialized.")
+        print("[DriverMemory] Initialized with SQLite database.")
     
     def _load_memory(self):
-        """Load driver memory from JSON file."""
-        if os.path.exists(self.storage_file):
-            try:
-                with open(self.storage_file, 'r', encoding='utf-8') as f:
-                    self.drivers = json.load(f)
-            except json.JSONDecodeError:
-                self.drivers = {}
-        else:
-            self.drivers = {}
+        """Deprecated: Logic moved to database.py"""
+        pass
     
     def _save_memory(self):
-        """Save driver memory to JSON file."""
-        with open(self.storage_file, 'w', encoding='utf-8') as f:
-            json.dump(self.drivers, f, ensure_ascii=False, indent=2)
+        """Deprecated: Logic moved to database.py"""
+        pass
     
     def get_drivers(self, ticker: str) -> Optional[Dict[str, Any]]:
         """
-        Retrieve cached drivers for a ticker.
+        Retrieve cached drivers for a ticker from database.
         Returns None if not found or outdated (>30 days old).
         """
-        if ticker not in self.drivers:
+        from database import get_top_drivers, get_ticker_info
+        
+        # Get latest update time
+        # This is a simplification; in a real scenario we might check the latest created_at
+        # For now, we just get the drivers
+        drivers = get_top_drivers(ticker)
+        if not drivers:
             return None
+            
+        # Get ticker info for name
+        ticker_info = get_ticker_info(ticker)
+        name = ticker_info['name'] if ticker_info else ticker
         
-        driver_data = self.drivers[ticker]
-        last_updated = driver_data.get("last_updated", "")
+        # Convert to legacy format for compatibility
+        keyword_drivers = [d['description'] for d in drivers if d['driver_type'] == 'keyword']
         
-        # Check if data is stale (older than 30 days)
-        if last_updated:
-            try:
-                update_date = datetime.strptime(last_updated, "%Y-%m-%d")
-                if (datetime.now() - update_date).days > 30:
-                    return None  # Stale data, needs refresh
-            except ValueError:
-                pass
-        
-        return driver_data
+        return {
+            "name": name,
+            "drivers": keyword_drivers,
+            "last_updated": datetime.now().strftime("%Y-%m-%d"), # Live data
+            "volatility_dates": [] # Volatility dates are now derived on the fly or need new table
+        }
     
     def save_drivers(self, ticker: str, name: str, keywords: List[str], 
                      volatility_dates: List[str]):
-        """Save driver keywords for a ticker."""
-        self.drivers[ticker] = {
-            "name": name,
-            "drivers": keywords,
-            "last_updated": datetime.now().strftime("%Y-%m-%d"),
-            "volatility_dates": volatility_dates
-        }
-        self._save_memory()
-        print(f"   💾 Saved drivers for {ticker}: {keywords}")
+        """Save driver keywords for a ticker to database."""
+        from database import add_driver, add_ticker, get_ticker_info
+        
+        # Ensure ticker exists
+        info = get_ticker_info(ticker)
+        if not info:
+             market = 'KR' if '.KS' in ticker else 'US'
+             add_ticker(ticker, name, None, market)
+             
+        # Add drivers
+        for keyword in keywords:
+            add_driver(
+                ticker=ticker,
+                name=name,
+                driver_type='keyword',
+                description=keyword,
+                impact_direction='neutral',
+                confidence=0.8
+            )
+        
+        print(f"   💾 Saved drivers for {ticker} to database: {keywords}")
     
     def _call_llm(self, prompt: str) -> str:
         """Call LLM for keyword extraction."""

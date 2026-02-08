@@ -111,44 +111,41 @@ class MemoryStore:
 
 class ProceduralMemory:
     """
-    Procedural Memory for Executor: stores tool execution history.
+    Procedural Memory for Executor: stores tool execution history in SQLite.
     Allows Executor to learn from past tool usage patterns.
     """
     def __init__(self, storage_file: str = "procedural_memory.json"):
+        # Storage file is no longer used, kept for compatibility
         self.storage_file = storage_file
-        self.tool_history: List[Dict[str, Any]] = []
-        self._load_memory()
-        print("[ProceduralMemory] Initialized.")
+        print("[ProceduralMemory] Initialized with SQLite database.")
 
     def _load_memory(self):
-        if os.path.exists(self.storage_file):
-            with open(self.storage_file, 'r', encoding='utf-8') as f:
-                try:
-                    self.tool_history = json.load(f)
-                except json.JSONDecodeError:
-                    self.tool_history = []
-        else:
-            self.tool_history = []
+        """Deprecated: Logic moved to database.py"""
+        pass
 
     def _save_memory(self):
-        with open(self.storage_file, 'w', encoding='utf-8') as f:
-            json.dump(self.tool_history, f, ensure_ascii=False, indent=2)
+        """Deprecated: Logic moved to database.py"""
+        pass
 
     def save_tool_execution(self, tool_name: str, args: Dict, success: bool, output_summary: str):
-        """Save a tool execution record."""
-        record = {
-            "tool": tool_name,
-            "args": args,
-            "success": success,
-            "output_summary": output_summary[:500],  # Truncate for storage
-        }
-        self.tool_history.append(record)
-        self._save_memory()
+        """Save a tool execution record to database."""
+        from database import log_tool_execution
+        
+        log_tool_execution(
+            tool_name=tool_name,
+            args=args,
+            result_summary=output_summary[:500], # Truncate for storage
+            success=success
+        )
 
     def get_tool_tips(self, tool_name: str, top_k: int = 3) -> List[Dict]:
-        """Retrieve past successful executions for a specific tool."""
-        matches = [h for h in self.tool_history if h.get("tool") == tool_name and h.get("success")]
-        return matches[-top_k:]  # Return most recent successful ones
+        """Retrieve past successful executions for a specific tool from database."""
+        from database import get_tool_history
+        
+        history = get_tool_history(tool_name, limit=top_k*2)
+        # Filter for successful ones and return top_k
+        successful = [h for h in history if h.get('success')]
+        return successful[:top_k]
 
 
 if __name__ == "__main__":

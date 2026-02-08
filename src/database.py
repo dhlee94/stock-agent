@@ -1,0 +1,402 @@
+"""
+SQLite Database Module for Memento Agent
+
+Centralized data management for:
+- Sector/Ticker information
+- Driver Memory (price impact factors)
+- Procedural Memory (tool execution history)
+"""
+import sqlite3
+import json
+import os
+from typing import Dict, List, Optional, Any
+from datetime import datetime
+from contextlib import contextmanager
+
+# Database path
+DB_PATH = os.path.join(os.path.dirname(__file__), '..', 'memento.db')
+DB_PATH = os.path.normpath(DB_PATH)
+
+
+@contextmanager
+def get_connection():
+    """Context manager for database connections."""
+    conn = sqlite3.connect(DB_PATH)
+    conn.row_factory = sqlite3.Row
+    try:
+        yield conn
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        conn.close()
+
+
+def init_db():
+    """Initialize database with all tables."""
+    with get_connection() as conn:
+        cursor = conn.cursor()
+        
+        # Sectors table
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS sectors (
+                id TEXT PRIMARY KEY,
+                name_kr TEXT,
+                name_en TEXT
+            )
+        ''')
+        
+        # Tickers table
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS tickers (
+                ticker TEXT PRIMARY KEY,
+                name TEXT,
+                sector_id TEXT,
+                market TEXT,
+                FOREIGN KEY (sector_id) REFERENCES sectors(id)
+            )
+        ''')
+        
+        # Sector competitors (for quick lookup)
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS sector_competitors (
+                ticker TEXT,
+                competitor_ticker TEXT,
+                PRIMARY KEY (ticker, competitor_ticker)
+            )
+        ''')
+        
+        # Driver memory
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS driver_memory (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                ticker TEXT,
+                name TEXT,
+                driver_type TEXT,
+                description TEXT,
+                impact_direction TEXT,
+                confidence REAL,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        ''')
+        
+        # Procedural memory
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS procedural_memory (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                tool_name TEXT,
+                args_json TEXT,
+                result_summary TEXT,
+                success INTEGER,
+                execution_time_ms INTEGER,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        ''')
+        
+        # Create indexes
+        cursor.execute('CREATE INDEX IF NOT EXISTS idx_tickers_sector ON tickers(sector_id)')
+        cursor.execute('CREATE INDEX IF NOT EXISTS idx_driver_ticker ON driver_memory(ticker)')
+        cursor.execute('CREATE INDEX IF NOT EXISTS idx_proc_tool ON procedural_memory(tool_name)')
+        
+        print("✅ Database initialized successfully")
+
+
+# ============================================================
+# SECTOR & TICKER OPERATIONS
+# ============================================================
+
+def get_sector_competitors(ticker: str) -> List[str]:
+    """Get competitors for a ticker."""
+    with get_connection() as conn:
+        cursor = conn.cursor()
+        
+        # First try direct competitor mapping
+        cursor.execute('''
+            SELECT competitor_ticker FROM sector_competitors WHERE ticker = ?
+        ''', (ticker,))
+        
+        results = cursor.fetchall()
+        if results:
+            return [row['competitor_ticker'] for row in results]
+        
+        # Fallback: get all tickers in the same sector
+        cursor.execute('''
+            SELECT t2.ticker FROM tickers t1
+            JOIN tickers t2 ON t1.sector_id = t2.sector_id
+            WHERE t1.ticker = ? AND t2.ticker != ?
+        ''', (ticker, ticker))
+        
+        return [row['ticker'] for row in cursor.fetchall()]
+
+
+def get_ticker_info(ticker: str) -> Optional[Dict[str, Any]]:
+    """Get ticker information."""
+    with get_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute('''
+            SELECT t.*, s.name_kr as sector_name_kr, s.name_en as sector_name_en
+            FROM tickers t
+            LEFT JOIN sectors s ON t.sector_id = s.id
+            WHERE t.ticker = ?
+        ''', (ticker,))
+        
+        row = cursor.fetchone()
+        return dict(row) if row else None
+
+
+def add_ticker(ticker: str, name: str, sector_id: str, market: str):
+    """Add or update a ticker."""
+    with get_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute('''
+            INSERT OR REPLACE INTO tickers (ticker, name, sector_id, market)
+            VALUES (?, ?, ?, ?)
+        ''', (ticker, name, sector_id, market))
+
+
+def get_all_sectors() -> List[Dict[str, Any]]:
+    """Get all sectors with their tickers."""
+    with get_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute('SELECT * FROM sectors')
+        sectors = [dict(row) for row in cursor.fetchall()]
+        
+        for sector in sectors:
+            cursor.execute('SELECT ticker, name FROM tickers WHERE sector_id = ?', (sector['id'],))
+            sector['tickers'] = [dict(row) for row in cursor.fetchall()]
+        
+        return sectors
+
+
+# ============================================================
+# DRIVER MEMORY OPERATIONS
+# ============================================================
+
+def add_driver(ticker: str, name: str, driver_type: str, 
+               description: str, impact_direction: str, confidence: float = 0.8):
+    """Add a driver memory entry."""
+    with get_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute('''
+            INSERT INTO driver_memory (ticker, name, driver_type, description, impact_direction, confidence)
+            VALUES (?, ?, ?, ?, ?, ?)
+        ''', (ticker, name, driver_type, description, impact_direction, confidence))
+        return cursor.lastrowid
+
+
+def get_drivers(ticker: str, limit: int = 10) -> List[Dict[str, Any]]:
+    """Get driver memory for a ticker."""
+    with get_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute('''
+            SELECT * FROM driver_memory 
+            WHERE ticker = ?
+            ORDER BY created_at DESC
+            LIMIT ?
+        ''', (ticker, limit))
+        return [dict(row) for row in cursor.fetchall()]
+
+
+def get_top_drivers(ticker: str, driver_type: Optional[str] = None) -> List[Dict[str, Any]]:
+    """Get top drivers grouped by type."""
+    with get_connection() as conn:
+        cursor = conn.cursor()
+        
+        if driver_type:
+            cursor.execute('''
+                SELECT driver_type, description, impact_direction, 
+                       AVG(confidence) as avg_confidence, COUNT(*) as count
+                FROM driver_memory 
+                WHERE ticker = ? AND driver_type = ?
+                GROUP BY description
+                ORDER BY avg_confidence DESC
+                LIMIT 5
+            ''', (ticker, driver_type))
+        else:
+            cursor.execute('''
+                SELECT driver_type, description, impact_direction,
+                       AVG(confidence) as avg_confidence, COUNT(*) as count
+                FROM driver_memory 
+                WHERE ticker = ?
+                GROUP BY driver_type, description
+                ORDER BY avg_confidence DESC
+                LIMIT 10
+            ''', (ticker,))
+        
+        return [dict(row) for row in cursor.fetchall()]
+
+
+# ============================================================
+# PROCEDURAL MEMORY OPERATIONS
+# ============================================================
+
+def log_tool_execution(tool_name: str, args: Dict, result_summary: str, 
+                       success: bool, execution_time_ms: int = 0):
+    """Log a tool execution."""
+    with get_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute('''
+            INSERT INTO procedural_memory (tool_name, args_json, result_summary, success, execution_time_ms)
+            VALUES (?, ?, ?, ?, ?)
+        ''', (tool_name, json.dumps(args, ensure_ascii=False), result_summary, int(success), execution_time_ms))
+        return cursor.lastrowid
+
+
+def get_tool_history(tool_name: Optional[str] = None, limit: int = 20) -> List[Dict[str, Any]]:
+    """Get tool execution history."""
+    with get_connection() as conn:
+        cursor = conn.cursor()
+        
+        if tool_name:
+            cursor.execute('''
+                SELECT * FROM procedural_memory 
+                WHERE tool_name = ?
+                ORDER BY created_at DESC
+                LIMIT ?
+            ''', (tool_name, limit))
+        else:
+            cursor.execute('''
+                SELECT * FROM procedural_memory 
+                ORDER BY created_at DESC
+                LIMIT ?
+            ''', (limit,))
+        
+        results = []
+        for row in cursor.fetchall():
+            item = dict(row)
+            item['args'] = json.loads(item['args_json']) if item['args_json'] else {}
+            results.append(item)
+        
+        return results
+
+
+def get_tool_stats() -> List[Dict[str, Any]]:
+    """Get tool execution statistics."""
+    with get_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute('''
+            SELECT tool_name, 
+                   COUNT(*) as total_calls,
+                   SUM(success) as success_count,
+                   AVG(execution_time_ms) as avg_time_ms
+            FROM procedural_memory
+            GROUP BY tool_name
+            ORDER BY total_calls DESC
+        ''')
+        return [dict(row) for row in cursor.fetchall()]
+
+
+# ============================================================
+# MIGRATION FROM JSON
+# ============================================================
+
+def migrate_from_json():
+    """Migrate data from JSON files to SQLite."""
+    base_path = os.path.join(os.path.dirname(__file__), '..')
+    
+    # 1. Migrate sector_competitors.json
+    sector_json_path = os.path.join(base_path, 'sector_competitors.json')
+    if os.path.exists(sector_json_path):
+        print("📦 Migrating sector_competitors.json...")
+        with open(sector_json_path, 'r', encoding='utf-8') as f:
+            data = json.load(f)
+        
+        with get_connection() as conn:
+            cursor = conn.cursor()
+            
+            # Insert sectors
+            for sector_id, sector_data in data.get('sectors', {}).items():
+                cursor.execute('''
+                    INSERT OR REPLACE INTO sectors (id, name_kr, name_en)
+                    VALUES (?, ?, ?)
+                ''', (sector_id, sector_data.get('name_kr', ''), sector_id))
+            
+            # Insert tickers
+            ticker_to_sector = data.get('ticker_to_sector', {})
+            ticker_names = data.get('ticker_names', {})
+            
+            for ticker, sector_id in ticker_to_sector.items():
+                market = 'KR' if '.KS' in ticker else 'US'
+                name = ticker_names.get(ticker, ticker)
+                cursor.execute('''
+                    INSERT OR REPLACE INTO tickers (ticker, name, sector_id, market)
+                    VALUES (?, ?, ?, ?)
+                ''', (ticker, name, sector_id, market))
+            
+            # Insert competitors (same sector = competitors)
+            for sector_id, sector_data in data.get('sectors', {}).items():
+                tickers = sector_data.get('tickers', [])
+                for ticker in tickers:
+                    for competitor in tickers:
+                        if ticker != competitor:
+                            cursor.execute('''
+                                INSERT OR IGNORE INTO sector_competitors (ticker, competitor_ticker)
+                                VALUES (?, ?)
+                            ''', (ticker, competitor))
+        
+        print(f"   ✅ Migrated {len(ticker_to_sector)} tickers, {len(data.get('sectors', {}))} sectors")
+    
+    # 2. Migrate driver_memory.json
+    driver_json_path = os.path.join(base_path, 'driver_memory.json')
+    if os.path.exists(driver_json_path):
+        print("📦 Migrating driver_memory.json...")
+        with open(driver_json_path, 'r', encoding='utf-8') as f:
+            data = json.load(f)
+        
+        count = 0
+        with get_connection() as conn:
+            cursor = conn.cursor()
+            
+            for ticker, ticker_data in data.items():
+                name = ticker_data.get('name', ticker)
+                for driver in ticker_data.get('drivers', []):
+                    # Handle both string (legacy) and dict formats
+                    if isinstance(driver, str):
+                        driver_type = 'keyword'
+                        description = driver
+                        impact = 'neutral'
+                        confidence = 0.8
+                    else:
+                        driver_type = driver.get('type', 'unknown')
+                        description = driver.get('description', '')
+                        impact = driver.get('impact', 'neutral')
+                        confidence = driver.get('confidence', 0.8)
+                        
+                    cursor.execute('''
+                        INSERT INTO driver_memory (ticker, name, driver_type, description, impact_direction, confidence)
+                        VALUES (?, ?, ?, ?, ?, ?)
+                    ''', (ticker, name, driver_type, description, impact, confidence))
+                    count += 1
+        
+        print(f"   ✅ Migrated {count} driver entries")
+    
+    # 3. Migrate procedural_memory.json
+    proc_json_path = os.path.join(base_path, 'procedural_memory.json')
+    if os.path.exists(proc_json_path):
+        print("📦 Migrating procedural_memory.json...")
+        with open(proc_json_path, 'r', encoding='utf-8') as f:
+            data = json.load(f)
+        
+        count = 0
+        with get_connection() as conn:
+            cursor = conn.cursor()
+            
+            for entry in data if isinstance(data, list) else []:
+                cursor.execute('''
+                    INSERT INTO procedural_memory (tool_name, args_json, result_summary, success)
+                    VALUES (?, ?, ?, ?)
+                ''', (entry.get('tool', 'unknown'),
+                      json.dumps(entry.get('args', {}), ensure_ascii=False),
+                      entry.get('result', ''),
+                      1 if entry.get('success', True) else 0))
+                count += 1
+        
+        print(f"   ✅ Migrated {count} procedural entries")
+    
+    print("\n✅ Migration complete!")
+
+
+# Initialize DB on import (create tables if they don't exist)
+if not os.path.exists(DB_PATH):
+    init_db()

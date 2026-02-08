@@ -14,45 +14,30 @@ import numpy as np
 import yfinance as yf
 from typing import List, Dict, Tuple, Optional, Any
 from datetime import datetime, timedelta
+import sys
 import os
 
-# Load sector database from JSON file
-def _load_sector_db() -> Dict[str, Any]:
-    """Load sector competitors database from JSON file."""
-    db_path = os.path.join(os.path.dirname(__file__), '..', '..', '..', 'sector_competitors.json')
-    db_path = os.path.normpath(db_path)
-    try:
-        with open(db_path, 'r', encoding='utf-8') as f:
-            return json.load(f)
-    except FileNotFoundError:
-        print(f"⚠️ Sector DB not found: {db_path}")
-        return {"sectors": {}, "ticker_to_sector": {}, "ticker_names": {}}
+# Add src to path for database import
+SRC_DIR = os.path.normpath(os.path.join(os.path.dirname(__file__), '../..'))
+if SRC_DIR not in sys.path:
+    sys.path.append(SRC_DIR)
 
-# Lazy-load sector database
-_SECTOR_DB: Optional[Dict[str, Any]] = None
-
-def get_sector_db() -> Dict[str, Any]:
-    """Get sector database (lazy loaded)."""
-    global _SECTOR_DB
-    if _SECTOR_DB is None:
-        _SECTOR_DB = _load_sector_db()
-    return _SECTOR_DB
+try:
+    from database import get_sector_competitors as db_get_competitors
+    from database import get_ticker_info
+except ImportError:
+    # Fallback/Mock for testing without DB
+    def db_get_competitors(ticker: str) -> List[str]: return []
+    def get_ticker_info(ticker: str) -> Optional[Dict]: return None
 
 def get_sector_competitors(ticker: str) -> List[str]:
-    """Get competitors for a ticker from sector database."""
-    db = get_sector_db()
-    sector = db.get("ticker_to_sector", {}).get(ticker)
-    if not sector:
-        return []
-    
-    # Get all tickers in the same sector, excluding the input ticker
-    sector_tickers = db.get("sectors", {}).get(sector, {}).get("tickers", [])
-    return [t for t in sector_tickers if t != ticker]
+    """Get competitors for a ticker from database."""
+    return db_get_competitors(ticker)
 
 def get_ticker_name(ticker: str) -> str:
     """Get human-readable name for a ticker."""
-    db = get_sector_db()
-    return db.get("ticker_names", {}).get(ticker, ticker)
+    info = get_ticker_info(ticker)
+    return info['name'] if info else ticker
 
 # Known company name to ticker mapping - KOREAN MARKET
 KR_COMPANY_TICKER_MAP = {
