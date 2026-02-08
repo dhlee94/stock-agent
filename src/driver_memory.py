@@ -210,15 +210,41 @@ class DriverMemory:
         volatility_dates = [d.strftime("%Y-%m-%d") for d in high_vol.index]
         print(f"   📅 High volatility dates: {volatility_dates}")
         
-        # 3. Search news for those dates (using yfinance news as proxy)
+        # 3. Search news for those dates (Use robust news tool)
+        news_texts = []
         try:
-            news_items = stock.news[:20] if hasattr(stock, 'news') else []
-            news_texts = []
-            for item in news_items:
-                title = item.get('title', '')
-                if title:
-                    news_texts.append(title)
-        except:
+            # Try to import from tools, handling different path contexts
+            try:
+                from tools.stock.news import get_market_news
+            except ImportError:
+                try:
+                    from src.tools.stock.news import get_market_news
+                except ImportError:
+                    # Fallback logic if import fails
+                    get_market_news = None
+            
+            if get_market_news:
+                # Fetch news using the robust tool (handles KR/US detection and Google News fallback)
+                print(f"   📰 Searching news for drivers via get_market_news...")
+                news_json = get_market_news(ticker=ticker, limit=15)
+                news_data = json.loads(news_json)
+                
+                if "news" in news_data:
+                    for item in news_data["news"]:
+                        title = item.get('title', '')
+                        if title:
+                            news_texts.append(title)
+            else:
+                # Fallback to yfinance if tool import fails
+                print(f"   ⚠️ News tool import failed, falling back to basic yfinance...")
+                news_items = stock.news[:20] if hasattr(stock, 'news') else []
+                for item in news_items:
+                    title = item.get('title', '')
+                    if title:
+                        news_texts.append(title)
+                        
+        except Exception as e:
+            print(f"   ⚠️ News search failed: {e}")
             news_texts = []
         
         # 4. Use LLM to extract recurring keywords
