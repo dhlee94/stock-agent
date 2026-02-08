@@ -134,48 +134,100 @@ def _extract_entities_from_news(ticker: str, limit: int = 20) -> List[Tuple[str,
         return []
 
 
-def _get_daily_returns(ticker: str, days: int = 30) -> Optional[np.ndarray]:
+def _get_price_series(ticker: str, days: int = 60) -> Optional[np.ndarray]:
     """
-    Get daily percentage returns for the past N days.
-    Returns numpy array of daily returns (not prices).
+    Get daily closing prices for STL decomposition.
+    Requires more days for proper seasonal decomposition.
     """
     try:
         stock = yf.Ticker(ticker)
-        hist = stock.history(period=f"{days + 5}d")  # Extra days for buffer
+        hist = stock.history(period=f"{days + 10}d")  # Extra days for buffer
         
         if hist.empty or len(hist) < days:
             return None
         
         prices = hist['Close'].values[-days:]
-        
-        # Calculate daily percentage returns
-        returns = np.diff(prices) / prices[:-1] * 100
-        
-        return returns
+        return prices
         
     except Exception:
         return None
 
 
-def _cosine_similarity(vec1: np.ndarray, vec2: np.ndarray) -> float:
+def _extract_stl_trend(prices: np.ndarray, period: int = 5) -> Optional[np.ndarray]:
     """
-    Calculate cosine similarity between two return vectors.
-    Using returns instead of prices avoids scale bias.
+    Extract Trend component using STL decomposition.
+    
+    STL = Seasonal-Trend decomposition using LOESS
+    - Seasonal: Repeating patterns (weekly cycles, etc.)
+    - Trend: Underlying long-term movement (THIS IS WHAT WE COMPARE)
+    - Residual: Random noise
+    
+    Args:
+        prices: Daily closing prices
+        period: Seasonal period (5 for weekly trading days)
+    
+    Returns:
+        Trend component as numpy array
     """
-    if len(vec1) != len(vec2):
+    try:
+        from statsmodels.tsa.seasonal import STL
+        import pandas as pd
+        
+        # STL requires at least 2 full periods
+        if len(prices) < period * 2:
+            return None
+        
+        # Create pandas Series for STL
+        series = pd.Series(prices)
+        
+        # Apply STL decomposition
+        stl = STL(series, period=period, robust=True)
+        result = stl.fit()
+        
+        # Return the Trend component
+        return result.trend.values
+        
+    except Exception as e:
+        print(f"      ⚠️ STL decomposition failed: {e}")
+        return None
+
+
+def _trend_similarity(trend1: np.ndarray, trend2: np.ndarray) -> float:
+    """
+    Calculate similarity between two STL Trend components.
+    Uses Pearson correlation instead of cosine similarity for trends.
+    
+    Pearson correlation is better for trends because:
+    1. It measures linear relationship regardless of scale
+    2. Values range from -1 (inverse) to +1 (perfectly correlated)
+    3. 0 means no correlation
+    """
+    if len(trend1) != len(trend2):
         # Align lengths
-        min_len = min(len(vec1), len(vec2))
-        vec1 = vec1[-min_len:]
-        vec2 = vec2[-min_len:]
+        min_len = min(len(trend1), len(trend2))
+        trend1 = trend1[-min_len:]
+        trend2 = trend2[-min_len:]
     
-    dot_product = np.dot(vec1, vec2)
-    norm1 = np.linalg.norm(vec1)
-    norm2 = np.linalg.norm(vec2)
+    # Remove any NaN values from STL output
+    mask = ~(np.isnan(trend1) | np.isnan(trend2))
+    trend1 = trend1[mask]
+    trend2 = trend2[mask]
     
-    if norm1 == 0 or norm2 == 0:
+    if len(trend1) < 10:
         return 0.0
     
-    return dot_product / (norm1 * norm2)
+    # Pearson correlation
+    mean1 = np.mean(trend1)
+    mean2 = np.mean(trend2)
+    
+    cov = np.sum((trend1 - mean1) * (trend2 - mean2))
+    std1 = np.sqrt(np.sum((trend1 - mean1) ** 2))
+    std2 = np.sqrt(np.sum((trend2 - mean2) ** 2))
+    
+    if std1 == 0 or std2 == 0:
+        return 0.0
+    
+    return cov / (std1 * std2)
 
 
 def _get_momentum_status(ticker: str) -> Dict:
@@ -260,45 +312,58 @@ def analyze_peer_group(ticker: str, similarity_threshold: float = 0.7) -> str:
                       for t, c in co_mentioned]
         }
         
-        # Step 2 & 3: Get returns for target
-        target_returns = _get_daily_returns(ticker)
-        if target_returns is None:
+        # Step 2: Get price series and extract STL Trend for target
+        target_prices = _get_price_series(ticker, days=60)
+        if target_prices is None:
             result["status"] = "partial"
             result["synthesis"] = "타겟 주식의 가격 데이터를 가져올 수 없습니다."
             return json.dumps(result, ensure_ascii=False)
         
-        # Step 4: Calculate cosine similarity for each peer
+        target_trend = _extract_stl_trend(target_prices)
+        if target_trend is None:
+            result["status"] = "partial"
+            result["synthesis"] = "타겟 주식의 STL 분해에 실패했습니다."
+            return json.dumps(result, ensure_ascii=False)
+        
+        print(f"   📈 [STL] Extracted trend component for {ticker}")
+        
+        # Step 3: Calculate STL Trend similarity for each peer
         similarities = []
         
         for peer_ticker, mention_count in co_mentioned:
-            peer_returns = _get_daily_returns(peer_ticker)
+            peer_prices = _get_price_series(peer_ticker, days=60)
             
-            if peer_returns is None:
+            if peer_prices is None:
                 continue
             
-            similarity = _cosine_similarity(target_returns, peer_returns)
+            peer_trend = _extract_stl_trend(peer_prices)
+            if peer_trend is None:
+                continue
+            
+            # Use Pearson correlation on Trend components
+            similarity = _trend_similarity(target_trend, peer_trend)
             
             similarities.append({
                 "ticker": peer_ticker,
                 "name": TICKER_NAME_MAP.get(peer_ticker, peer_ticker),
                 "mentions": mention_count,
-                "cosine_similarity": round(similarity, 4),
+                "trend_correlation": round(float(similarity), 4),  # Renamed from cosine_similarity
                 "momentum": _get_momentum_status(peer_ticker)
             })
         
         # Sort by similarity
-        similarities.sort(key=lambda x: x["cosine_similarity"], reverse=True)
+        similarities.sort(key=lambda x: x["trend_correlation"], reverse=True)
         result["similarity_analysis"] = similarities
         
         # Step 5: Select Reference Proxy
-        high_similarity_peers = [s for s in similarities if s["cosine_similarity"] >= similarity_threshold]
+        high_similarity_peers = [s for s in similarities if s["trend_correlation"] >= similarity_threshold]
         
         if high_similarity_peers:
             proxy = high_similarity_peers[0]
             result["reference_proxy"] = {
                 "ticker": proxy["ticker"],
                 "name": proxy["name"],
-                "similarity": proxy["cosine_similarity"],
+                "trend_correlation": proxy["trend_correlation"],
                 "momentum": proxy["momentum"]
             }
             
@@ -315,11 +380,11 @@ def analyze_peer_group(ticker: str, similarity_threshold: float = 0.7) -> str:
                 outlook = "부정적"
             
             result["synthesis"] = (
-                f"📈 Reference Proxy: {proxy['name']} (유사도: {proxy['cosine_similarity']:.2f})\n"
+                f"📈 Reference Proxy: {proxy['name']} (Trend 상관계수: {proxy['trend_correlation']:.2f})\n"
+                f"• STL 분해로 추출한 Trend 성분 비교 결과\n"
                 f"• 프록시 현재 모멘텀: {trend_text} (주간 {proxy_return:+.1f}%)\n"
                 f"• {target_name}의 단기 전망: {outlook}\n"
-                f"• 이유: 뉴스 동시 언급 빈도와 수익률 패턴이 유사하여 "
-                f"{proxy['name']}의 움직임이 {target_name}에 영향을 줄 가능성이 높음."
+                f"• 이유: {proxy['name']}와 Trend가 유사하여 동반 움직임 예상."
             )
         else:
             # No high similarity peers
@@ -327,9 +392,9 @@ def analyze_peer_group(ticker: str, similarity_threshold: float = 0.7) -> str:
             
             if max_sim:
                 result["synthesis"] = (
-                    f"⚠️ 뉴스 연관 기업 중 통계적으로 유의미한 가격 연동성(유사도 > {similarity_threshold})을 보이는 "
+                    f"⚠️ 뉴스 연관 기업 중 유의미한 Trend 상관관계(> {similarity_threshold})를 보이는 "
                     f"기업이 없습니다.\n"
-                    f"• 최고 유사도: {max_sim['name']} ({max_sim['cosine_similarity']:.2f})\n"
+                    f"• 최고 상관계수: {max_sim['name']} ({max_sim['trend_correlation']:.2f})\n"
                     f"• 결론: 이 종목은 섹터 전반 추세보다 개별 요인에 더 민감할 수 있습니다."
                 )
             else:
