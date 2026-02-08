@@ -272,15 +272,48 @@ Provide your final analysis and recommendation (include Target Price, Stop-loss,
         response = self._call_llm(summary_prompt)
         return response
 
-    def _call_reflector(self, user_task: str, analysis: str) -> str:
+    def _call_reflector(self, user_task: str, analysis: str, peer_context: dict = None, tech_data: dict = None) -> str:
         """
         Self-Reflection: Reviews the analysis for logical consistency and completeness.
+        Uses Reference Proxy verification when available.
         Returns improved analysis if issues found, otherwise returns original.
         """
         print("\n🔍 [Reflector] Self-reflection in progress...")
         
+        # Reference Proxy Verification
+        confidence_level = "Medium"
+        verification_notes = []
+        
+        if peer_context and peer_context.get("has_high_correlation") and peer_context.get("reference_proxy"):
+            proxy = peer_context["reference_proxy"]
+            proxy_name = proxy.get("name", "Unknown")
+            proxy_trend = proxy.get("momentum", {}).get("trend", "unknown")
+            proxy_corr = proxy.get("trend_correlation", 0)
+            
+            if tech_data:
+                our_signal = tech_data.get("recommendation", "HOLD")
+                proxy_bullish = proxy_trend == "bullish"
+                our_bullish = our_signal in ["BUY", "STRONG_BUY"]
+                our_bearish = our_signal in ["SELL", "STRONG_SELL"]
+                
+                if (proxy_bullish and our_bullish) or (not proxy_bullish and our_bearish):
+                    confidence_level = "High"
+                    verification_notes.append(f"✅ Signal aligned with Reference Proxy {proxy_name} ({proxy_trend})")
+                elif (proxy_bullish and our_bearish) or (not proxy_bullish and our_bullish):
+                    confidence_level = "Low"
+                    verification_notes.append(f"⚠️ DIVERGENT: {proxy_name} is {proxy_trend} but our signal is {our_signal}")
+                else:
+                    verification_notes.append(f"📊 Reference: {proxy_name} ({proxy_trend}, corr={proxy_corr:.2f})")
+            
+            print(f"   🔗 Reference Proxy Verified: {proxy_name} ({proxy_trend})")
+        elif peer_context:
+            verification_notes.append("⚠️ No high-correlation proxy - independent analysis")
+            print("   ⚠️ No Reference Proxy available")
+        
+        print(f"   📋 Confidence Level: {confidence_level}")
+        
         reflection_prompt = [
-            {"role": "system", "content": """You are a Critical Review Agent for stock analysis.
+            {"role": "system", "content": f"""You are a Critical Review Agent for stock analysis.
 Your job is to review the analysis and check for:
 
 1. **Logical Consistency**: Do the indicators match the recommendation?
@@ -293,7 +326,14 @@ Your job is to review the analysis and check for:
    - Risk warnings for volatile stocks
    - Clear BUY/HOLD/SELL recommendation
 
-3. **Confidence Level**: Is the recommendation appropriately confident?
+3. **Reference Proxy Verification (IMPORTANT)**:
+   - Confidence Level: {confidence_level}
+   - Verification Notes: {'; '.join(verification_notes) if verification_notes else 'N/A'}
+   
+   If confidence is "Low" (divergent signals), add a WARNING about conflicting sector trends.
+   If confidence is "High" (aligned), mention the strong sector alignment.
+
+4. **Confidence Level**: Is the recommendation appropriately confident?
    - Don't be overconfident with limited data
    - Acknowledge uncertainties
 
@@ -458,6 +498,8 @@ DONE: [Your comprehensive stock analysis summary with recommendation]
                     # 4. EXECUTOR: Execute each step
                     all_findings = ""
                     plan_text = json.dumps(plan, ensure_ascii=False, indent=2)
+                    peer_context = None  # Store Reference Proxy for Reflector verification
+                    tech_data = None     # Store technical signal for alignment check
                     
                     for step in plan:
                         tool_name = step.get("tool")
@@ -476,6 +518,29 @@ DONE: [Your comprehensive stock analysis summary with recommendation]
                             print(f"   ⚡ Executing: {tool_name}")
                             result = await session.call_tool(tool_name, arguments=args)
                             tool_output = result.content[0].text
+                            
+                            # Capture peer analysis result for Reflector
+                            if tool_name == "analyze_peers":
+                                try:
+                                    peer_data = json.loads(tool_output)
+                                    reference_proxy = peer_data.get("reference_proxy")
+                                    peer_context = {
+                                        "peers_found": peer_data.get("entity_mining", {}).get("found_peers", 0),
+                                        "reference_proxy": reference_proxy,
+                                        "synthesis": peer_data.get("synthesis", ""),
+                                        "has_high_correlation": reference_proxy is not None
+                                    }
+                                    print(f"   📊 Peer context captured for Reflector verification")
+                                except:
+                                    pass
+                            
+                            # Capture technical signal for alignment check
+                            if tool_name == "stock_technical":
+                                try:
+                                    tech_data = json.loads(tool_output)
+                                    print(f"   📈 Technical data captured: {tech_data.get('recommendation', 'N/A')}")
+                                except:
+                                    pass
                             
                             # Executor interprets the result
                             interpretation = self._call_executor(step, tool_output, all_findings)
@@ -498,7 +563,7 @@ DONE: [Your comprehensive stock analysis summary with recommendation]
                     final_result = self._call_summarizer(user_task, all_findings)
                     
                     # 6. REFLECTOR: Self-reflection on the analysis
-                    final_result = self._call_reflector(user_task, final_result)
+                    final_result = self._call_reflector(user_task, final_result, peer_context, tech_data)
                     
                     # Save result before leaving context
                     saved_result = final_result if final_result else "분석을 완료하지 못했습니다."
