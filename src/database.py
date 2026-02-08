@@ -94,12 +94,52 @@ def init_db():
             )
         ''')
         
+        # Settings table for dashboard configuration
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS settings (
+                key TEXT PRIMARY KEY,
+                value TEXT,
+                description TEXT,
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        ''')
+        
         # Create indexes
         cursor.execute('CREATE INDEX IF NOT EXISTS idx_tickers_sector ON tickers(sector_id)')
         cursor.execute('CREATE INDEX IF NOT EXISTS idx_driver_ticker ON driver_memory(ticker)')
         cursor.execute('CREATE INDEX IF NOT EXISTS idx_proc_tool ON procedural_memory(tool_name)')
         
         print("✅ Database initialized successfully")
+
+
+# ============================================================
+# SETTINGS OPERATIONS
+# ============================================================
+
+def get_setting(key: str, default: str = "") -> str:
+    """Get a setting value."""
+    with get_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute('SELECT value FROM settings WHERE key = ?', (key,))
+        row = cursor.fetchone()
+        return row['value'] if row else default
+
+def set_setting(key: str, value: str, description: str = ""):
+    """Set a setting value."""
+    with get_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute('''
+            INSERT OR REPLACE INTO settings (key, value, description, updated_at)
+            VALUES (?, ?, ?, CURRENT_TIMESTAMP)
+        ''', (key, value, description))
+
+def get_all_settings() -> List[Dict[str, Any]]:
+    """Get all settings."""
+    with get_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute('SELECT * FROM settings ORDER BY key')
+        return [dict(row) for row in cursor.fetchall()]
+
 
 
 # ============================================================
