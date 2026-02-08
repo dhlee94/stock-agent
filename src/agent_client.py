@@ -153,8 +153,9 @@ Your job is to create a detailed execution plan for the given task.
 1. **Identify Entity**: Extract the stock ticker from user's request
 2. **Check Driver Memory**: If analyzing a stock, ALWAYS call `analyze_drivers` first to get key impact factors
 3. **Strategic Planning**: Use the driver keywords for TARGETED news/research queries
-4. **Risk Management**: ALWAYS call `calculate_risk` to get Target Price, Stop-loss, and Risk/Reward ratio
-5. **Reasoning**: Explain WHY certain topics matter based on historical volatility
+4. **Peer Group Analysis**: Call `analyze_peers` to find correlated stocks using news entity mining and cosine similarity on returns
+5. **Risk Management**: ALWAYS call `calculate_risk` to get Target Price, Stop-loss, and Risk/Reward ratio
+6. **Synthesis**: Adjust outlook based on Reference Proxy's momentum if similarity > 0.7
 {driver_context}
 ## Available Tools
 {tool_descriptions}
@@ -179,7 +180,8 @@ Example output:
   {{"step": 2, "tool": "stock_price", "args": {{"ticker": "005930.KS", "market": "KR"}}, "reason": "Get current price"}},
   {{"step": 3, "tool": "stock_technical", "args": {{"ticker": "005930.KS"}}, "reason": "Technical analysis for support/resistance"}},
   {{"step": 4, "tool": "stock_news", "args": {{"query": "삼성전자 HBM"}}, "reason": "Check HBM news (top driver)"}},
-  {{"step": 5, "tool": "calculate_risk", "args": {{"ticker": "005930.KS", "market": "KR"}}, "reason": "Calculate Target Price and Stop-loss"}}
+  {{"step": 5, "tool": "analyze_peers", "args": {{"ticker": "005930.KS"}}, "reason": "Find correlated stocks via news entity mining"}},
+  {{"step": 6, "tool": "calculate_risk", "args": {{"ticker": "005930.KS", "market": "KR"}}, "reason": "Calculate Target Price and Stop-loss"}}
 ]
 
 Output ONLY the JSON array, no other text."""},

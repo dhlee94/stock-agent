@@ -21,6 +21,7 @@ from technical import technical_analysis
 from compare import compare_stocks
 from sector import get_sector_analysis
 from predictor import analyze_stock_ai
+from peer_analysis import analyze_peer_group
 
 __all__ = [
     'get_stock_price',
@@ -31,4 +32,5 @@ __all__ = [
     'compare_stocks',
     'get_sector_analysis',
     'analyze_stock_ai',
+    'analyze_peer_group',
 ]

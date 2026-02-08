@@ -22,6 +22,7 @@ from tools.stock import (
     compare_stocks,
     get_sector_analysis,
     analyze_stock_ai,
+    analyze_peer_group,
 )
 
 # Utility Tools
@@ -147,6 +148,25 @@ def analyze_drivers(ticker: str, name: str = "") -> str:
         name: Company name (optional)
     """
     return _analyze_drivers(ticker, name)
+
+
+@mcp.tool()
+def analyze_peers(ticker: str, similarity_threshold: float = 0.7) -> str:
+    """
+    Analyze peer group using news entity mining and cosine similarity on returns.
+    
+    Workflow:
+    1. Entity Mining: Find top 5 co-mentioned companies from news
+    2. Data Acquisition: Get 30-day closing prices
+    3. Vectorization: Convert to daily % change vectors (not prices)
+    4. Cosine Similarity: Calculate similarity on returns
+    5. Reference Proxy: Select peer with similarity > threshold
+    
+    Args:
+        ticker: Stock ticker symbol (e.g., "005930.KS", "NVDA")
+        similarity_threshold: Minimum cosine similarity to select reference proxy (default 0.7)
+    """
+    return analyze_peer_group(ticker, similarity_threshold)
 
 
 @mcp.tool()
