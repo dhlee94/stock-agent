@@ -113,7 +113,8 @@ agent/
         ├── market_utils.py    # 🌍 시장 감지 (KR/US)
         ├── compare.py         # 종목 비교
         ├── sector.py          # 섹터 분석
-        └── predictor.py       # AI 예측
+        ├── predictor.py       # AI 예측
+        └── peer_analysis.py   # 📊 Peer Group 분석 (STL Trend)
 ```
 
 ---
@@ -131,6 +132,7 @@ agent/
 | `stock_ai_predict` | 🤖 AI 예측 (Chronos) |
 | `stock_compare` | 다중 종목 비교 |
 | `stock_sector` | 섹터별 분석 |
+| `analyze_peers` | 📊 뉴스 Entity Mining + STL Trend 유사도 분석 |
 
 ---
 
