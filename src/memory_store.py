@@ -33,14 +33,14 @@ class MemoryStore:
         self._load_memory()
         
         if MOCK_MODE:
-            print(f"[Memory] Running in MOCK mode (no API key for {LLM_PROVIDER}).")
+            print(f"[Memory] API 키가 없어 MOCK 모드로 실행합니다 (프로바이더: {LLM_PROVIDER}).")
             self.client = None
         elif LLM_PROVIDER == "openai":
             self.client = OpenAI()
-            print("[Memory] Using OpenAI embeddings.")
+            print("[Memory] OpenAI 임베딩 모델을 사용합니다.")
         else:
             self.client = None
-            print("[Memory] Using Gemini embeddings.")
+            print("[Memory] Gemini 임베딩 모델을 사용합니다.")
 
     def _load_memory(self):
         if os.path.exists(self.storage_file):
@@ -77,7 +77,7 @@ class MemoryStore:
             return result['embedding']
 
     def save_trajectory(self, task: str, plan: str, result: str, feedback_score: float):
-        print(f"[Memory] Saving trajectory for task: {task[:50]}...")
+        print(f"[Memory] 작업을 메모리에 저장합니다 (task 미리보기: {task[:50]}...)")
         trajectory = {
             "task": task,
             "plan": plan,
@@ -111,44 +111,44 @@ class MemoryStore:
 
 class ProceduralMemory:
     """
-    Procedural Memory for Executor: stores tool execution history in SQLite.
-    Allows Executor to learn from past tool usage patterns.
+    Executor를 위한 Procedural Memory.
+    도구 실행 이력을 SQLite에 저장하여, 과거 도구 사용 패턴을 참조할 수 있게 합니다.
     """
     def __init__(self, storage_file: str = "procedural_memory.json"):
         # Storage file is no longer used, kept for compatibility
         self.storage_file = storage_file
-        print("[ProceduralMemory] Initialized with SQLite database.")
+        print("[ProceduralMemory] SQLite 데이터베이스 기반으로 초기화되었습니다.")
 
     def _load_memory(self):
-        """Deprecated: Logic moved to database.py"""
+        """더 이상 사용되지 않습니다. 관련 로직은 database.py로 이전되었습니다."""
         pass
 
     def _save_memory(self):
-        """Deprecated: Logic moved to database.py"""
+        """더 이상 사용되지 않습니다. 관련 로직은 database.py로 이전되었습니다."""
         pass
 
     def save_tool_execution(self, tool_name: str, args: Dict, success: bool, output_summary: str):
-        """Save a tool execution record to database."""
+        """도구 실행 결과를 DB에 한 줄 요약과 함께 저장합니다."""
         from database import log_tool_execution
         
         log_tool_execution(
             tool_name=tool_name,
             args=args,
-            result_summary=output_summary[:500], # Truncate for storage
-            success=success
+            result_summary=output_summary[:500],  # 저장 공간을 위해 500자까지만 저장
+            success=success,
         )
 
     def get_tool_tips(self, tool_name: str, top_k: int = 3) -> List[Dict]:
-        """Retrieve past successful executions for a specific tool from database."""
+        """특정 도구에 대해 성공적으로 실행되었던 과거 이력을 조회합니다."""
         from database import get_tool_history
         
-        history = get_tool_history(tool_name, limit=top_k*2)
-        # Filter for successful ones and return top_k
+        history = get_tool_history(tool_name, limit=top_k * 2)
+        # 성공한 실행만 필터링하여 상위 top_k개만 반환
         successful = [h for h in history if h.get('success')]
         return successful[:top_k]
 
 
 if __name__ == "__main__":
     mem = MemoryStore()
-    print("MemoryStore initialized.")
+    print("MemoryStore가 정상적으로 초기화되었습니다.")
 

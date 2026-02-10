@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Memento AI Agent - Main Entry Point
+Memento AI Agent - 메인 진입점
 """
 import sys
 import os
@@ -12,7 +12,7 @@ from src.agent_client import MementoAgent
 import asyncio
 
 def main():
-    task = "Find the latest news about AI"
+    task = "최신 AI 관련 뉴스를 찾아줘"
     if len(sys.argv) > 1:
         task = " ".join(sys.argv[1:])
     

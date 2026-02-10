@@ -1,10 +1,11 @@
 """
-SQLite Database Module for Memento Agent
+Memento Agent에서 사용하는 SQLite 데이터베이스 모듈.
 
-Centralized data management for:
-- Sector/Ticker information
-- Driver Memory (price impact factors)
-- Procedural Memory (tool execution history)
+이 모듈은 다음과 같은 정보를 한 곳에서 관리합니다.
+- 섹터(sector) 및 티커(ticker) 메타데이터
+- Driver Memory: 종목별 가격 변동 요인(드라이버) 기록
+- Procedural Memory: 도구(tool) 실행 이력
+- Settings: 에이전트/대시보드 설정 값
 """
 import sqlite3
 import json
@@ -20,7 +21,13 @@ DB_PATH = os.path.normpath(DB_PATH)
 
 @contextmanager
 def get_connection():
-    """Context manager for database connections."""
+    """
+    SQLite 데이터베이스 커넥션을 열고 자동으로 커밋/롤백을 처리하는 컨텍스트 매니저입니다.
+    
+    with get_connection() as conn:
+        ... 쿼리 실행 ...
+    블록이 정상 종료되면 commit, 예외가 발생하면 rollback 후 커넥션을 닫습니다.
+    """
     conn = sqlite3.connect(DB_PATH)
     conn.row_factory = sqlite3.Row
     try:
@@ -34,11 +41,14 @@ def get_connection():
 
 
 def init_db():
-    """Initialize database with all tables."""
+    """
+    데이터베이스 파일이 없을 경우 필요한 모든 테이블과 인덱스를 생성합니다.
+    기존 DB가 있을 경우에는 테이블이 없을 때만 생성합니다.
+    """
     with get_connection() as conn:
         cursor = conn.cursor()
         
-        # Sectors table
+        # Sectors table: 업종/섹터 기본 정보
         cursor.execute('''
             CREATE TABLE IF NOT EXISTS sectors (
                 id TEXT PRIMARY KEY,
@@ -47,7 +57,7 @@ def init_db():
             )
         ''')
         
-        # Tickers table
+        # Tickers table: 개별 종목 정보 (섹터, 시장 구분 포함)
         cursor.execute('''
             CREATE TABLE IF NOT EXISTS tickers (
                 ticker TEXT PRIMARY KEY,
@@ -58,7 +68,7 @@ def init_db():
             )
         ''')
         
-        # Sector competitors (for quick lookup)
+        # Sector competitors: 동일 섹터 내 경쟁 관계(또는 대표 peer) 저장
         cursor.execute('''
             CREATE TABLE IF NOT EXISTS sector_competitors (
                 ticker TEXT,
@@ -67,7 +77,7 @@ def init_db():
             )
         ''')
         
-        # Driver memory
+        # Driver memory: 변동성 드라이버(키워드, 이벤트 등) 저장
         cursor.execute('''
             CREATE TABLE IF NOT EXISTS driver_memory (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -81,7 +91,7 @@ def init_db():
             )
         ''')
         
-        # Procedural memory
+        # Procedural memory: 도구 실행 이력 저장
         cursor.execute('''
             CREATE TABLE IF NOT EXISTS procedural_memory (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -94,7 +104,7 @@ def init_db():
             )
         ''')
         
-        # Settings table for dashboard configuration
+        # Settings table: 대시보드/에이전트 동작 설정 값 저장
         cursor.execute('''
             CREATE TABLE IF NOT EXISTS settings (
                 key TEXT PRIMARY KEY,
@@ -104,12 +114,12 @@ def init_db():
             )
         ''')
         
-        # Create indexes
+        # Create indexes: 자주 조회되는 컬럼에 인덱스를 생성
         cursor.execute('CREATE INDEX IF NOT EXISTS idx_tickers_sector ON tickers(sector_id)')
         cursor.execute('CREATE INDEX IF NOT EXISTS idx_driver_ticker ON driver_memory(ticker)')
         cursor.execute('CREATE INDEX IF NOT EXISTS idx_proc_tool ON procedural_memory(tool_name)')
         
-        print("✅ Database initialized successfully")
+        print("Database가 성공적으로 초기화되었습니다.")
 
 
 # ============================================================
@@ -117,7 +127,10 @@ def init_db():
 # ============================================================
 
 def get_setting(key: str, default: str = "") -> str:
-    """Get a setting value."""
+    """
+    설정 키(key)에 해당하는 값을 조회합니다.
+    값이 없으면 default를 반환합니다.
+    """
     with get_connection() as conn:
         cursor = conn.cursor()
         cursor.execute('SELECT value FROM settings WHERE key = ?', (key,))
@@ -125,7 +138,14 @@ def get_setting(key: str, default: str = "") -> str:
         return row['value'] if row else default
 
 def set_setting(key: str, value: str, description: str = ""):
-    """Set a setting value."""
+    """
+    설정 값을 저장하거나 업데이트합니다.
+    
+    Args:
+        key: 설정 키 값 (예: "risk_tolerance")
+        value: 실제 설정 값 (문자열)
+        description: 설정에 대한 한국어/영문 설명
+    """
     with get_connection() as conn:
         cursor = conn.cursor()
         cursor.execute('''
@@ -134,7 +154,7 @@ def set_setting(key: str, value: str, description: str = ""):
         ''', (key, value, description))
 
 def get_all_settings() -> List[Dict[str, Any]]:
-    """Get all settings."""
+    """모든 설정 값을 리스트 형태로 반환합니다."""
     with get_connection() as conn:
         cursor = conn.cursor()
         cursor.execute('SELECT * FROM settings ORDER BY key')
@@ -147,7 +167,10 @@ def get_all_settings() -> List[Dict[str, Any]]:
 # ============================================================
 
 def get_sector_competitors(ticker: str) -> List[str]:
-    """Get competitors for a ticker."""
+    """
+    특정 티커에 대한 경쟁사(같은 섹터 내 비교 대상 티커) 목록을 반환합니다.
+    우선 sector_competitors 테이블을 조회하고, 없으면 같은 섹터에 속한 다른 티커들을 반환합니다.
+    """
     with get_connection() as conn:
         cursor = conn.cursor()
         
@@ -171,7 +194,10 @@ def get_sector_competitors(ticker: str) -> List[str]:
 
 
 def get_ticker_info(ticker: str) -> Optional[Dict[str, Any]]:
-    """Get ticker information."""
+    """
+    티커에 대한 상세 정보를 조회합니다.
+    섹터 한글명/영문명까지 조인하여 함께 반환합니다.
+    """
     with get_connection() as conn:
         cursor = conn.cursor()
         cursor.execute('''
@@ -186,7 +212,10 @@ def get_ticker_info(ticker: str) -> Optional[Dict[str, Any]]:
 
 
 def add_ticker(ticker: str, name: str, sector_id: str, market: str):
-    """Add or update a ticker."""
+    """
+    티커 정보를 추가하거나 업데이트합니다.
+    존재하는 primary key(ticker)에 대해서는 REPLACE 동작을 수행합니다.
+    """
     with get_connection() as conn:
         cursor = conn.cursor()
         cursor.execute('''
@@ -196,7 +225,10 @@ def add_ticker(ticker: str, name: str, sector_id: str, market: str):
 
 
 def get_all_sectors() -> List[Dict[str, Any]]:
-    """Get all sectors with their tickers."""
+    """
+    모든 섹터 정보와 각 섹터에 속한 티커 목록을 함께 조회합니다.
+    Dashboard에서 트리 구조로 표시할 때 사용됩니다.
+    """
     with get_connection() as conn:
         cursor = conn.cursor()
         cursor.execute('SELECT * FROM sectors')
@@ -215,7 +247,17 @@ def get_all_sectors() -> List[Dict[str, Any]]:
 
 def add_driver(ticker: str, name: str, driver_type: str, 
                description: str, impact_direction: str, confidence: float = 0.8):
-    """Add a driver memory entry."""
+    """
+    Driver Memory에 새로운 드라이버 레코드를 추가합니다.
+    
+    Args:
+        ticker: 종목 티커
+        name: 종목명
+        driver_type: 드라이버 유형 (예: "keyword", "event")
+        description: 드라이버를 설명하는 텍스트(키워드 등)
+        impact_direction: 영향 방향 (예: "positive", "negative", "neutral")
+        confidence: 신뢰도 점수 (0.0 ~ 1.0)
+    """
     with get_connection() as conn:
         cursor = conn.cursor()
         cursor.execute('''
@@ -226,7 +268,7 @@ def add_driver(ticker: str, name: str, driver_type: str,
 
 
 def get_drivers(ticker: str, limit: int = 10) -> List[Dict[str, Any]]:
-    """Get driver memory for a ticker."""
+    """특정 티커에 대해 최신 순으로 제한 개수만큼 드라이버 레코드를 반환합니다."""
     with get_connection() as conn:
         cursor = conn.cursor()
         cursor.execute('''
@@ -239,7 +281,10 @@ def get_drivers(ticker: str, limit: int = 10) -> List[Dict[str, Any]]:
 
 
 def get_top_drivers(ticker: str, driver_type: Optional[str] = None) -> List[Dict[str, Any]]:
-    """Get top drivers grouped by type."""
+    """
+    특정 티커의 드라이버를 유형별로 집계하여 상위 드라이버들을 반환합니다.
+    driver_type가 지정되면 해당 유형에 대해서만 집계합니다.
+    """
     with get_connection() as conn:
         cursor = conn.cursor()
         
@@ -273,7 +318,16 @@ def get_top_drivers(ticker: str, driver_type: Optional[str] = None) -> List[Dict
 
 def log_tool_execution(tool_name: str, args: Dict, result_summary: str, 
                        success: bool, execution_time_ms: int = 0):
-    """Log a tool execution."""
+    """
+    도구 실행 이력을 procedural_memory 테이블에 한 줄로 저장합니다.
+    
+    Args:
+        tool_name: 도구 이름 (예: "stock_price")
+        args: 도구 실행에 사용된 인자 딕셔너리
+        result_summary: 결과 요약 텍스트 (상세 내용은 외부에 저장 가능)
+        success: 실행 성공 여부
+        execution_time_ms: 실행 시간(ms) (선택)
+    """
     with get_connection() as conn:
         cursor = conn.cursor()
         cursor.execute('''
@@ -284,7 +338,10 @@ def log_tool_execution(tool_name: str, args: Dict, result_summary: str,
 
 
 def get_tool_history(tool_name: Optional[str] = None, limit: int = 20) -> List[Dict[str, Any]]:
-    """Get tool execution history."""
+    """
+    도구 실행 이력을 최근 순으로 조회합니다.
+    tool_name이 지정되면 해당 도구에 대해서만 필터링합니다.
+    """
     with get_connection() as conn:
         cursor = conn.cursor()
         
@@ -312,7 +369,10 @@ def get_tool_history(tool_name: Optional[str] = None, limit: int = 20) -> List[D
 
 
 def get_tool_stats() -> List[Dict[str, Any]]:
-    """Get tool execution statistics."""
+    """
+    도구별 실행 횟수, 성공 횟수, 평균 실행 시간을 집계한 통계를 반환합니다.
+    대시보드에서 도구 사용량을 시각화할 때 사용됩니다.
+    """
     with get_connection() as conn:
         cursor = conn.cursor()
         cursor.execute('''
@@ -332,13 +392,17 @@ def get_tool_stats() -> List[Dict[str, Any]]:
 # ============================================================
 
 def migrate_from_json():
-    """Migrate data from JSON files to SQLite."""
+    """
+    기존 JSON 파일(`sector_competitors.json`, `driver_memory.json`, `procedural_memory.json`)에
+    저장되어 있던 데이터를 SQLite 데이터베이스로 마이그레이션합니다.
+    이미 마이그레이션된 경우에도 INSERT OR REPLACE / IGNORE 전략으로 중복을 방지합니다.
+    """
     base_path = os.path.join(os.path.dirname(__file__), '..', 'data')
     
     # 1. Migrate sector_competitors.json
     sector_json_path = os.path.join(base_path, 'sector_competitors.json')
     if os.path.exists(sector_json_path):
-        print("📦 Migrating sector_competitors.json...")
+        print("sector_competitors.json 데이터를 SQLite로 마이그레이션합니다...")
         with open(sector_json_path, 'r', encoding='utf-8') as f:
             data = json.load(f)
         
@@ -375,12 +439,12 @@ def migrate_from_json():
                                 VALUES (?, ?)
                             ''', (ticker, competitor))
         
-        print(f"   ✅ Migrated {len(ticker_to_sector)} tickers, {len(data.get('sectors', {}))} sectors")
+        print(f"   티커 {len(ticker_to_sector)}개, 섹터 {len(data.get('sectors', {}))}개를 마이그레이션했습니다.")
     
     # 2. Migrate driver_memory.json
     driver_json_path = os.path.join(base_path, 'driver_memory.json')
     if os.path.exists(driver_json_path):
-        print("📦 Migrating driver_memory.json...")
+        print("driver_memory.json 데이터를 SQLite로 마이그레이션합니다...")
         with open(driver_json_path, 'r', encoding='utf-8') as f:
             data = json.load(f)
         
@@ -409,12 +473,12 @@ def migrate_from_json():
                     ''', (ticker, name, driver_type, description, impact, confidence))
                     count += 1
         
-        print(f"   ✅ Migrated {count} driver entries")
+        print(f"   드라이버 레코드 {count}건을 마이그레이션했습니다.")
     
     # 3. Migrate procedural_memory.json
     proc_json_path = os.path.join(base_path, 'procedural_memory.json')
     if os.path.exists(proc_json_path):
-        print("📦 Migrating procedural_memory.json...")
+        print("procedural_memory.json 데이터를 SQLite로 마이그레이션합니다...")
         with open(proc_json_path, 'r', encoding='utf-8') as f:
             data = json.load(f)
         
@@ -432,9 +496,9 @@ def migrate_from_json():
                       1 if entry.get('success', True) else 0))
                 count += 1
         
-        print(f"   ✅ Migrated {count} procedural entries")
+        print(f"   Procedural 메모리 레코드 {count}건을 마이그레이션했습니다.")
     
-    print("\n✅ Migration complete!")
+    print("\nJSON 데이터 마이그레이션이 완료되었습니다.")
 
 
 # Initialize DB on import (create tables if they don't exist)

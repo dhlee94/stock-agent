@@ -6,8 +6,8 @@ import os
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '../..')))
 from database import get_connection
 
-st.set_page_config(page_title="Market Data", page_icon="📊", layout="wide")
-st.title("📊 Market Data Management")
+st.set_page_config(page_title="시장 데이터 관리", page_icon="📊", layout="wide")
+st.title("📊 시장 데이터 관리")
 
 import plotly.express as px
 
@@ -22,17 +22,17 @@ with get_connection() as conn:
         """, conn)
         
         if not sector_counts.empty:
-            st.caption("Sector Distribution")
+            st.caption("섹터 분포")
             fig = px.pie(sector_counts, values='count', names='name_kr', hole=0.4)
             fig.update_layout(margin=dict(t=0, b=0, l=0, r=0), height=300)
             st.plotly_chart(fig, use_container_width=True)
     except Exception:
         pass
 
-tab1, tab2, tab3 = st.tabs(["Tickers", "Sectors", "Competitors"])
+tab1, tab2, tab3 = st.tabs(["종목", "섹터", "경쟁사"])
 
 with tab1:
-    st.subheader("Manage Tickers")
+    st.subheader("종목 관리")
     with get_connection() as conn:
         df = pd.read_sql("SELECT * FROM tickers", conn)
         
@@ -43,7 +43,7 @@ with tab1:
             use_container_width=True
         )
         
-        if st.button("Save Changes", key="save_tickers"):
+        if st.button("변경 사항 저장", key="save_tickers"):
             # Update changes to DB (Simplistic approach: deleteAll + insertAll for small data, or handle delta)
             # For robustness in this demo, accessing connection directly
             try:
@@ -54,17 +54,17 @@ with tab1:
                          (row['ticker'], row['name'], row['sector_id'], row['market'])
                      )
                  conn.commit()
-                 st.success("Tickers updated successfully!")
+                 st.success("종목 정보가 성공적으로 저장되었습니다.")
             except Exception as e:
-                st.error(f"Error saving: {e}")
+                st.error(f"저장 중 오류가 발생했습니다: {e}")
 
 with tab2:
-    st.subheader("Manage Sectors")
+    st.subheader("섹터 관리")
     with get_connection() as conn:
         df = pd.read_sql("SELECT * FROM sectors", conn)
         edited_df = st.data_editor(df, num_rows="dynamic", key="sector_editor")
         
-        if st.button("Save Changes", key="save_sectors"):
+        if st.button("변경 사항 저장", key="save_sectors"):
             try:
                  for index, row in edited_df.iterrows():
                      conn.execute(
@@ -72,17 +72,17 @@ with tab2:
                          (row['id'], row['name_kr'], row['name_en'])
                      )
                  conn.commit()
-                 st.success("Sectors updated successfully!")
+                 st.success("섹터 정보가 성공적으로 저장되었습니다.")
             except Exception as e:
-                st.error(f"Error saving: {e}")
+                st.error(f"저장 중 오류가 발생했습니다: {e}")
 
 with tab3:
-    st.subheader("Competitor Relations")
+    st.subheader("경쟁사 관계 설정")
     with get_connection() as conn:
         df = pd.read_sql("SELECT * FROM sector_competitors", conn)
         edited_df = st.data_editor(df, num_rows="dynamic", key="comp_editor")
         
-        if st.button("Save Changes", key="save_comps"):
+        if st.button("변경 사항 저장", key="save_comps"):
              try:
                  # It's cleaner to truncate and reload if full replace, but sticking to upsert
                  curr = conn.cursor()
@@ -92,6 +92,6 @@ with tab3:
                          (row['ticker'], row['competitor_ticker'])
                      )
                  conn.commit()
-                 st.success("Competitors updated successfully!")
+                 st.success("경쟁사 정보가 성공적으로 저장되었습니다.")
              except Exception as e:
-                st.error(f"Error saving: {e}")
+                st.error(f"저장 중 오류가 발생했습니다: {e}")

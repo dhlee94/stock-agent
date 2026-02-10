@@ -7,64 +7,91 @@
 
 ## ✨ Features
 
-- 🧠 **Memento Architecture**: [논문](https://arxiv.org/abs/2401.08017) 기반 Planner/Executor/Reflector 구조
+- 🧠 **Memento Architecture**: [논문](https://arxiv.org/abs/2401.08017) 기반 Planner / Executor / Summarizer / Reflector 구조
 - 📊 **Technical Analysis**: RSI, MACD, Bollinger Bands, Moving Averages
 - 📈 **Fundamental Analysis**: PER, PBR, ROE, EPS, 재무제표
-- 🤖 **AI Prediction**: Chronos 시계열 예측
+- 🤖 **AI Prediction**: Chronos 시계열 + 뉴스 기반 멀티모달 예측
 - 📰 **Multi-language News**: 한국/미국 주식 자동 감지, 영어→한글 분석
 - 🎯 **Risk Management**: Target Price, Stop-loss, Risk/Reward 자동 계산
-- 💾 **Memory System**: DriverMemory (주가 변동 원인), ProceduralMemory (성공 패턴)
-- 🔍 **Self-Reflection**: 논리적 일관성 검증 및 자동 수정
-- 📱 **Web Dashboard**: 모바일/PC 반응형 UI
+- 💾 **Memory System**: DriverMemory (주가 변동 원인), ProceduralMemory (성공 패턴), Semantic Memory
+- 🔍 **Self-Reflection**: Reference Proxy 기반 논리 검증 및 자동 수정
+- 📱 **Web Dashboard / Web Client**: 모바일/PC 반응형 UI (Streamlit / FastAPI)
 
 ---
 
 ## 🚀 Quick Start
 
 ### 1. Setup
+
 ```bash
 python -m venv venv
-source venv/bin/activate   # Mac/Linux
+
+# Windows
+venv\Scripts\activate
+
+# Mac / Linux
+source venv/bin/activate
+
 pip install --upgrade pip
 pip install -r requirements.txt
 ```
 
 ### 2. Configure API Key
+
 ```bash
-cp .env.example .env
-# Edit .env and add your API keys
+cp .env.example .env   # Windows PowerShell: copy .env.example .env
+# .env에 LLM / 데이터 관련 API 키를 입력하세요.
 ```
+
+> API 키가 하나도 없을 경우, 에이전트는 **MOCK 모드**로 동작하며 간단한 데모 응답만 반환합니다.  
+> 실제 투자 분석에는 최소 1개의 LLM API 키 설정을 권장합니다.
 
 ### 3. Run
 
 #### 🎛️ 관리자 대시보드 (Admin)
+
 데이터 관리, 메모리 열람, 에이전트 설정을 위한 제어판입니다.
+
 ```bash
 streamlit run src/dashboard/app.py
 ```
-**접속**: http://localhost:8501
+
+**접속**: `http://localhost:8501`
 
 #### 📱 사용자 웹 서비스 (Client)
-일반 사용자용 AI 채팅 인터페이스입니다.
+
+일반 사용자용 AI 채팅 + 종합 주식 분석 웹 인터페이스입니다.
+
 ```bash
 python src/web/app.py
 ```
-**접속**: http://localhost:8000
+
+**접속**: `http://localhost:8000`
 
 #### 💻 CLI Agent
+
 ```bash
 python main.py "삼성전자 분석해줘"
 python main.py "NVIDIA 전망 분석해줘"
 ```
 
-#### 🧪 Debug Mode
+#### 🧪 Debug / Flow Test
+
 ```bash
 python test_agent_flow.py "SK하이닉스 분석"
 ```
 
+#### 🇰🇷 데이터 품질 검증 (KR 전용)
+
+```bash
+python verify_korea_data.py "005930.KS"
+```
+
 ---
 
-## 🏗️ Architecture
+## 🏗️ Architecture (High Level)
+
+상세한 아키텍처는 `docs/ARCHITECTURE.md`를 참고하세요.
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
@@ -74,20 +101,25 @@ python test_agent_flow.py "SK하이닉스 분석"
 ┌─────────────────────────▼───────────────────────────────────┐
 │                   🧠 PLANNER (LLM)                          │
 │  - 사용자 요청 분석                                          │
-│  - DriverMemory 조회 (과거 주가 변동 원인)                    │
-│  - 실행 계획 수립                                            │
+│  - DriverMemory / Semantic Memory 조회                      │
+│  - 실행 계획(JSON) 수립                                     │
 └─────────────────────────┬───────────────────────────────────┘
                           │
 ┌─────────────────────────▼───────────────────────────────────┐
-│                   ⚡ EXECUTOR                               │
-│  MCP Tools: price, technical, news, risk, predict...       │
+│                   ⚡ EXECUTOR (LLM)                         │
+│  MCP Tools: price, technical, news, peers, risk, predict…  │
+│  - ProceduralMemory 기반 도구 사용 패턴 재활용             │
 └─────────────────────────┬───────────────────────────────────┘
                           │
 ┌─────────────────────────▼───────────────────────────────────┐
-│                   🔍 REFLECTOR (Self-Check)                 │
-│  - 논리적 일관성 검증 (RSI < 30 인데 SELL?)                   │
-│  - 누락된 분석 체크                                          │
-│  - 필요시 재분석                                             │
+│                   📊 SUMMARIZER (LLM)                       │
+│  - 최종 한국어 리포트 생성                                   │
+└─────────────────────────┬───────────────────────────────────┘
+                          │
+┌─────────────────────────▼───────────────────────────────────┐
+│               🔍 REFLECTOR (Self-Check LLM)                │
+│  - Reference Proxy(동종 업종 대표주)와 일관성 검증          │
+│  - 리스크 허용도 기반 톤 보정                               │
 └─────────────────────────┴───────────────────────────────────┘
 ```
 
@@ -112,59 +144,90 @@ python test_agent_flow.py "SK하이닉스 분석"
 
 ```
 agent/
-├── main.py                    # CLI 진입점
-├── test_agent_flow.py         # 🧪 Debug/Test script
+├── main.py                    # CLI 진입점 (에이전트 실행)
+├── test_agent_flow.py         # 🧪 에이전트 플로우 디버그 스크립트
+├── verify_korea_data.py       # 🇰🇷 한국 주식 데이터 품질 검증 스크립트
 ├── requirements.txt
 ├── .env.example               # 환경변수 템플릿
+├── memory_store.json          # 임베딩 메모리 저장소
+├── data/
+│   ├── memento.db             # SQLite DB (설정, 메모리, 사용 통계)
+│   └── sector_competitors.json# 섹터별 기본 경쟁사 맵
+├── docs/
+│   ├── ARCHITECTURE.md        # 상세 아키텍처 문서
+│   └── img/                   # 다이어그램 이미지
 └── src/
     ├── agent_client.py        # 🧠 Memento Agent (Planner/Executor/Reflector)
     ├── mcp_server.py          # MCP Tool Server
+    ├── database.py            # SQLite 연결 & 설정/통계 유틸
     ├── memory_store.py        # Embedding 기반 메모리
     ├── driver_memory.py       # 📈 Driver Memory (주가 변동 원인)
-    ├── driver_memory.py       # 📈 Driver Memory (주가 변동 원인)
-    ├── risk_manager.py        # 🎯 Risk Management
+    ├── risk_manager.py        # 🎯 Risk Management 계산 로직
+    ├── stock_tool.py          # 🤖 Chronos + 뉴스 융합 예측 래퍼
     ├── dashboard/             # 🎛️ 관리자 대시보드 (Streamlit)
     │   ├── app.py             # 대시보드 메인
-    │   └── pages/             # 대시보드 페이지 (Market Data, Memory, Settings)
+    │   └── pages/             # Market Data, Memory, Settings
     ├── web/                   # 📱 사용자 웹 서비스 (FastAPI)
     │   ├── app.py             # FastAPI 서버
-    │   ├── templates/         # HTML
-    │   └── static/            # CSS
-    └── tools/stock/           # 📊 Stock Tools
-        ├── price.py           # 실시간 주가
-        ├── chart.py           # 차트 데이터
-        ├── financials.py      # 재무제표
-        ├── news.py            # 뉴스 (다국어 지원)
-        ├── technical.py       # 기술적 분석
-        ├── market_utils.py    # 🌍 시장 감지 (KR/US)
-        ├── compare.py         # 종목 비교
-        ├── sector.py          # 섹터 분석
-        ├── predictor.py       # AI 예측
-        └── peer_analysis.py   # 📊 Peer Group 분석 (STL Trend)
+    │   ├── templates/         # HTML 템플릿
+    │   └── static/            # CSS / 정적 리소스
+    ├── tools/                 # MCP Tools
+    │   ├── stock/             # 📊 Stock Tools
+    │   │   ├── price.py       # 실시간 주가
+    │   │   ├── chart.py       # 차트 데이터
+    │   │   ├── financials.py  # 재무제표
+    │   │   ├── news.py        # 뉴스 (다국어 지원)
+    │   │   ├── technical.py   # 기술적 분석
+    │   │   ├── market_utils.py# 🌍 시장 감지 (KR/US)
+    │   │   ├── compare.py     # 종목 비교
+    │   │   ├── sector.py      # 섹터 분석
+    │   │   ├── predictor.py   # AI 예측
+    │   │   └── peer_analysis.py# 📊 Peer Group 분석 (STL Trend)
+    │   ├── search.py          # 웹 검색
+    │   ├── crawl.py           # 웹 크롤러
+    │   ├── document.py        # 문서 읽기
+    │   ├── memory.py          # 메모리 유틸 MCP 래퍼
+    │   ├── calc.py            # 수치 계산
+    │   ├── image.py           # 이미지 처리
+    │   ├── video.py           # 비디오 관련 유틸
+    │   └── executor.py        # MCP 도구 실행 유틸
+    └── stock-price-predictor/ # Chronos 기반 시계열 예측 모듈
+        ├── main.py
+        ├── trainer.py
+        └── predictor_src/...
 ```
 
 ---
 
-## 📈 Available Tools
+## 📈 Available Tools (MCP)
+
+MCP 서버(`src/mcp_server.py`)를 통해 LLM이 호출할 수 있는 도구 목록입니다.
 
 | Tool | Description |
 |------|-------------|
 | `stock_price` | 실시간 주가, 등락률, 거래량 |
+| `stock_chart` | OHLCV 차트 데이터 |
 | `stock_technical` | RSI, MACD, 볼린저밴드, MA |
 | `stock_news` | 종목/시장 뉴스 (KR/US 자동 감지) |
-| `stock_financials` | PER, PBR, ROE, 배당 등 |
-| `analyze_drivers` | 📈 과거 주가 변동 원인 분석 (LLM 기반) |
-| `calculate_risk` | 🎯 Target Price, Stop-loss, Risk/Reward |
-| `stock_ai_predict` | 🤖 AI 예측 (Chronos) |
+| `stock_financials` | PER, PBR, ROE, 배당 등 재무지표 |
 | `stock_compare` | 다중 종목 비교 |
 | `stock_sector` | 섹터별 분석 |
-| `analyze_peers` | 📊 Peer Group 분석 (STL Trend + LLM 경쟁사 탐색) |
+| `stock_ai_predict` | 🤖 Chronos + 뉴스 멀티모달 예측 |
+| `analyze_drivers` | 📈 과거 주가 변동 원인 분석 (Driver Memory) |
+| `analyze_peers` | 📊 Peer Group 분석 (뉴스 Entity + STL Trend) |
+| `calculate_risk` | 🎯 Target Price, Stop-loss, Risk/Reward |
+| `web_search` | 일반 웹 검색 |
+| `web_crawl` | URL 크롤링 & 콘텐츠 추출 |
+| `run_python` | 간단한 Python 코드 실행 |
+| `calc_math` | 수치 계산 유틸 |
+| `read_file` | 문서 파일 읽기 |
+| `save_memory` | Trajectory/피드백 저장 |
 
 ---
 
 ## 📊 Peer Analysis System
 
-뉴스에서 경쟁사를 찾지 못하면 **LLM이 자동으로 Industry Benchmark 추론**:
+뉴스에서 경쟁사를 찾지 못하면 **LLM이 자동으로 Industry Benchmark를 추론**합니다.
 
 ```
 "삼성전자 분석" → 뉴스 탐색 → 0건
@@ -173,14 +236,17 @@ agent/
                 ↓
     STL Trend 상관관계 계산 → Reference Proxy 선정
                 ↓
-    Reflector 검증 (Confidence: High/Medium/Low)
+    Reflector 검증 (Confidence: High / Medium / Low)
 ```
 
-**사용자 지정 비교:**
+**사용자 지정 비교 예시:**
+
 ```bash
 # "SK하이닉스랑 비교해서" 입력 시 직접 비교
 "삼성전자 분석해줘 SK하이닉스랑 비교해서"
 ```
+
+---
 
 ## 🎯 Risk Management Output
 
@@ -217,10 +283,10 @@ agent/
 |----------|----------|-------------|
 | `LLM_PROVIDER` | No | `groq` (기본), `gemini`, `openai` |
 | `GROQ_API_KEY` | Yes* | Groq API 키 (무료, Llama 3.3 70B) |
-| `GEMINI_API_KEY` | Yes* | Gemini API 키 (무료) |
-| `OPENAI_API_KEY` | No | OpenAI API 키 (유료) |
+| `GEMINI_API_KEY` | Yes* | Gemini API 키 (무료, Gemini 2.0 Flash) |
+| `OPENAI_API_KEY` | No | OpenAI API 키 (유료, GPT-4o 등) |
 
-*최소 하나의 LLM API 키 필요
+*최소 하나의 LLM API 키가 있으면 실제 LLM 모드로 동작하며, 모두 없으면 MOCK 모드로 동작합니다.
 
 ---
 

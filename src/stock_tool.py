@@ -1,5 +1,5 @@
 """
-Stock Analysis Tool - Wrapper for StockBrain
+주식 분석 도구 - StockBrain 모델을 감싸는 래퍼 모듈
 """
 import sys
 import os
@@ -25,7 +25,7 @@ import pytz
 _stock_brain_cache = {}
 
 class MockStockBrain:
-    """Mock Brain for when the real model is missing."""
+    """실제 StockBrain 모델이 없을 때 사용하는 Mock 모델입니다."""
     def __init__(self, ticker, name, market):
         self.ticker = ticker
         self.market = market
@@ -53,9 +53,9 @@ class MockStockBrain:
                 # Extract titles for the list
                 news = [item['title'] for item in news_data.get('news', [])]
                 if not news:
-                    news = [f"No recent news for {self.ticker}"]
+                    news = [f"{self.ticker}에 대한 최근 뉴스가 없습니다."]
             except Exception:
-                news = [f"Failed to fetch news for {self.ticker}"]
+                news = [f"{self.ticker} 뉴스 조회에 실패했습니다."]
             
             return {
                 "current_price": current_price,
@@ -115,23 +115,23 @@ class MockStockBrain:
         return [MockTensor(predictions)]
 
 def get_stock_brain(ticker: str, name: str, market: str):
-    """Get or create a StockBrain instance (cached)."""
+    """캐시를 활용해 StockBrain 인스턴스를 가져오거나 새로 생성합니다."""
     cache_key = f"{ticker}_{market}"
     if cache_key not in _stock_brain_cache:
         try:
             from main import StockBrain
-            print(f"🔄 [StockTool] Initializing Real AI Model for {ticker}...")
+            print(f"🔄 [StockTool] 실제 AI 모델을 초기화합니다: {ticker} ({market})")
             _stock_brain_cache[cache_key] = StockBrain(ticker, name, market)
         except Exception as e:
-            print(f"⚠️ [StockTool] Failed to load Real AI Model: {e}")
-            print(f"⚠️ [StockTool] Falling back to MockModel.")
+            print(f"⚠️ [StockTool] 실제 AI 모델 로드에 실패했습니다: {e}")
+            print("⚠️ [StockTool] Mock 모델로 대체하여 동작합니다.")
             _stock_brain_cache[cache_key] = MockStockBrain(ticker, name, market)
             
     return _stock_brain_cache[cache_key]
 
 def analyze_stock(ticker: str, name: str, market: str = "KR") -> dict:
     """
-    Analyze a stock using AI (Chronos + FinBERT fusion).
+    Chronos + FinBERT 융합 모델을 사용하여 종목을 분석합니다.
     """
     try:
         brain = get_stock_brain(ticker, name, market)
@@ -239,10 +239,10 @@ def analyze_stock(ticker: str, name: str, market: str = "KR") -> dict:
         return {
             "status": "error",
             "ticker": ticker,
-            "error": str(e)
+            "error": str(e),
         }
 
 if __name__ == "__main__":
-    # Test
-    result = analyze_stock("005930.KS", "Samsung Electronics", "KR")
+    # 간단 테스트
+    result = analyze_stock("005930.KS", "삼성전자", "KR")
     print(json.dumps(result, ensure_ascii=False, indent=2))

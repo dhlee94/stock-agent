@@ -1,5 +1,5 @@
 """
-Risk Manager - Calculate Target Price, Stop-loss, and Risk/Reward Ratio
+리스크 매니저(Risk Manager) - 목표가, 손절가, 손익비(Risk/Reward)를 계산하는 모듈
 """
 import json
 from typing import Dict, Any, Optional
@@ -12,19 +12,19 @@ def calculate_risk_levels(
     default_stop_loss_pct: float = 0.07  # 7% default
 ) -> Dict[str, Any]:
     """
-    Calculate risk management levels based on technical analysis and AI prediction.
+    기술적 분석 결과와 AI 예측을 기반으로 리스크 관리 수준(목표가, 손절가, 손익비)을 계산합니다.
     
     Args:
-        current_price: Current stock price
-        technical_data: Technical analysis data (from technical_analysis tool)
-        ai_prediction: AI prediction data (optional)
-        default_stop_loss_pct: Default stop-loss percentage (0.07 = 7%)
+        current_price: 현재 주가
+        technical_data: 기술적 분석 데이터 (`technical_analysis` 도구 결과)
+        ai_prediction: AI 예측 데이터 (선택)
+        default_stop_loss_pct: 기본 손절 비율 (0.07 = -7%)
         
     Returns:
-        dict with target_price, stop_loss, risk_reward_ratio, and reasoning
+        target_price, stop_loss, risk_reward_ratio, reasoning 등을 포함한 dict
     """
     if current_price <= 0:
-        return {"error": "Invalid current price"}
+        return {"error": "유효하지 않은 현재가입니다."}
     
     # Extract Bollinger Bands for support/resistance
     bollinger = technical_data.get('indicators', {}).get('bollinger_bands', {})
@@ -116,35 +116,35 @@ def _generate_reasoning(
     entry_rating: str,
     ai_predicted_pct: float
 ) -> str:
-    """Generate human-readable reasoning for risk levels."""
+    """리스크 수준에 대한 사람 친화적인 설명 문장을 생성합니다."""
     
     target_pct = round((target_price / current_price - 1) * 100, 1)
     stop_pct = round((stop_loss / current_price - 1) * 100, 1)
     
-    reasoning = f"Target +{target_pct}%, Stop-loss {stop_pct}%, Risk/Reward {risk_reward}:1. "
+    reasoning = f"목표 수익률 +{target_pct}%, 예상 최대 손실률 {stop_pct}%, 손익비는 {risk_reward}:1 수준입니다. "
     
     if ai_predicted_pct > 5:
-        reasoning += f"AI predicts strong upside of +{ai_predicted_pct:.1f}%. "
+        reasoning += f"AI 예측 기준으로는 약 +{ai_predicted_pct:.1f}% 수준의 상승 여력이 있습니다. "
     elif ai_predicted_pct < -5:
-        reasoning += f"AI predicts downside of {ai_predicted_pct:.1f}%. "
+        reasoning += f"AI 예측 기준으로는 약 {ai_predicted_pct:.1f}% 수준의 하락 가능성이 있습니다. "
     
     if entry_rating == "EXCELLENT":
-        reasoning += "Entry point is highly favorable."
+        reasoning += "진입 구간이 매우 매력적인 수준으로 평가됩니다."
     elif entry_rating == "GOOD":
-        reasoning += "Entry point is favorable."
+        reasoning += "진입 구간이 전반적으로 우호적인 수준입니다."
     elif entry_rating == "FAIR":
-        reasoning += "Entry point is neutral."
+        reasoning += "진입 구간이 무난한(보통 수준의) 매력도를 보입니다."
     else:
-        reasoning += "Entry point is not favorable. Consider waiting for better levels."
+        reasoning += "진입 매력도가 낮은 구간으로, 더 나은 가격대를 기다리는 것이 바람직할 수 있습니다."
     
     return reasoning
 
 
 def format_risk_output(risk_data: Dict[str, Any], currency: str = "KRW") -> str:
-    """Format risk data for display."""
+    """리스크 분석 결과를 사용자에게 보여줄 수 있는 한국어 텍스트로 포맷팅합니다."""
     
     if "error" in risk_data:
-        return f"Risk calculation error: {risk_data['error']}"
+        return f"리스크 계산 중 오류가 발생했습니다: {risk_data['error']}"
     
     if currency == "KRW":
         price_fmt = "{:,.0f}"
@@ -152,12 +152,12 @@ def format_risk_output(risk_data: Dict[str, Any], currency: str = "KRW") -> str:
         price_fmt = "{:,.2f}"
     
     return f"""
-📊 **Risk Management Analysis**
+📊 **리스크 관리 분석 결과**
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━
-🎯 Target Price: {price_fmt.format(risk_data['target_price'])} ({risk_data['target_percent']:+.1f}%)
-🛑 Stop-loss: {price_fmt.format(risk_data['stop_loss'])} ({risk_data['stop_loss_percent']:.1f}%)
-⚖️ Risk/Reward: {risk_data['risk_reward_ratio']}:1
-📈 Entry Rating: {risk_data['entry_rating']}
+🎯 목표가(Target Price): {price_fmt.format(risk_data['target_price'])} ({risk_data['target_percent']:+.1f}%)
+🛑 손절가(Stop-loss): {price_fmt.format(risk_data['stop_loss'])} ({risk_data['stop_loss_percent']:.1f}%)
+⚖️ 손익비(Risk/Reward): {risk_data['risk_reward_ratio']}:1
+📈 진입 매력도(Entry Rating): {risk_data['entry_rating']}
 
 💡 {risk_data['reasoning']}
 """

@@ -270,12 +270,12 @@ def save_memory(task: str, plan: str, result: str, feedback_score: float) -> str
 # Main Entry Point
 # =========================================================
 if __name__ == "__main__":
-    print("🚀 Stock Expert MCP Server Started!")
+    print("Stock Expert MCP Server Started!")
     print("")
-    print("📈 Stock Tools:")
+    print("Stock Tools:")
     print("   stock_price, stock_chart, stock_financials, stock_news")
     print("   stock_technical, stock_compare, stock_sector, stock_ai_predict")
     print("")
-    print("🛠️ Utility Tools:")
+    print("Utility Tools:")
     print("   web_search, web_crawl, run_python, calc_math, read_file, save_memory")
     mcp.run()
