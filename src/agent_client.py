@@ -1,5 +1,6 @@
 import asyncio
 import os
+import sys
 import json
 from database import get_setting
 import re
@@ -15,10 +16,10 @@ from mcp.client.stdio import stdio_client
 
 # Handle both relative and absolute imports
 try:
-    from .memory_store import MemoryStore, ProceduralMemory
+    from .memory_store import MemoryStore, ProceduralMemory, SemanticMemory
     from .driver_memory import DriverMemory
 except ImportError:
-    from memory_store import MemoryStore, ProceduralMemory
+    from memory_store import MemoryStore, ProceduralMemory, SemanticMemory
     from driver_memory import DriverMemory
 
 # Provider selection: "gemini" (default, free), "openai", or "groq"
@@ -63,6 +64,7 @@ class MockLLM:
 class MementoAgent:
     def __init__(self):
         self.memory = MemoryStore()
+        self.semantic_memory = SemanticMemory()
         self.procedural_memory = ProceduralMemory()
         self.driver_memory = DriverMemory()
         self.server_script = os.path.join(os.path.dirname(os.path.abspath(__file__)), "mcp_server.py")
@@ -129,108 +131,68 @@ class MementoAgent:
             response = self.model.generate_content(prompt)
             return response.text
 
-    def _call_planner(self, user_task: str, tool_descriptions: str, context_examples: str, driver_info: str = "") -> List[Dict]:
+    def _call_planner(self, user_task: str, tool_descriptions: str, context_examples: str, driver_info: str = "", semantic_knowledge: List[str] = None) -> List[Dict]:
         """
-        Planner LLM: Generates a structured execution plan.
+        Planner LLM: Generates a free-form execution plan based on available tools and past memory.
         Returns a list of steps: [{"step": 1, "tool": "tool_name", "args": {...}, "reason": "..."}, ...]
         """
         print("\n📋 [Planner] Generating execution plan...")
-        
-        # Get settings
-        search_depth = int(get_setting("search_depth", "3"))
 
-        # Build driver context
+        memory_context = ""
+        if context_examples:
+            memory_context = f"""
+## Past Successful Plans (Retrieved from Memory)
+These are real examples of plans that worked well for similar tasks.
+Use them as inspiration — adapt freely to the current request, don't copy blindly.
+{context_examples}"""
+
         driver_context = ""
         if driver_info:
             driver_context = f"""
-## 📍 Historical Driver Keywords (IMPORTANT)
-{driver_info}
-Use these keywords for TARGETED news searches instead of generic queries.
-Example: Instead of "삼성전자 뉴스", search "삼성전자 HBM" or "삼성전자 파업".
-"""
-        
+## Historical Driver Keywords (from Driver Memory)
+{driver_info}"""
+
+        semantic_context = ""
+        if semantic_knowledge:
+            lessons_text = "\n".join(f"- {lesson}" for lesson in semantic_knowledge)
+            semantic_context = f"""
+## Generalized Knowledge (from Semantic Memory)
+These lessons were learned across all past analyses — apply them when relevant:
+{lessons_text}"""
+
         planner_prompt = [
-            {"role": "system", "content": f"""You are a Planning Agent for stock analysis.
-Your job is to create a detailed execution plan for the given task.
-Target Plan Length: Approximately {search_depth} to {search_depth + 2} steps.
+            {"role": "system", "content": f"""You are a Planning Agent for stock and market analysis.
 
-## CRITICAL WORKFLOW
-1. **Identify Entity**: Extract the stock ticker from user's request
-2. **Check Driver Memory**: If analyzing a stock, ALWAYS call `analyze_drivers` first to get key impact factors
-3. **Strategic Planning**: Use the driver keywords for TARGETED news/research queries
-4. **[REQUIRED] Identify Search Angles**: You MUST include at least one query for each of these categories:
-   - **Internal**: Earnings, New Product, R&D, Management
-   - **External**: Competitor moves, Industry trends, Supply chain
-   - **Macro/Policy**: Exchange rates, Interest rates, Government regulations/Subsidies
-   - **Market Sentiment**: Foreigner/Institutional net buying, Analyst report changes, Short selling
-5. **[REQUIRED] Peer Group Analysis**: MUST call `analyze_peers` for STL Trend correlation analysis with sector peers
-6. **[REQUIRED] Risk Management**: ALWAYS call `calculate_risk` to get Target Price, Stop-loss, and Risk/Reward ratio
-7. **Synthesis**: Adjust outlook based on Reference Proxy's momentum if correlation > 0.7
+Given a user's request, create the best execution plan using the available tools.
+You decide which tools to call, in what order, and how many steps are needed.
 
-## PEER ANALYSIS FALLBACK (IMPORTANT)
-IF `analyze_peers` returns 0 results (found_peers: 0):
-1. **DO NOT skip peer analysis** - this step is critical for verification
-2. **Use your internal knowledge** to identify the 'Industry Benchmark' competitors:
-   - 삼성전자 → SK하이닉스(000660.KS), 마이크론(MU)
-   - NVDA → AMD, INTC
-   - 현대차 → 기아(000270.KS), TSLA
-3. **Re-call analyze_peers** with `compare_with` parameter containing the identified tickers
-   Example: {{"tool": "analyze_peers", "args": {{"ticker": "005930.KS", "compare_with": ["000660.KS", "MU"]}}}}
-
-⚠️ MANDATORY STEPS: You MUST include BOTH `analyze_peers` AND `calculate_risk` in EVERY plan.
-{driver_context}
 ## Available Tools
 {tool_descriptions}
+{memory_context}
+{driver_context}
+{semantic_context}
 
-## Past Successful Plans (for reference)
-{context_examples}
+## Guidelines
+- Understand the user's intent first, then choose the most relevant tools
+- Not every query requires a specific stock ticker — use tools creatively for broad market questions
+- Fewer well-chosen steps are better than many redundant ones
+- When past examples exist in memory, learn from their structure but adapt to the current request
 
 ## Output Format
-You MUST output a valid JSON array of steps. Each step should have:
+Output ONLY a valid JSON array of steps. Each step must have:
 - "step": step number (1, 2, 3...)
-- "tool": exact tool name to call
-- "args": arguments for the tool as a JSON object
-- "reason": brief explanation of why this step is needed
-
-IMPORTANT: For stock_news, use SPECIFIC keyword queries based on driver analysis.
-BAD: {{"tool": "stock_news", "args": {{"query": "삼성전자"}}}}
-GOOD (Internal): {{"tool": "stock_news", "args": {{"query": "삼성전자 HBM 수율"}}}}
-GOOD (External): {{"tool": "stock_news", "args": {{"query": "SK하이닉스 캐파 증설"}}}}
-GOOD (Macro): {{"tool": "stock_news", "args": {{"query": "반도체 수출 관세 영향"}}}}
-GOOD (Sentiment): {{"tool": "stock_news", "args": {{"query": "삼성전자 외국인 순매수 추이"}}}}
-
-IMPORTANT: For analyze_peers, check if user specified a comparison target:
-- If user says "SK랑 비교해서" or "AMD와 비교" → extract the company and add compare_with
-- "SK하이닉스", "SK" → "000660.KS"
-- "AMD" → "AMD"  
-- If no comparison target specified, omit compare_with (auto-search from news)
-
-Example output (without user-specified comparison):
-[
-  {{"step": 1, "tool": "analyze_drivers", "args": {{"ticker": "005930.KS", "name": "삼성전자"}}, "reason": "Identify key price drivers"}},
-  {{"step": 2, "tool": "stock_price", "args": {{"ticker": "005930.KS", "market": "KR"}}, "reason": "Get current price"}},
-  {{"step": 3, "tool": "stock_technical", "args": {{"ticker": "005930.KS"}}, "reason": "Technical analysis for support/resistance"}},
-  {{"step": 4, "tool": "stock_news", "args": {{"query": "삼성전자 HBM"}}, "reason": "Check HBM news (top driver)"}},
-  {{"step": 5, "tool": "analyze_peers", "args": {{"ticker": "005930.KS"}}, "reason": "Find correlated stocks via news entity mining"}},
-  {{"step": 6, "tool": "calculate_risk", "args": {{"ticker": "005930.KS", "market": "KR"}}, "reason": "Calculate Target Price and Stop-loss"}}
-]
-
-Example output (with user-specified "SK하이닉스랑 비교해서"):
-[
-  ...
-  {{"step": 5, "tool": "analyze_peers", "args": {{"ticker": "005930.KS", "compare_with": ["000660.KS"]}}, "reason": "Compare with user-specified SK하이닉스"}}
-  ...
-]
+- "tool": exact tool name from Available Tools above
+- "args": arguments as a JSON object
+- "reason": why this step serves the current request
 
 Output ONLY the JSON array, no other text."""},
             {"role": "user", "content": f"Create an execution plan for: {user_task}"}
         ]
-        
+
         response = self._call_llm(planner_prompt)
-        
+
         # Parse the plan
         try:
-            # Try to extract JSON from response
             json_match = re.search(r'\[[\s\S]*\]', response)
             if json_match:
                 plan = json.loads(json_match.group(0))
@@ -238,21 +200,35 @@ Output ONLY the JSON array, no other text."""},
                 return plan
         except json.JSONDecodeError as e:
             print(f"   ⚠️ Failed to parse plan: {e}")
-        
-        # Fallback: return empty plan
+
         return []
 
-    def _call_executor(self, step: Dict, tool_result: str, accumulated_context: str) -> str:
+    def _call_executor(self, step: Dict, tool_result: str, accumulated_context: str, tips: List[Dict] = None) -> str:
         """
-        Executor LLM: Interprets tool results and decides next action.
+        Executor LLM: Interprets tool results and extracts key insights.
+        Uses procedural memory tips to improve interpretation when available.
         Returns interpretation of the result.
         """
         print(f"\n🔧 [Executor] Processing step {step.get('step', '?')}: {step.get('tool', 'unknown')}")
-        
-        executor_prompt = [
-            {"role": "system", "content": """You are an Execution Agent for stock analysis.
-Your job is to interpret tool results and extract key insights.
 
+        tips_context = ""
+        if tips:
+            tips_lines = []
+            for t in tips:
+                summary = t.get("result_summary", "")
+                if summary:
+                    tips_lines.append(f"- {summary[:200]}")
+            if tips_lines:
+                tips_context = f"""
+## Procedural Memory: Past Successful Results for this Tool
+Learn from these previous interpretations to improve yours:
+{chr(10).join(tips_lines)}
+"""
+
+        executor_prompt = [
+            {"role": "system", "content": f"""You are an Execution Agent for stock analysis.
+Your job is to interpret tool results and extract key insights.
+{tips_context}
 Be concise. Focus on:
 - Key numbers and metrics
 - Important signals (bullish/bearish)
@@ -262,9 +238,6 @@ Output a brief summary (2-3 sentences max)."""},
             {"role": "user", "content": f"""Step: {step.get('reason', 'Execute tool')}
 Tool: {step.get('tool')}
 
-
-
-
 Tool Output:
 {tool_result[:2000]}
 
@@ -273,7 +246,7 @@ Previous context:
 
 Summarize the key findings from this tool output:"""}
         ]
-        
+
         response = self._call_llm(executor_prompt)
         return response
 
@@ -308,11 +281,65 @@ Provide your final analysis and recommendation (include Target Price, Stop-loss,
         response = self._call_llm(summary_prompt)
         return response
 
-    def _call_reflector(self, user_task: str, analysis: str, peer_context: dict = None, tech_data: dict = None) -> str:
+    def _extract_reflection_feedback(self, user_task: str, plan_text: str, final_analysis: str) -> dict:
+        """
+        Extract structured feedback from this analysis cycle for memory update.
+        Returns {"score": float, "lessons": [str]}
+        """
+        print("\n💾 [Reflector] Extracting lessons for memory update...")
+
+        feedback_prompt = [
+            {"role": "system", "content": """You are a meta-learning agent. Analyze a completed stock analysis task and extract lessons for future improvement.
+
+Output ONLY a valid JSON object with this structure:
+{
+  "score": <float 0.0-1.0 representing analysis quality>,
+  "lessons": [<up to 3 concise lessons learned from this task>]
+}
+
+Scoring guide:
+- 1.0: Complete data, clear recommendation, well-supported conclusion
+- 0.7: Mostly complete, minor gaps
+- 0.4: Significant data missing or contradictory signals unresolved
+- 0.1: Failed or very incomplete
+
+Lessons should be specific and actionable for a future Planner, e.g.:
+- "For semiconductor stocks, searching '[company] HBM 수율' yields more relevant news than generic queries"
+- "When RSI and MACD diverge, recommend HOLD rather than BUY/SELL"
+- "Market-wide queries work better with stock_news than stock_price for index tickers" """},
+            {"role": "user", "content": f"""Task: {user_task}
+
+Plan executed:
+{plan_text}
+
+Final analysis produced:
+{final_analysis[:1500]}
+
+Extract score and lessons:"""}
+        ]
+
+        try:
+            response = self._call_llm(feedback_prompt)
+            json_match = re.search(r'\{[\s\S]*\}', response)
+            if json_match:
+                feedback = json.loads(json_match.group(0))
+                score = float(feedback.get("score", 0.7))
+                lessons = feedback.get("lessons", [])
+                print(f"   📊 Score: {score:.2f} | Lessons: {len(lessons)}")
+                for lesson in lessons:
+                    print(f"   💡 {lesson}")
+                return {"score": score, "lessons": lessons}
+        except Exception as e:
+            print(f"   ⚠️ Feedback extraction failed: {e}")
+
+        return {"score": 0.7, "lessons": []}
+
+    def _call_reflector(self, user_task: str, analysis: str, plan_text: str = "", peer_context: dict = None, tech_data: dict = None) -> tuple:
         """
         Self-Reflection: Reviews the analysis for logical consistency and completeness.
         Uses Reference Proxy verification when available.
-        Returns improved analysis if issues found, otherwise returns original.
+        Also extracts feedback (score + lessons) for memory update.
+        Returns (final_analysis, feedback_dict).
         """
         print("\n🔍 [Reflector] Self-reflection in progress...")
         
@@ -391,13 +418,18 @@ Review this analysis and either approve it or provide a revised version:"""}
         ]
         
         response = self._call_llm(reflection_prompt)
-        
+
         if response.startswith("APPROVED:"):
             print("   ✅ Analysis approved without changes")
-            return analysis
+            final_analysis = analysis
         else:
             print("   📝 Analysis revised after reflection")
-            return response
+            final_analysis = response
+
+        # Phase 2: Extract feedback for memory update
+        feedback = self._extract_reflection_feedback(user_task, plan_text, final_analysis)
+
+        return final_analysis, feedback
 
     async def run(self, user_task: str):
         print(f"\n🚀 Starting Memento Agent for Task: {user_task}")
@@ -416,7 +448,7 @@ Review this analysis and either approve it or provide a revised version:"""}
 
         # 2. Connect to MCP Server
         server_params = StdioServerParameters(
-            command="python3",
+            command=sys.executable,
             args=[self.server_script],
         )
 
@@ -511,17 +543,24 @@ DONE: [Your comprehensive stock analysis summary with recommendation]
         """
         saved_result = ""
         
-        # 1. Memory Retrieval
+        # 1. Memory Retrieval (Episodic + Semantic)
         trajectories = self.memory.retrieve_similar(user_task)
         context_examples = ""
         if trajectories:
             context_examples = "Here are some past successful plans for similar tasks:\n"
             for i, traj in enumerate(trajectories):
-                context_examples += f"--- Example {i+1} ---\nTask: {traj['task']}\nPlan: {traj['plan']}\nResult: {traj['result']}\n------------------\n"
+                lessons_str = ""
+                if traj.get("lessons"):
+                    lessons_str = f"\nLessons: {'; '.join(traj['lessons'])}"
+                context_examples += f"--- Example {i+1} (score={traj.get('score', '?')}) ---\nTask: {traj['task']}\nPlan: {traj['plan']}\nResult: {traj['result']}{lessons_str}\n------------------\n"
+
+        semantic_knowledge = self.semantic_memory.retrieve_relevant(user_task)
+        if semantic_knowledge:
+            print(f"🧠 Retrieved {len(semantic_knowledge)} generalized lessons from Semantic Memory")
 
         # 2. Connect to MCP Server
         server_params = StdioServerParameters(
-            command="python3",
+            command=sys.executable,
             args=[self.server_script],
         )
 
@@ -534,8 +573,8 @@ DONE: [Your comprehensive stock analysis summary with recommendation]
                     tools = tools_response.tools
                     tool_descriptions = "\n".join([f"- {t.name}: {t.description}" for t in tools])
 
-                    # 3. PLANNER: Generate execution plan
-                    plan = self._call_planner(user_task, tool_descriptions, context_examples)
+                    # 3. PLANNER: Generate execution plan (with Episodic + Semantic memory)
+                    plan = self._call_planner(user_task, tool_descriptions, context_examples, semantic_knowledge=semantic_knowledge)
                     
                     if not plan:
                         saved_result = "계획 생성에 실패했습니다. 다시 시도해주세요."
@@ -557,8 +596,8 @@ DONE: [Your comprehensive stock analysis summary with recommendation]
                         # Get tips from procedural memory
                         tips = self.procedural_memory.get_tool_tips(tool_name)
                         if tips:
-                            print(f"   💡 Found {len(tips)} past successful executions for {tool_name}")
-                        
+                            print(f"   💡 Found {len(tips)} past executions for {tool_name} — passing to Executor")
+
                         try:
                             # Execute tool
                             print(f"   ⚡ Executing: {tool_name}")
@@ -621,8 +660,8 @@ DONE: [Your comprehensive stock analysis summary with recommendation]
                                 except:
                                     pass
                             
-                            # Executor interprets the result
-                            interpretation = self._call_executor(step, tool_output, all_findings)
+                            # Executor interprets the result (with procedural memory tips)
+                            interpretation = self._call_executor(step, tool_output, all_findings, tips)
                             all_findings += f"\n### Step {step.get('step')}: {step.get('reason', tool_name)}\n{interpretation}\n"
                             
                             # Save to procedural memory
@@ -638,17 +677,26 @@ DONE: [Your comprehensive stock analysis summary with recommendation]
                                 tool_name, args, False, str(e)
                             )
                     
-                    # 5. PLANNER (Summarizer): Generate final analysis
+                    # 5. SUMMARIZER: Generate final analysis
                     final_result = self._call_summarizer(user_task, all_findings)
-                    
-                    # 6. REFLECTOR: Self-reflection on the analysis
-                    final_result = self._call_reflector(user_task, final_result, peer_context, tech_data)
-                    
+
+                    # 6. REFLECTOR: Self-reflection + extract feedback for memory
+                    final_result, feedback = self._call_reflector(
+                        user_task, final_result, plan_text, peer_context, tech_data
+                    )
+
                     # Save result before leaving context
                     saved_result = final_result if final_result else "분석을 완료하지 못했습니다."
-                    
-                    # 7. Save to Memory
-                    self.memory.save_trajectory(user_task, plan_text, final_result, 1.0)
+
+                    # 7. Save to Memory with real score and lessons from Reflector
+                    self.memory.save_trajectory(
+                        user_task, plan_text, final_result,
+                        feedback["score"], feedback["lessons"]
+                    )
+
+                    # 8. Save each lesson to Semantic Memory for cross-task generalization
+                    for lesson in feedback.get("lessons", []):
+                        self.semantic_memory.save_knowledge(lesson, user_task)
                     
         except Exception as e:
             if saved_result:

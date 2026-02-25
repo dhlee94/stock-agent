@@ -7,14 +7,18 @@
 
 ## ✨ Features
 
-- 🧠 **Memento Architecture**: [논문](https://arxiv.org/abs/2401.08017) 기반 Planner/Executor/Reflector 구조
+- 🧠 **Memento Architecture**: [논문](https://arxiv.org/abs/2512.22716) 기반 Planner/Executor/Reflector + 3중 메모리 구조
 - 📊 **Technical Analysis**: RSI, MACD, Bollinger Bands, Moving Averages
 - 📈 **Fundamental Analysis**: PER, PBR, ROE, EPS, 재무제표
 - 🤖 **AI Prediction**: Chronos 시계열 예측
 - 📰 **Multi-language News**: 한국/미국 주식 자동 감지, 영어→한글 분석
 - 🎯 **Risk Management**: Target Price, Stop-loss, Risk/Reward 자동 계산
-- 💾 **Memory System**: DriverMemory (주가 변동 원인), ProceduralMemory (성공 패턴)
-- 🔍 **Self-Reflection**: 논리적 일관성 검증 및 자동 수정
+- 💾 **3-Layer Memory System**:
+  - **Episodic Memory**: 과거 trajectory 저장 + 품질 기반 Memory Rewriting
+  - **Semantic Memory**: Reflector가 추출한 일반화 지식 (cross-task 전이)
+  - **Procedural Memory**: 도구 실행 패턴 학습 → Executor에 직접 전달
+- 🔍 **Self-Reflection**: 논리적 일관성 검증 + 피드백 추출 → 메모리 자동 업데이트
+- 🆓 **Autonomous Planner**: 도구 설명과 메모리만으로 자유롭게 계획 수립 (고정 워크플로우 없음)
 - 📱 **Web Dashboard**: 모바일/PC 반응형 UI
 
 ---
@@ -71,23 +75,32 @@ python test_agent_flow.py "SK하이닉스 분석"
 │                     📱 Web UI / CLI                         │
 └─────────────────────────┬───────────────────────────────────┘
                           │
+          ┌───────────────┼───────────────┐
+          ▼               ▼               ▼
+   Episodic Memory  Semantic Memory  Procedural Memory
+   (past plans)    (cross-task      (tool execution
+                    lessons)         patterns)
+          └───────────────┬───────────────┘
+                          │
 ┌─────────────────────────▼───────────────────────────────────┐
 │                   🧠 PLANNER (LLM)                          │
-│  - 사용자 요청 분석                                          │
-│  - DriverMemory 조회 (과거 주가 변동 원인)                    │
-│  - 실행 계획 수립                                            │
+│  - Episodic Memory에서 유사 계획 검색                         │
+│  - Semantic Memory에서 관련 lessons 수신                      │
+│  - 도구 설명만으로 자율적 계획 수립 (고정 워크플로우 없음)        │
 └─────────────────────────┬───────────────────────────────────┘
                           │
 ┌─────────────────────────▼───────────────────────────────────┐
 │                   ⚡ EXECUTOR                               │
+│  - Procedural Memory tips를 받아 도구 결과 해석               │
 │  MCP Tools: price, technical, news, risk, predict...       │
 └─────────────────────────┬───────────────────────────────────┘
                           │
 ┌─────────────────────────▼───────────────────────────────────┐
-│                   🔍 REFLECTOR (Self-Check)                 │
+│                   🔍 REFLECTOR (Self-Check + Memory Update) │
 │  - 논리적 일관성 검증 (RSI < 30 인데 SELL?)                   │
-│  - 누락된 분석 체크                                          │
-│  - 필요시 재분석                                             │
+│  - 피드백 추출: score(0~1) + lessons                         │
+│  - Episodic Memory rewriting (더 나은 결과로 교체)            │
+│  - Semantic Memory에 lessons 저장 (cross-task 전이)          │
 └─────────────────────────┴───────────────────────────────────┘
 ```
 
@@ -119,8 +132,7 @@ agent/
 └── src/
     ├── agent_client.py        # 🧠 Memento Agent (Planner/Executor/Reflector)
     ├── mcp_server.py          # MCP Tool Server
-    ├── memory_store.py        # Embedding 기반 메모리
-    ├── driver_memory.py       # 📈 Driver Memory (주가 변동 원인)
+    ├── memory_store.py        # 3-Layer Memory (Episodic/Semantic/Procedural)
     ├── driver_memory.py       # 📈 Driver Memory (주가 변동 원인)
     ├── risk_manager.py        # 🎯 Risk Management
     ├── dashboard/             # 🎛️ 관리자 대시보드 (Streamlit)
@@ -224,9 +236,21 @@ agent/
 
 ---
 
+## 💾 Memory System
+
+| 메모리 | 저장 내용 | 역할 |
+|--------|----------|------|
+| **Episodic** | 과거 task trajectory (plan + result + score) | Planner에게 유사 계획 예시 제공 |
+| **Semantic** | Reflector가 추출한 일반화 lessons | 다른 종목 분석에도 전이되는 패턴 |
+| **Procedural** | 도구별 실행 성공/실패 이력 | Executor가 도구 결과를 더 잘 해석하도록 가이드 |
+
+**Memory Rewriting**: 동일 task 재실행 시, 기존보다 score가 0.1 이상 높을 때만 교체. 더 나쁜 결과는 저장하지 않음.
+
+---
+
 ## 📚 References
 
-- [Memento Paper](https://arxiv.org/abs/2401.08017) - Self-Refinement 에이전트 아키텍처
+- [Memento 2 Paper](https://arxiv.org/abs/2512.22716) - Learning by Stateful Reflective Memory
 - [MCP Protocol](https://modelcontextprotocol.io) - Model Context Protocol
 - [Chronos Forecasting](https://github.com/amazon-science/chronos-forecasting) - 시계열 예측
 - [yfinance](https://github.com/ranaroussi/yfinance) - 주식 데이터
