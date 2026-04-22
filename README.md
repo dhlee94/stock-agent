@@ -30,8 +30,10 @@
 python -m venv venv
 source venv/bin/activate   # Mac/Linux
 pip install --upgrade pip
-pip install -r requirements.txt
+pip install -r requirements.txt --no-deps
 ```
+
+> **왜 `--no-deps`?** `pygooglenews`의 오래된 메타데이터가 `feedparser<6.0.0`을 강제해 pip resolver가 충돌을 일으킵니다. requirements.txt는 이미 호환되는 버전으로 핀되어 있으므로 `--no-deps`로 resolver를 건너뛰고 그대로 설치하는 것이 안전합니다.
 
 ### 2. Configure API Key
 ```bash
