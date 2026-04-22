@@ -87,29 +87,52 @@ def get_market_news(ticker: str = None, query: str = None, limit: int = 10) -> s
                     "language": "en" if market == "US" else "ko"
                 })
         
-        # Step 2: Fallback to Google News search
-        if not news_items and query:
-            if query in TICKER_TO_NAME:
-                query = TICKER_TO_NAME[query]
-            
+        # Step 2: Google News search
+        # Runs WHENEVER `query` is provided (even if yfinance already returned news),
+        # so event-specific keywords like "CEO resignation" are not silently dropped.
+        # Also runs as a fallback when yfinance produced nothing.
+        run_google_news = bool(query) or (not news_items and ticker)
+
+        if run_google_news:
+            effective_query = query
+            if effective_query and effective_query in TICKER_TO_NAME:
+                effective_query = TICKER_TO_NAME[effective_query]
+
             try:
                 from pygooglenews import GoogleNews
-                
-                # Use appropriate language based on market
+
                 if market == 'US':
                     gn = GoogleNews(lang='en', country='US')
-                    search_query = f"{english_name or query} stock"
+                    if effective_query and (english_name or search_name):
+                        # Event-focused search: combine company name with event keyword
+                        search_query = f"{english_name or search_name} {effective_query}"
+                    elif effective_query:
+                        search_query = f"{effective_query} stock"
+                    else:
+                        search_query = f"{english_name or ticker} stock"
                 else:
                     gn = GoogleNews(lang='ko', country='KR')
-                    search_query = query
-                
-                search = gn.search(search_query)
-                
+                    if effective_query and search_name:
+                        search_query = f"{search_name} {effective_query}"
+                    else:
+                        search_query = effective_query or search_name or ""
+
+                print(f"   🔎 Google News search: '{search_query}'")
+                search = gn.search(search_query) if search_query else {"entries": []}
+
+                # Dedupe against already-collected yfinance items (by title)
+                seen_titles = {(item.get("title") or "").strip().lower() for item in news_items}
+
                 for entry in search.get('entries', [])[:limit]:
                     title = entry.get('title')
-                    if market == 'US' and title:
+                    title_key = (title or "").strip().lower()
+                    if not title or title_key in seen_titles:
+                        continue
+                    seen_titles.add(title_key)
+
+                    if market == 'US':
                         english_titles_for_summary.append(title)
-                    
+
                     news_items.append({
                         "title": title,
                         "publisher": entry.get('source', {}).get('title'),
@@ -121,9 +144,9 @@ def get_market_news(ticker: str = None, query: str = None, limit: int = 10) -> s
                     })
             except Exception as e:
                 print(f"   ⚠️ GoogleNews search failed: {e}")
-                
-                # Fallback: Try with different query format
-                if market == 'US':
+
+                # Fallback: broader query format when the first search errored
+                if not news_items and market == 'US' and ticker:
                     try:
                         gn = GoogleNews(lang='en', country='US')
                         search = gn.search(f"{ticker} analysis outlook")
@@ -142,6 +165,10 @@ def get_market_news(ticker: str = None, query: str = None, limit: int = 10) -> s
                             })
                     except:
                         pass
+
+        # Keep the response size bounded even after merging two sources
+        if len(news_items) > limit:
+            news_items = news_items[:limit]
         
         # Raise exception if no news found
         if not news_items:

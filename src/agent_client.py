@@ -5,7 +5,7 @@ import json
 from database import get_setting
 import re
 import time
-from typing import List, Dict, Any
+from typing import List, Dict, Any, Optional, Tuple
 from dotenv import load_dotenv
 
 # Load .env file from project root
@@ -131,10 +131,13 @@ class MementoAgent:
             response = self.model.generate_content(prompt)
             return response.text
 
-    def _call_planner(self, user_task: str, tool_descriptions: str, context_examples: str, driver_info: str = "", semantic_knowledge: List[str] = None) -> List[Dict]:
+    def _call_planner(self, user_task: str, tool_descriptions: str, context_examples: str, driver_info: str = "", semantic_knowledge: List[str] = None, critique: Optional[Dict] = None, previous_findings: str = "") -> List[Dict]:
         """
         Planner LLM: Generates a free-form execution plan based on available tools and past memory.
         Returns a list of steps: [{"step": 1, "tool": "tool_name", "args": {...}, "reason": "..."}, ...]
+
+        If `critique` is provided (from a previous Reflector verdict), the planner focuses on
+        closing the identified gaps rather than repeating already-collected findings.
         """
         print("\n📋 [Planner] Generating execution plan...")
 
@@ -160,6 +163,29 @@ Use them as inspiration — adapt freely to the current request, don't copy blin
 These lessons were learned across all past analyses — apply them when relevant:
 {lessons_text}"""
 
+        critique_context = ""
+        if critique:
+            issues = critique.get("logical_issues") or []
+            missing = critique.get("missing_data") or []
+            suggested = critique.get("suggested_tools") or []
+            prior = (previous_findings or "").strip()
+            if len(prior) > 1800:
+                prior = prior[:1800] + "\n...(truncated)"
+            critique_context = f"""
+## Refinement Brief (IMPORTANT — this is a follow-up iteration)
+The previous analysis was rejected by the Reflector. Your job is to CLOSE THE GAPS — not redo everything.
+
+- Logical inconsistencies to resolve: {issues if issues else 'none'}
+- Missing data to collect: {missing if missing else 'none'}
+- Suggested tools to fill gaps: {suggested if suggested else 'none (pick appropriate tools yourself)'}
+
+Already collected findings (DO NOT re-fetch these, build on them):
+{prior if prior else 'none'}
+
+Produce a FOCUSED plan with only the steps needed to address the gaps above.
+Prefer 1-3 steps. If no new tool call is needed and the issue is purely logical,
+return an empty array [] and the Summarizer will re-reason over existing data."""
+
         planner_prompt = [
             {"role": "system", "content": f"""You are a Planning Agent for stock and market analysis.
 
@@ -171,12 +197,14 @@ You decide which tools to call, in what order, and how many steps are needed.
 {memory_context}
 {driver_context}
 {semantic_context}
+{critique_context}
 
 ## Guidelines
 - Understand the user's intent first, then choose the most relevant tools
 - Not every query requires a specific stock ticker — use tools creatively for broad market questions
 - Fewer well-chosen steps are better than many redundant ones
 - When past examples exist in memory, learn from their structure but adapt to the current request
+- **Event extraction** — If the user mentions a specific event (CEO change/resignation, earnings release, lawsuit, regulatory issue, product launch, M&A, layoffs, supply deal, etc.), you MUST pass that event keyword as the `query` argument to `stock_news` in addition to `ticker`. Example: user says "요즘 대표가 사퇴했다는데" → call `stock_news` with `{{"ticker": "NFLX", "query": "CEO resignation"}}`. Without `query`, only a generic news feed is returned and the specific event may be missed.
 
 ## Output Format
 Output ONLY a valid JSON array of steps. Each step must have:
@@ -334,34 +362,43 @@ Extract score and lessons:"""}
 
         return {"score": 0.7, "lessons": []}
 
-    def _call_reflector(self, user_task: str, analysis: str, plan_text: str = "", peer_context: dict = None, tech_data: dict = None) -> tuple:
+    def _call_reflector(self, user_task: str, analysis: str, plan_text: str = "", peer_context: dict = None, tech_data: dict = None, available_tools: str = "") -> Tuple[str, dict, dict]:
         """
         Self-Reflection: Reviews the analysis for logical consistency and completeness.
         Uses Reference Proxy verification when available.
-        Also extracts feedback (score + lessons) for memory update.
-        Returns (final_analysis, feedback_dict).
+        Returns (final_analysis, feedback_dict, verdict_dict).
+
+        verdict_dict schema:
+          {
+            "approved": bool,              # True if analysis is acceptable → stop refinement loop
+            "confidence": "High|Medium|Low",
+            "logical_issues": [str, ...],  # inconsistencies the planner should resolve
+            "missing_data": [str, ...],    # data gaps (e.g., "news_sentiment")
+            "suggested_tools": [str, ...], # tool names to fill gaps
+            "revised_analysis": Optional[str]  # minor wording rewrite; used only when approved=True
+          }
         """
         print("\n🔍 [Reflector] Self-reflection in progress...")
-        
+
         # Get settings
         risk_tolerance = get_setting("risk_tolerance", "Medium")
 
         # Reference Proxy Verification
         confidence_level = "Medium"
         verification_notes = []
-        
+
         if peer_context and peer_context.get("has_high_correlation") and peer_context.get("reference_proxy"):
             proxy = peer_context["reference_proxy"]
             proxy_name = proxy.get("name", "Unknown")
             proxy_trend = proxy.get("momentum", {}).get("trend", "unknown")
             proxy_corr = proxy.get("trend_correlation", 0)
-            
+
             if tech_data:
                 our_signal = tech_data.get("recommendation", "HOLD")
                 proxy_bullish = proxy_trend == "bullish"
                 our_bullish = our_signal in ["BUY", "STRONG_BUY"]
                 our_bearish = our_signal in ["SELL", "STRONG_SELL"]
-                
+
                 if (proxy_bullish and our_bullish) or (not proxy_bullish and our_bearish):
                     confidence_level = "High"
                     verification_notes.append(f"✅ Signal aligned with Reference Proxy {proxy_name} ({proxy_trend})")
@@ -370,66 +407,111 @@ Extract score and lessons:"""}
                     verification_notes.append(f"⚠️ DIVERGENT: {proxy_name} is {proxy_trend} but our signal is {our_signal}")
                 else:
                     verification_notes.append(f"📊 Reference: {proxy_name} ({proxy_trend}, corr={proxy_corr:.2f})")
-            
+
             print(f"   🔗 Reference Proxy Verified: {proxy_name} ({proxy_trend})")
         elif peer_context:
             verification_notes.append("⚠️ No high-correlation proxy - independent analysis")
             print("   ⚠️ No Reference Proxy available")
-        
+
         print(f"   📋 Confidence Level: {confidence_level}")
-        
+
+        tools_hint = ""
+        if available_tools:
+            tools_hint = f"\n\n## Available tools (use exact names in suggested_tools):\n{available_tools}"
+
         reflection_prompt = [
             {"role": "system", "content": f"""You are a Critical Review Agent for stock analysis.
-Your job is to review the analysis and check for:
 
-1. **Logical Consistency**: Do the indicators match the recommendation?
-   - Example: RSI < 30 (oversold) should NOT lead to SELL recommendation
-   - Example: Positive news + Bullish technicals should support BUY
+Review the analysis along these axes:
 
-2. **Completeness**: Are key elements present?
-   - Price and trend information
-   - At least 2-3 technical indicators
-   - Risk warnings for volatile stocks
-   - Clear BUY/HOLD/SELL recommendation
+1. **Logical Consistency** — do indicators match the recommendation?
+   - e.g., RSI < 30 (oversold) should NOT lead to SELL
+   - e.g., Bearish trend + Bearish technicals should NOT support BUY without strong justification
+2. **Completeness** — price/trend, 2-3 technical indicators, news sentiment, risk warnings, clear BUY/HOLD/SELL
+3. **Reference Proxy Verification**
+   - Preliminary Confidence: {confidence_level}
+   - Notes: {'; '.join(verification_notes) if verification_notes else 'N/A'}
+   - If signals are divergent, downgrade confidence and require explicit warning
+4. **Confidence Calibration** — no overconfidence with limited data; acknowledge uncertainty
+5. **Risk Tolerance Fit** — user's tolerance is **{risk_tolerance}**; emphasize stop-loss if Medium or lower
+{tools_hint}
 
-3. **Reference Proxy Verification (IMPORTANT)**:
-   - Confidence Level: {confidence_level}
-   - Verification Notes: {'; '.join(verification_notes) if verification_notes else 'N/A'}
-   
-   If confidence is "Low" (divergent signals), add a WARNING about conflicting sector trends.
-   If confidence is "High" (aligned), mention the strong sector alignment.
+## Decision rule
+- If the analysis has **missing data** or **logical contradictions that require new tool calls** → set approved=false
+  and list the gaps in missing_data / suggested_tools so the Planner can fix them in the next iteration.
+- If only **minor wording** is off (data is complete, logic is sound) → set approved=true and put the
+  lightly-revised text in revised_analysis.
+- If everything is fine as-is → approved=true, revised_analysis=null.
 
-4. **Confidence Level**: Is the recommendation appropriately confident?
-   - Don't be overconfident with limited data
-   - Acknowledge uncertainties
-
-If issues are found, provide a REVISED analysis.
-If no issues, respond with: "APPROVED: [original analysis]"
-
-5. **Risk Tolerance Adjustment**:
-   - User's Risk Tolerance: **{risk_tolerance}**
-"""},
+## Output format
+Return ONLY a valid JSON object, no other text, no markdown fences:
+{{
+  "approved": true,
+  "confidence": "High",
+  "logical_issues": [],
+  "missing_data": [],
+  "suggested_tools": [],
+  "revised_analysis": null
+}}"""},
             {"role": "user", "content": f"""Task: {user_task}
 
 Analysis to review:
 {analysis}
 
-Review this analysis and either approve it or provide a revised version:"""}
+Return the JSON verdict object now:"""}
         ]
-        
+
         response = self._call_llm(reflection_prompt)
 
-        if response.startswith("APPROVED:"):
-            print("   ✅ Analysis approved without changes")
-            final_analysis = analysis
-        else:
-            print("   📝 Analysis revised after reflection")
-            final_analysis = response
+        verdict = self._parse_verdict(response)
+        revised = verdict.get("revised_analysis")
 
-        # Phase 2: Extract feedback for memory update
+        if verdict.get("approved"):
+            if revised and isinstance(revised, str) and revised.strip():
+                print("   ✅ Approved with minor wording revision")
+                final_analysis = revised.strip()
+            else:
+                print("   ✅ Approved as-is")
+                final_analysis = analysis
+        else:
+            issues = verdict.get("logical_issues") or []
+            missing = verdict.get("missing_data") or []
+            print(f"   🔁 Rejected — logical_issues={len(issues)}, missing_data={len(missing)}")
+            final_analysis = analysis  # keep current text; Planner will refine in next iteration
+
+        # Phase 2: Extract feedback for memory update (score + lessons)
         feedback = self._extract_reflection_feedback(user_task, plan_text, final_analysis)
 
-        return final_analysis, feedback
+        return final_analysis, feedback, verdict
+
+    def _parse_verdict(self, response: str) -> dict:
+        """Parse Reflector JSON output; fall back to approved=True on parse failure."""
+        default_approved = {
+            "approved": True,
+            "confidence": "Medium",
+            "logical_issues": [],
+            "missing_data": [],
+            "suggested_tools": [],
+            "revised_analysis": None,
+        }
+        if not response:
+            return default_approved
+        try:
+            match = re.search(r'\{[\s\S]*\}', response)
+            if not match:
+                print("   ⚠️ Reflector output had no JSON object — defaulting to approved")
+                return default_approved
+            verdict = json.loads(match.group(0))
+            verdict.setdefault("approved", True)
+            verdict.setdefault("confidence", "Medium")
+            verdict.setdefault("logical_issues", [])
+            verdict.setdefault("missing_data", [])
+            verdict.setdefault("suggested_tools", [])
+            verdict.setdefault("revised_analysis", None)
+            return verdict
+        except json.JSONDecodeError as e:
+            print(f"   ⚠️ Reflector JSON parse failed ({e}) — defaulting to approved")
+            return default_approved
 
     async def run(self, user_task: str):
         print(f"\n🚀 Starting Memento Agent for Task: {user_task}")
@@ -573,117 +655,146 @@ DONE: [Your comprehensive stock analysis summary with recommendation]
                     tools = tools_response.tools
                     tool_descriptions = "\n".join([f"- {t.name}: {t.description}" for t in tools])
 
-                    # 3. PLANNER: Generate execution plan (with Episodic + Semantic memory)
-                    plan = self._call_planner(user_task, tool_descriptions, context_examples, semantic_knowledge=semantic_knowledge)
-                    
-                    if not plan:
-                        saved_result = "계획 생성에 실패했습니다. 다시 시도해주세요."
-                        return saved_result
-                    
-                    # 4. EXECUTOR: Execute each step
+                    # 3. PLAN → EXECUTE → SUMMARIZE → REFLECT loop (iterative refinement)
+                    MAX_ITER = 3
                     all_findings = ""
-                    plan_text = json.dumps(plan, ensure_ascii=False, indent=2)
-                    peer_context = None  # Store Reference Proxy for Reflector verification
-                    tech_data = None     # Store technical signal for alignment check
-                    
-                    for step in plan:
-                        tool_name = step.get("tool")
-                        args = step.get("args", {})
-                        
-                        if not tool_name:
-                            continue
-                        
-                        # Get tips from procedural memory
-                        tips = self.procedural_memory.get_tool_tips(tool_name)
-                        if tips:
-                            print(f"   💡 Found {len(tips)} past executions for {tool_name} — passing to Executor")
+                    plan_text = ""
+                    peer_context = None   # Reference Proxy state (kept across iterations)
+                    tech_data = None      # Technical signal (kept across iterations)
+                    critique = None       # Reflector verdict from previous iteration
+                    final_result = ""
+                    feedback = None
+                    verdict = None
 
-                        try:
-                            # Execute tool
-                            print(f"   ⚡ Executing: {tool_name}")
-                            result = await session.call_tool(tool_name, arguments=args)
-                            tool_output = result.content[0].text
-                            
-                            # Capture peer analysis result for Reflector
-                            if tool_name == "analyze_peers":
+                    for iteration in range(MAX_ITER):
+                        print(f"\n🔄 Iteration {iteration + 1}/{MAX_ITER}")
+
+                        # PLANNER: first iteration uses full context; later iterations receive critique + prior findings
+                        plan = self._call_planner(
+                            user_task, tool_descriptions, context_examples,
+                            semantic_knowledge=semantic_knowledge,
+                            critique=critique,
+                            previous_findings=all_findings,
+                        )
+
+                        if not plan:
+                            if iteration == 0:
+                                saved_result = "계획 생성에 실패했습니다. 다시 시도해주세요."
+                                return saved_result
+                            # Refinement iteration returned []: Planner decided no new tool call is needed.
+                            # Skip the executor and let the Summarizer/Reflector re-reason over existing findings.
+                            print("   ℹ️ No new plan steps — re-summarizing with existing findings")
+                        else:
+                            plan_text += f"\n--- Iteration {iteration + 1} ---\n" + json.dumps(plan, ensure_ascii=False, indent=2)
+
+                            # EXECUTOR: run each step in this iteration's plan
+                            for step in plan:
+                                tool_name = step.get("tool")
+                                args = step.get("args", {})
+
+                                if not tool_name:
+                                    continue
+
+                                # Get tips from procedural memory
+                                tips = self.procedural_memory.get_tool_tips(tool_name)
+                                if tips:
+                                    print(f"   💡 Found {len(tips)} past executions for {tool_name} — passing to Executor")
+
                                 try:
-                                    peer_data = json.loads(tool_output)
-                                    peers_found = peer_data.get("entity_mining", {}).get("found_peers", 0)
-                                    
-                                    # FALLBACK: If no peers found, use LLM to identify competitors
-                                    if peers_found == 0 and not args.get("compare_with"):
-                                        print(f"   ⚠️ No peers found, using LLM fallback...")
-                                        ticker = args.get("ticker", "")
-                                        
-                                        # Ask LLM for industry competitors
-                                        fallback_prompt = [
-                                            {"role": "system", "content": "You are a financial analyst. Return ONLY a JSON array of competitor tickers."},
-                                            {"role": "user", "content": f"List 2-3 key industry competitors for {ticker}. Return ONLY a JSON array like [\"TICKER1\", \"TICKER2\"]. For Korean stocks, use .KS suffix."}
-                                        ]
-                                        llm_response = self._call_llm(fallback_prompt)
-                                        
+                                    # Execute tool
+                                    print(f"   ⚡ Executing: {tool_name}")
+                                    result = await session.call_tool(tool_name, arguments=args)
+                                    tool_output = result.content[0].text
+
+                                    # Capture peer analysis result for Reflector
+                                    if tool_name == "analyze_peers":
                                         try:
-                                            # Parse LLM response for tickers
-                                            ticker_match = re.search(r'\[.*?\]', llm_response)
-                                            if ticker_match:
-                                                competitor_tickers = json.loads(ticker_match.group(0))
-                                                print(f"   🤖 LLM identified competitors: {competitor_tickers}")
-                                                
-                                                # Re-call analyze_peers with competitors
-                                                retry_result = await session.call_tool(
-                                                    "analyze_peers", 
-                                                    arguments={"ticker": ticker, "compare_with": competitor_tickers}
-                                                )
-                                                tool_output = retry_result.content[0].text
-                                                peer_data = json.loads(tool_output)
-                                                peers_found = peer_data.get("entity_mining", {}).get("found_peers", 0)
-                                                print(f"   ✅ Retry successful: {peers_found} peers found")
-                                        except Exception as e:
-                                            print(f"   ⚠️ LLM fallback failed: {e}")
-                                    
-                                    reference_proxy = peer_data.get("reference_proxy")
-                                    peer_context = {
-                                        "peers_found": peers_found,
-                                        "reference_proxy": reference_proxy,
-                                        "synthesis": peer_data.get("synthesis", ""),
-                                        "has_high_correlation": reference_proxy is not None
-                                    }
-                                    print(f"   📊 Peer context captured for Reflector verification")
-                                except:
-                                    pass
-                            
-                            # Capture technical signal for alignment check
-                            if tool_name == "stock_technical":
-                                try:
-                                    tech_data = json.loads(tool_output)
-                                    print(f"   📈 Technical data captured: {tech_data.get('recommendation', 'N/A')}")
-                                except:
-                                    pass
-                            
-                            # Executor interprets the result (with procedural memory tips)
-                            interpretation = self._call_executor(step, tool_output, all_findings, tips)
-                            all_findings += f"\n### Step {step.get('step')}: {step.get('reason', tool_name)}\n{interpretation}\n"
-                            
-                            # Save to procedural memory
-                            self.procedural_memory.save_tool_execution(
-                                tool_name, args, True, interpretation
-                            )
-                            
-                        except Exception as e:
-                            print(f"   ⚠️ Step failed: {e}")
-                            all_findings += f"\n### Step {step.get('step')}: Failed - {str(e)}\n"
-                            # Save failure to procedural memory
-                            self.procedural_memory.save_tool_execution(
-                                tool_name, args, False, str(e)
-                            )
-                    
-                    # 5. SUMMARIZER: Generate final analysis
-                    final_result = self._call_summarizer(user_task, all_findings)
+                                            peer_data = json.loads(tool_output)
+                                            peers_found = peer_data.get("entity_mining", {}).get("found_peers", 0)
 
-                    # 6. REFLECTOR: Self-reflection + extract feedback for memory
-                    final_result, feedback = self._call_reflector(
-                        user_task, final_result, plan_text, peer_context, tech_data
-                    )
+                                            # FALLBACK: If no peers found, use LLM to identify competitors
+                                            if peers_found == 0 and not args.get("compare_with"):
+                                                print(f"   ⚠️ No peers found, using LLM fallback...")
+                                                ticker = args.get("ticker", "")
+
+                                                # Ask LLM for industry competitors
+                                                fallback_prompt = [
+                                                    {"role": "system", "content": "You are a financial analyst. Return ONLY a JSON array of competitor tickers."},
+                                                    {"role": "user", "content": f"List 2-3 key industry competitors for {ticker}. Return ONLY a JSON array like [\"TICKER1\", \"TICKER2\"]. For Korean stocks, use .KS suffix."}
+                                                ]
+                                                llm_response = self._call_llm(fallback_prompt)
+
+                                                try:
+                                                    ticker_match = re.search(r'\[.*?\]', llm_response)
+                                                    if ticker_match:
+                                                        competitor_tickers = json.loads(ticker_match.group(0))
+                                                        print(f"   🤖 LLM identified competitors: {competitor_tickers}")
+
+                                                        retry_result = await session.call_tool(
+                                                            "analyze_peers",
+                                                            arguments={"ticker": ticker, "compare_with": competitor_tickers}
+                                                        )
+                                                        tool_output = retry_result.content[0].text
+                                                        peer_data = json.loads(tool_output)
+                                                        peers_found = peer_data.get("entity_mining", {}).get("found_peers", 0)
+                                                        print(f"   ✅ Retry successful: {peers_found} peers found")
+                                                except Exception as e:
+                                                    print(f"   ⚠️ LLM fallback failed: {e}")
+
+                                            reference_proxy = peer_data.get("reference_proxy")
+                                            peer_context = {
+                                                "peers_found": peers_found,
+                                                "reference_proxy": reference_proxy,
+                                                "synthesis": peer_data.get("synthesis", ""),
+                                                "has_high_correlation": reference_proxy is not None
+                                            }
+                                            print(f"   📊 Peer context captured for Reflector verification")
+                                        except:
+                                            pass
+
+                                    # Capture technical signal for alignment check
+                                    if tool_name == "stock_technical":
+                                        try:
+                                            tech_data = json.loads(tool_output)
+                                            print(f"   📈 Technical data captured: {tech_data.get('recommendation', 'N/A')}")
+                                        except:
+                                            pass
+
+                                    # Executor interprets the result (with procedural memory tips)
+                                    interpretation = self._call_executor(step, tool_output, all_findings, tips)
+                                    all_findings += f"\n### [iter {iteration + 1}] Step {step.get('step')}: {step.get('reason', tool_name)}\n{interpretation}\n"
+
+                                    # Save to procedural memory
+                                    self.procedural_memory.save_tool_execution(
+                                        tool_name, args, True, interpretation
+                                    )
+
+                                except Exception as e:
+                                    print(f"   ⚠️ Step failed: {e}")
+                                    all_findings += f"\n### [iter {iteration + 1}] Step {step.get('step')}: Failed - {str(e)}\n"
+                                    # Save failure to procedural memory
+                                    self.procedural_memory.save_tool_execution(
+                                        tool_name, args, False, str(e)
+                                    )
+
+                        # SUMMARIZER: regenerate the analysis from the latest cumulative findings
+                        final_result = self._call_summarizer(user_task, all_findings)
+
+                        # REFLECTOR: structured verdict
+                        final_result, feedback, verdict = self._call_reflector(
+                            user_task, final_result, plan_text, peer_context, tech_data,
+                            available_tools=tool_descriptions
+                        )
+
+                        if verdict.get("approved"):
+                            print(f"   ✅ Reflector approved on iteration {iteration + 1}")
+                            break
+
+                        if iteration < MAX_ITER - 1:
+                            critique = verdict
+                            print(f"   🔁 Rejected — scheduling refinement iteration {iteration + 2}")
+                        else:
+                            print("   ⚠️ Max iterations reached — using current analysis")
 
                     # Save result before leaving context
                     saved_result = final_result if final_result else "분석을 완료하지 못했습니다."
@@ -698,10 +809,31 @@ DONE: [Your comprehensive stock analysis summary with recommendation]
                     for lesson in feedback.get("lessons", []):
                         self.semantic_memory.save_knowledge(lesson, user_task)
                     
-        except Exception as e:
+        except BaseException as e:
+            # Unwrap ExceptionGroup (anyio/MCP TaskGroups wrap inner errors) so the
+            # real cause shows up instead of the generic "unhandled errors in a TaskGroup".
+            import traceback
+
+            def _collect(exc, out):
+                sub = getattr(exc, "exceptions", None)
+                if sub:
+                    for s in sub:
+                        _collect(s, out)
+                else:
+                    out.append(exc)
+
+            leaves = []
+            _collect(e, leaves)
+
+            print("\n❌ [run_for_web] Exception detail:")
+            for i, leaf in enumerate(leaves, 1):
+                print(f"  [{i}] {type(leaf).__name__}: {leaf}")
+                traceback.print_exception(type(leaf), leaf, leaf.__traceback__)
+
             if saved_result:
                 return saved_result
-            return f"오류가 발생했습니다: {str(e)}"
+            first = leaves[0] if leaves else e
+            return f"오류가 발생했습니다: {type(first).__name__}: {first}"
         
         return saved_result
 
