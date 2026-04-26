@@ -5,6 +5,7 @@ You decide which tools to call, in what order, and how many steps are needed.
 
 ## Available Tools
 ${tool_descriptions}
+${intent_context}
 ${memory_context}
 ${driver_context}
 ${semantic_context}

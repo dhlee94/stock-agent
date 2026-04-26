@@ -133,7 +133,51 @@ class MementoAgent:
             response = self.model.generate_content(prompt)
             return response.text
 
-    def _call_planner(self, user_task: str, tool_descriptions: str, context_examples: str, driver_info: str = "", semantic_knowledge: List[str] = None, critique: Optional[Dict] = None, previous_findings: str = "") -> List[Dict]:
+    def _call_intent_extractor(self, user_task: str) -> Dict[str, Any]:
+        """
+        Pre-Planner stage: parse the user's natural-language query into structured key points.
+        Returns a dict with keys: subject, key_points, intent_class, search_keywords, notes.
+        Returns {} on parse failure (Planner will fall back to raw query only).
+        """
+        print("\n🎯 [Intent Extractor] Parsing user query...")
+
+        extractor_prompt = [
+            {"role": "system", "content": load_prompt("intent_extractor_system")},
+            {"role": "user", "content": user_task},
+        ]
+        response = self._call_llm(extractor_prompt)
+
+        try:
+            json_match = re.search(r"\{[\s\S]*\}", response)
+            if not json_match:
+                print("   ⚠️ Extractor produced no JSON — falling back")
+                return {}
+            intent = json.loads(json_match.group(0))
+            print(f"   📍 Subject: {intent.get('subject', '?')}")
+            print(f"   📍 Key points: {intent.get('key_points', [])}")
+            print(f"   📍 Intent: {intent.get('intent_class', '?')}")
+            kw = intent.get("search_keywords", [])
+            if kw:
+                print(f"   📍 Search keywords: {kw}")
+            return intent
+        except json.JSONDecodeError as e:
+            print(f"   ⚠️ Extractor JSON parse failed: {e}")
+            return {}
+
+    def _format_intent_context(self, intent: Dict[str, Any]) -> str:
+        """Render extracted-intent dict as a Planner-readable fragment, or '' if empty."""
+        if not intent:
+            return ""
+        return load_prompt(
+            "intent_context",
+            subject=intent.get("subject", "(unknown)"),
+            key_points=intent.get("key_points", []),
+            intent_class=intent.get("intent_class", "(unknown)"),
+            search_keywords=intent.get("search_keywords", []),
+            notes=intent.get("notes", ""),
+        )
+
+    def _call_planner(self, user_task: str, tool_descriptions: str, context_examples: str, driver_info: str = "", semantic_knowledge: List[str] = None, critique: Optional[Dict] = None, previous_findings: str = "", extracted_intent: Optional[Dict[str, Any]] = None) -> List[Dict]:
         """
         Planner LLM: Generates a free-form execution plan based on available tools and past memory.
         Returns a list of steps: [{"step": 1, "tool": "tool_name", "args": {...}, "reason": "..."}, ...]
@@ -172,9 +216,12 @@ class MementoAgent:
                 prior=prior if prior else "none",
             )
 
+        intent_context = self._format_intent_context(extracted_intent or {})
+
         planner_system = load_prompt(
             "planner_system",
             tool_descriptions=tool_descriptions,
+            intent_context=intent_context,
             memory_context=memory_context,
             driver_context=driver_context,
             semantic_context=semantic_context,
@@ -445,12 +492,17 @@ Return the JSON verdict object now:"""}
                 tools = tools_response.tools
                 tool_descriptions = "\n".join([f"- {t.name}: {t.description}" for t in tools])
 
-                # 3. Planning & Execution Loop
+                # 3. Intent extraction (so the single-loop LLM also gets structured key points)
+                extracted_intent = self._call_intent_extractor(user_task)
+                intent_context = self._format_intent_context(extracted_intent)
+
+                # 4. Planning & Execution Loop
                 run_system = load_prompt(
                     "run_main_system",
                     risk_tolerance=get_setting("risk_tolerance", "Medium"),
                     default_market=get_setting("default_market", "KR"),
                     user_task=user_task,
+                    intent_context=intent_context,
                     context_examples=context_examples,
                     tool_descriptions=tool_descriptions,
                 )
@@ -531,7 +583,10 @@ Return the JSON verdict object now:"""}
                     tools = tools_response.tools
                     tool_descriptions = "\n".join([f"- {t.name}: {t.description}" for t in tools])
 
-                    # 3. PLAN → EXECUTE → SUMMARIZE → REFLECT loop (iterative refinement)
+                    # 3. INTENT EXTRACTION (once, before the loop — reused across iterations)
+                    extracted_intent = self._call_intent_extractor(user_task)
+
+                    # 4. PLAN → EXECUTE → SUMMARIZE → REFLECT loop (iterative refinement)
                     MAX_ITER = 3
                     all_findings = ""
                     plan_text = ""
@@ -551,6 +606,7 @@ Return the JSON verdict object now:"""}
                             semantic_knowledge=semantic_knowledge,
                             critique=critique,
                             previous_findings=all_findings,
+                            extracted_intent=extracted_intent,
                         )
 
                         if not plan:

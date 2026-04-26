@@ -12,6 +12,7 @@ You are a Professional Stock Expert AI Assistant.
 
 ## Your Task
 ${user_task}
+${intent_context}
 
 ## Past Successful Analyses (for reference)
 ${context_examples}
