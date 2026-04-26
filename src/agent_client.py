@@ -18,9 +18,11 @@ from mcp.client.stdio import stdio_client
 try:
     from .memory_store import MemoryStore, ProceduralMemory, SemanticMemory
     from .driver_memory import DriverMemory
+    from .prompts import load_prompt
 except ImportError:
     from memory_store import MemoryStore, ProceduralMemory, SemanticMemory
     from driver_memory import DriverMemory
+    from prompts import load_prompt
 
 # Provider selection: "gemini" (default, free), "openai", or "groq"
 LLM_PROVIDER = os.environ.get("LLM_PROVIDER", "gemini").lower()
@@ -143,25 +145,16 @@ class MementoAgent:
 
         memory_context = ""
         if context_examples:
-            memory_context = f"""
-## Past Successful Plans (Retrieved from Memory)
-These are real examples of plans that worked well for similar tasks.
-Use them as inspiration — adapt freely to the current request, don't copy blindly.
-{context_examples}"""
+            memory_context = load_prompt("planner_memory_context", context_examples=context_examples)
 
         driver_context = ""
         if driver_info:
-            driver_context = f"""
-## Historical Driver Keywords (from Driver Memory)
-{driver_info}"""
+            driver_context = load_prompt("planner_driver_context", driver_info=driver_info)
 
         semantic_context = ""
         if semantic_knowledge:
             lessons_text = "\n".join(f"- {lesson}" for lesson in semantic_knowledge)
-            semantic_context = f"""
-## Generalized Knowledge (from Semantic Memory)
-These lessons were learned across all past analyses — apply them when relevant:
-{lessons_text}"""
+            semantic_context = load_prompt("planner_semantic_context", lessons_text=lessons_text)
 
         critique_context = ""
         if critique:
@@ -171,49 +164,24 @@ These lessons were learned across all past analyses — apply them when relevant
             prior = (previous_findings or "").strip()
             if len(prior) > 1800:
                 prior = prior[:1800] + "\n...(truncated)"
-            critique_context = f"""
-## Refinement Brief (IMPORTANT — this is a follow-up iteration)
-The previous analysis was rejected by the Reflector. Your job is to CLOSE THE GAPS — not redo everything.
+            critique_context = load_prompt(
+                "planner_critique_context",
+                issues=issues if issues else "none",
+                missing=missing if missing else "none",
+                suggested=suggested if suggested else "none (pick appropriate tools yourself)",
+                prior=prior if prior else "none",
+            )
 
-- Logical inconsistencies to resolve: {issues if issues else 'none'}
-- Missing data to collect: {missing if missing else 'none'}
-- Suggested tools to fill gaps: {suggested if suggested else 'none (pick appropriate tools yourself)'}
-
-Already collected findings (DO NOT re-fetch these, build on them):
-{prior if prior else 'none'}
-
-Produce a FOCUSED plan with only the steps needed to address the gaps above.
-Prefer 1-3 steps. If no new tool call is needed and the issue is purely logical,
-return an empty array [] and the Summarizer will re-reason over existing data."""
-
+        planner_system = load_prompt(
+            "planner_system",
+            tool_descriptions=tool_descriptions,
+            memory_context=memory_context,
+            driver_context=driver_context,
+            semantic_context=semantic_context,
+            critique_context=critique_context,
+        )
         planner_prompt = [
-            {"role": "system", "content": f"""You are a Planning Agent for stock and market analysis.
-
-Given a user's request, create the best execution plan using the available tools.
-You decide which tools to call, in what order, and how many steps are needed.
-
-## Available Tools
-{tool_descriptions}
-{memory_context}
-{driver_context}
-{semantic_context}
-{critique_context}
-
-## Guidelines
-- Understand the user's intent first, then choose the most relevant tools
-- Not every query requires a specific stock ticker — use tools creatively for broad market questions
-- Fewer well-chosen steps are better than many redundant ones
-- When past examples exist in memory, learn from their structure but adapt to the current request
-- **Event extraction** — If the user mentions a specific event (CEO change/resignation, earnings release, lawsuit, regulatory issue, product launch, M&A, layoffs, supply deal, etc.), you MUST pass that event keyword as the `query` argument to `stock_news` in addition to `ticker`. Example: user says "요즘 대표가 사퇴했다는데" → call `stock_news` with `{{"ticker": "NFLX", "query": "CEO resignation"}}`. Without `query`, only a generic news feed is returned and the specific event may be missed.
-
-## Output Format
-Output ONLY a valid JSON array of steps. Each step must have:
-- "step": step number (1, 2, 3...)
-- "tool": exact tool name from Available Tools above
-- "args": arguments as a JSON object
-- "reason": why this step serves the current request
-
-Output ONLY the JSON array, no other text."""},
+            {"role": "system", "content": planner_system},
             {"role": "user", "content": f"Create an execution plan for: {user_task}"}
         ]
 
@@ -247,22 +215,11 @@ Output ONLY the JSON array, no other text."""},
                 if summary:
                     tips_lines.append(f"- {summary[:200]}")
             if tips_lines:
-                tips_context = f"""
-## Procedural Memory: Past Successful Results for this Tool
-Learn from these previous interpretations to improve yours:
-{chr(10).join(tips_lines)}
-"""
+                tips_context = load_prompt("executor_tips_context", tips_lines="\n".join(tips_lines))
 
+        executor_system = load_prompt("executor_system", tips_context=tips_context)
         executor_prompt = [
-            {"role": "system", "content": f"""You are an Execution Agent for stock analysis.
-Your job is to interpret tool results and extract key insights.
-{tips_context}
-Be concise. Focus on:
-- Key numbers and metrics
-- Important signals (bullish/bearish)
-- Notable trends or news
-
-Output a brief summary (2-3 sentences max)."""},
+            {"role": "system", "content": executor_system},
             {"role": "user", "content": f"""Step: {step.get('reason', 'Execute tool')}
 Tool: {step.get('tool')}
 
@@ -285,19 +242,7 @@ Summarize the key findings from this tool output:"""}
         print("\n📊 [Planner] Generating final summary...")
         
         summary_prompt = [
-            {"role": "system", "content": """You are a Stock Expert AI providing final analysis.
-Based on all the gathered information, provide a comprehensive summary with:
-1. Current situation (price, trend)
-2. Technical analysis summary
-3. Fundamental factors
-4. News sentiment
-5. **Risk Management** (IMPORTANT - always include if data available):
-   - 🎯 Target Price: [price] ([+X.X%])
-   - 🛑 Stop-loss: [price] ([-X.X%])
-   - ⚖️ Risk/Reward Ratio: [X.X]:1 (Entry Rating: [EXCELLENT/GOOD/FAIR/POOR])
-6. Clear recommendation (BUY/HOLD/SELL) with reasoning
-
-Be professional but concise. ALWAYS include Target Price, Stop-loss, and Risk/Reward if the data is available in the findings."""},
+            {"role": "system", "content": load_prompt("summarizer_system")},
             {"role": "user", "content": f"""Task: {user_task}
 
 Gathered Information:
@@ -317,24 +262,7 @@ Provide your final analysis and recommendation (include Target Price, Stop-loss,
         print("\n💾 [Reflector] Extracting lessons for memory update...")
 
         feedback_prompt = [
-            {"role": "system", "content": """You are a meta-learning agent. Analyze a completed stock analysis task and extract lessons for future improvement.
-
-Output ONLY a valid JSON object with this structure:
-{
-  "score": <float 0.0-1.0 representing analysis quality>,
-  "lessons": [<up to 3 concise lessons learned from this task>]
-}
-
-Scoring guide:
-- 1.0: Complete data, clear recommendation, well-supported conclusion
-- 0.7: Mostly complete, minor gaps
-- 0.4: Significant data missing or contradictory signals unresolved
-- 0.1: Failed or very incomplete
-
-Lessons should be specific and actionable for a future Planner, e.g.:
-- "For semiconductor stocks, searching '[company] HBM 수율' yields more relevant news than generic queries"
-- "When RSI and MACD diverge, recommend HOLD rather than BUY/SELL"
-- "Market-wide queries work better with stock_news than stock_price for index tickers" """},
+            {"role": "system", "content": load_prompt("feedback_extractor_system")},
             {"role": "user", "content": f"""Task: {user_task}
 
 Plan executed:
@@ -417,42 +345,17 @@ Extract score and lessons:"""}
 
         tools_hint = ""
         if available_tools:
-            tools_hint = f"\n\n## Available tools (use exact names in suggested_tools):\n{available_tools}"
+            tools_hint = load_prompt("reflector_tools_hint", available_tools=available_tools)
 
+        reflector_system = load_prompt(
+            "reflector_system",
+            confidence_level=confidence_level,
+            verification_notes="; ".join(verification_notes) if verification_notes else "N/A",
+            risk_tolerance=risk_tolerance,
+            tools_hint=tools_hint,
+        )
         reflection_prompt = [
-            {"role": "system", "content": f"""You are a Critical Review Agent for stock analysis.
-
-Review the analysis along these axes:
-
-1. **Logical Consistency** — do indicators match the recommendation?
-   - e.g., RSI < 30 (oversold) should NOT lead to SELL
-   - e.g., Bearish trend + Bearish technicals should NOT support BUY without strong justification
-2. **Completeness** — price/trend, 2-3 technical indicators, news sentiment, risk warnings, clear BUY/HOLD/SELL
-3. **Reference Proxy Verification**
-   - Preliminary Confidence: {confidence_level}
-   - Notes: {'; '.join(verification_notes) if verification_notes else 'N/A'}
-   - If signals are divergent, downgrade confidence and require explicit warning
-4. **Confidence Calibration** — no overconfidence with limited data; acknowledge uncertainty
-5. **Risk Tolerance Fit** — user's tolerance is **{risk_tolerance}**; emphasize stop-loss if Medium or lower
-{tools_hint}
-
-## Decision rule
-- If the analysis has **missing data** or **logical contradictions that require new tool calls** → set approved=false
-  and list the gaps in missing_data / suggested_tools so the Planner can fix them in the next iteration.
-- If only **minor wording** is off (data is complete, logic is sound) → set approved=true and put the
-  lightly-revised text in revised_analysis.
-- If everything is fine as-is → approved=true, revised_analysis=null.
-
-## Output format
-Return ONLY a valid JSON object, no other text, no markdown fences:
-{{
-  "approved": true,
-  "confidence": "High",
-  "logical_issues": [],
-  "missing_data": [],
-  "suggested_tools": [],
-  "revised_analysis": null
-}}"""},
+            {"role": "system", "content": reflector_system},
             {"role": "user", "content": f"""Task: {user_task}
 
 Analysis to review:
@@ -543,43 +446,16 @@ Return the JSON verdict object now:"""}
                 tool_descriptions = "\n".join([f"- {t.name}: {t.description}" for t in tools])
 
                 # 3. Planning & Execution Loop
+                run_system = load_prompt(
+                    "run_main_system",
+                    risk_tolerance=get_setting("risk_tolerance", "Medium"),
+                    default_market=get_setting("default_market", "KR"),
+                    user_task=user_task,
+                    context_examples=context_examples,
+                    tool_descriptions=tool_descriptions,
+                )
                 history = [
-                    {"role": "system", "content": f"""You are a Professional Stock Expert AI Assistant.
-
-## Your Expertise
-- 📊 Technical Analysis: RSI, MACD, Bollinger Bands, Moving Averages
-- 📈 Fundamental Analysis: PER, PBR, ROE, EPS, Financial Statements
-- 🤖 AI-Powered Prediction: Chronos time-series + FinBERT sentiment
-- 📰 Real-time News & Market Sentiment Analysis
-
-## User Configuration
-- **Risk Tolerance**: {get_setting("risk_tolerance", "Medium")}
-- **Default Market**: {get_setting("default_market", "KR")}
-
-## Your Task
-{user_task}
-
-## Past Successful Analyses (for reference)
-{context_examples}
-
-## Available Tools
-{tool_descriptions}
-
-## Guidelines
-1. **Always verify data** - Use real-time data from tools before giving advice
-2. **Be comprehensive** - Consider both technical and fundamental factors
-3. **Risk disclosure** - Always mention investment risks
-4. **Clear recommendations** - Give actionable insights (BUY/SELL/HOLD)
-
-## Tool Calling Format
-To call a tool, output ONLY a JSON block:
-{{"tool": "tool_name", "arguments": {{"arg_name": "value"}}}}
-
-## Completion
-When you have completed the analysis, output:
-DONE: [Your comprehensive stock analysis summary with recommendation]
-
-"""},
+                    {"role": "system", "content": run_system},
                     {"role": "user", "content": f"Please execute the task: {user_task}"}
                 ]
 
@@ -719,8 +595,8 @@ DONE: [Your comprehensive stock analysis summary with recommendation]
 
                                                 # Ask LLM for industry competitors
                                                 fallback_prompt = [
-                                                    {"role": "system", "content": "You are a financial analyst. Return ONLY a JSON array of competitor tickers."},
-                                                    {"role": "user", "content": f"List 2-3 key industry competitors for {ticker}. Return ONLY a JSON array like [\"TICKER1\", \"TICKER2\"]. For Korean stocks, use .KS suffix."}
+                                                    {"role": "system", "content": load_prompt("peer_fallback_system")},
+                                                    {"role": "user", "content": load_prompt("peer_fallback_user", ticker=ticker)}
                                                 ]
                                                 llm_response = self._call_llm(fallback_prompt)
 
