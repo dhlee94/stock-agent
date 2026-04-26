@@ -7,7 +7,8 @@
 
 ## ✨ Features
 
-- 🧠 **Memento Architecture**: [논문](https://arxiv.org/abs/2512.22716) 기반 Planner/Executor/Reflector + 3중 메모리 구조
+- 🧠 **Memento Architecture**: [논문](https://arxiv.org/abs/2512.22716) 기반 Intent Extractor → Planner → Executor → Reflector 다단계 에이전트 + 3중 메모리 구조
+- 🎯 **Intent Extractor**: 사용자 자연어 쿼리 → 구조화된 key points (subject, intent_class, search_keywords) 사전 추출 → Planner에 전달
 - 📊 **Technical Analysis**: RSI, MACD, Bollinger Bands, Moving Averages
 - 📈 **Fundamental Analysis**: PER, PBR, ROE, EPS, 재무제표
 - 🤖 **AI Prediction**: Chronos 시계열 예측
@@ -19,6 +20,7 @@
   - **Procedural Memory**: 도구 실행 패턴 학습 → Executor에 직접 전달
 - 🔍 **Self-Reflection**: 논리적 일관성 검증 + 피드백 추출 → 메모리 자동 업데이트
 - 🆓 **Autonomous Planner**: 도구 설명과 메모리만으로 자유롭게 계획 수립 (고정 워크플로우 없음)
+- 📝 **Externalized Prompts**: 모든 에이전트의 LLM 시스템 프롬프트를 `src/prompts/*.md`로 분리 — 코드 수정 없이 프롬프트 튜닝 가능 (`${var}` 템플릿 + strict 검증)
 - 📱 **Web Dashboard**: 모바일/PC 반응형 UI
 
 ---
@@ -76,6 +78,13 @@ python test_agent_flow.py "SK하이닉스 분석"
 ┌─────────────────────────────────────────────────────────────┐
 │                     📱 Web UI / CLI                         │
 └─────────────────────────┬───────────────────────────────────┘
+                          ▼
+┌─────────────────────────────────────────────────────────────┐
+│                🎯 INTENT EXTRACTOR (LLM)                    │
+│  - Raw user query → 구조화된 key points (JSON)               │
+│  - subject / key_points / intent_class / search_keywords    │
+│  - Planner가 사용자 의도를 놓치지 않도록 사전 정제             │
+└─────────────────────────┬───────────────────────────────────┘
                           │
           ┌───────────────┼───────────────┐
           ▼               ▼               ▼
@@ -86,8 +95,7 @@ python test_agent_flow.py "SK하이닉스 분석"
                           │
 ┌─────────────────────────▼───────────────────────────────────┐
 │                   🧠 PLANNER (LLM)                          │
-│  - Episodic Memory에서 유사 계획 검색                         │
-│  - Semantic Memory에서 관련 lessons 수신                      │
+│  - Intent Extractor 결과 + Episodic/Semantic Memory 수신      │
 │  - 도구 설명만으로 자율적 계획 수립 (고정 워크플로우 없음)        │
 └─────────────────────────┬───────────────────────────────────┘
                           │
@@ -101,6 +109,7 @@ python test_agent_flow.py "SK하이닉스 분석"
 │                   🔍 REFLECTOR (Self-Check + Memory Update) │
 │  - 논리적 일관성 검증 (RSI < 30 인데 SELL?)                   │
 │  - 피드백 추출: score(0~1) + lessons                         │
+│  - 부족 시 Planner에 critique 전달 → 최대 3회 반복            │
 │  - Episodic Memory rewriting (더 나은 결과로 교체)            │
 │  - Semantic Memory에 lessons 저장 (cross-task 전이)          │
 └─────────────────────────┴───────────────────────────────────┘
@@ -132,11 +141,21 @@ agent/
 ├── requirements.txt
 ├── .env.example               # 환경변수 템플릿
 └── src/
-    ├── agent_client.py        # 🧠 Memento Agent (Planner/Executor/Reflector)
+    ├── agent_client.py        # 🧠 Memento Agent (Intent Extractor / Planner / Executor / Reflector)
     ├── mcp_server.py          # MCP Tool Server
     ├── memory_store.py        # 3-Layer Memory (Episodic/Semantic/Procedural)
     ├── driver_memory.py       # 📈 Driver Memory (주가 변동 원인)
     ├── risk_manager.py        # 🎯 Risk Management
+    ├── prompts/               # 📝 외부화된 LLM 프롬프트 (.md 템플릿)
+    │   ├── __init__.py        # load_prompt() 헬퍼 (string.Template + strict 검증 + lru_cache)
+    │   ├── intent_extractor_system.md
+    │   ├── planner_system.md
+    │   ├── executor_system.md
+    │   ├── summarizer_system.md
+    │   ├── reflector_system.md
+    │   ├── feedback_extractor_system.md
+    │   ├── driver_keyword_extraction.md
+    │   └── *_context.md       # 조건부 주입 fragment (intent/memory/critique 등)
     ├── dashboard/             # 🎛️ 관리자 대시보드 (Streamlit)
     │   ├── app.py             # 대시보드 메인
     │   └── pages/             # 대시보드 페이지 (Market Data, Memory, Settings)
@@ -235,6 +254,24 @@ agent/
 | `OPENAI_API_KEY` | No | OpenAI API 키 (유료) |
 
 *최소 하나의 LLM API 키 필요
+
+---
+
+## 📝 Prompt Management
+
+모든 에이전트의 LLM 시스템 프롬프트는 `src/prompts/*.md`로 외부화되어 있습니다. 코드를 건드리지 않고 프롬프트만 튜닝/실험할 수 있습니다.
+
+| 구성 요소 | 위치 | 역할 |
+|---|---|---|
+| 메인 프롬프트 | `<agent>_system.md` | 각 에이전트의 system prompt 본체 |
+| 조건부 fragment | `<agent>_<context>.md` | 특정 조건에서만 주입되는 sub-section (예: `planner_critique_context.md`은 Reflector가 거절했을 때만) |
+| 로더 | `prompts/__init__.py` | `load_prompt(name, **vars)` — `string.Template` 기반, `${var}` 누락 시 즉시 `KeyError`, `lru_cache`로 캐싱 |
+
+**새 에이전트 추가 4단계:**
+1. `prompts/<agent>_system.md` — system prompt 작성 (필요한 `${var}` 정의)
+2. (선택) `prompts/<agent>_context.md` — 출력을 다른 에이전트에 주입할 fragment
+3. `agent_client.py:MementoAgent`에 `_call_<agent>()` 메서드 추가 (`load_prompt()` + `_call_llm()`)
+4. `run_for_web()` 또는 `run()` 파이프라인에 호출 wire-up
 
 ---
 
