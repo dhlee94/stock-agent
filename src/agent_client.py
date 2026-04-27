@@ -2,14 +2,38 @@ import asyncio
 import os
 import sys
 import json
-from database import get_setting
 import re
 import time
 from typing import List, Dict, Any, Optional, Tuple
-from dotenv import load_dotenv
 
-# Load .env file from project root
-load_dotenv(os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), ".env"))
+# Use centralized config
+from config import (
+    LLM_PROVIDER, GEMINI_API_KEY, OPENAI_API_KEY, GROQ_API_KEY,
+    DEFAULT_MARKET, RISK_TOLERANCE, SRC_DIR
+)
+from database import get_setting
+
+# Provider setup
+MOCK_MODE = False
+LAST_API_CALL = 0  # Rate limiting
+
+# Initialize providers based on config
+if LLM_PROVIDER == "gemini":
+    if not GEMINI_API_KEY:
+        MOCK_MODE = True
+    else:
+        import google.generativeai as genai
+        genai.configure(api_key=GEMINI_API_KEY)
+elif LLM_PROVIDER == "openai":
+    if not OPENAI_API_KEY:
+        MOCK_MODE = True
+    else:
+        from openai import OpenAI
+elif LLM_PROVIDER == "groq":
+    if not GROQ_API_KEY:
+        MOCK_MODE = True
+    else:
+        from groq import Groq
 
 from mcp import ClientSession, StdioServerParameters
 from mcp.client.stdio import stdio_client
@@ -23,32 +47,6 @@ except ImportError:
     from memory_store import MemoryStore, ProceduralMemory, SemanticMemory
     from driver_memory import DriverMemory
     from prompts import load_prompt
-
-# Provider selection: "gemini" (default, free), "openai", or "groq"
-LLM_PROVIDER = os.environ.get("LLM_PROVIDER", "gemini").lower()
-MOCK_MODE = False
-LAST_API_CALL = 0  # Rate limiting
-
-# Check API keys and initialize
-if LLM_PROVIDER == "gemini":
-    GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY") or os.environ.get("GOOGLE_API_KEY")
-    if not GEMINI_API_KEY:
-        MOCK_MODE = True
-    else:
-        import google.generativeai as genai
-        genai.configure(api_key=GEMINI_API_KEY)
-elif LLM_PROVIDER == "openai":
-    OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY")
-    if not OPENAI_API_KEY:
-        MOCK_MODE = True
-    else:
-        from openai import OpenAI
-elif LLM_PROVIDER == "groq":
-    GROQ_API_KEY = os.environ.get("GROQ_API_KEY")
-    if not GROQ_API_KEY:
-        MOCK_MODE = True
-    else:
-        from groq import Groq
 
 class MockLLM:
     """A simple mock LLM for demo purposes when no API key is set."""
@@ -76,7 +74,7 @@ class MementoAgent:
             self.llm = MockLLM()
         elif LLM_PROVIDER == "openai":
             print("[Agent] Using OpenAI GPT-4o.")
-            self.client = OpenAI()
+            self.client = OpenAI(api_key=OPENAI_API_KEY)
         elif LLM_PROVIDER == "groq":
             print("[Agent] Using Groq Llama 3.3 70B (fast inference).")
             self.client = Groq(api_key=GROQ_API_KEY)
@@ -84,37 +82,46 @@ class MementoAgent:
             print("[Agent] Using Gemini 2.0 Flash (free tier).")
             self.model = genai.GenerativeModel('gemini-2.0-flash')
 
-    def _call_llm(self, messages):
+    async def _call_llm(self, messages):
         global LAST_API_CALL
         if MOCK_MODE:
             return self.llm.chat(messages)
         
         # Rate limiting: Groq is fast, less limiting needed
         if LLM_PROVIDER == "groq":
-            min_wait = 1  # Groq is fast
+            min_wait = 0.5  # Reduced from 1
         else:
-            min_wait = 7  # Gemini/OpenAI need more spacing
+            min_wait = 2.0  # Reduced from 7 (Gemini Flash has decent rate limits)
         
         elapsed = time.time() - LAST_API_CALL
         if elapsed < min_wait:
             wait_time = min_wait - elapsed
             print(f"   ⏳ Rate limiting: waiting {wait_time:.1f}s...")
-            time.sleep(wait_time)
+            await asyncio.sleep(wait_time)
         LAST_API_CALL = time.time()
         
         if LLM_PROVIDER == "openai":
-            response = self.client.chat.completions.create(
-                model="gpt-4o",
-                messages=messages,
-                temperature=0.7
+            # Using asyncio wrapper for OpenAI if available, or just run in executor
+            loop = asyncio.get_event_loop()
+            response = await loop.run_in_executor(
+                None, 
+                lambda: self.client.chat.completions.create(
+                    model="gpt-4o",
+                    messages=messages,
+                    temperature=0.7
+                )
             )
             return response.choices[0].message.content
         elif LLM_PROVIDER == "groq":
-            response = self.client.chat.completions.create(
-                model="llama-3.3-70b-versatile",
-                messages=messages,
-                temperature=0.7,
-                max_tokens=4096
+            loop = asyncio.get_event_loop()
+            response = await loop.run_in_executor(
+                None,
+                lambda: self.client.chat.completions.create(
+                    model="llama-3.3-70b-versatile",
+                    messages=messages,
+                    temperature=0.7,
+                    max_tokens=4096
+                )
             )
             return response.choices[0].message.content
         else:
@@ -130,10 +137,11 @@ class MementoAgent:
                 elif role == "assistant":
                     prompt += f"Assistant: {content}\n\n"
             
-            response = self.model.generate_content(prompt)
+            # Gemini SDK has async methods
+            response = await self.model.generate_content_async(prompt)
             return response.text
 
-    def _call_intent_extractor(self, user_task: str) -> Dict[str, Any]:
+    async def _call_intent_extractor(self, user_task: str) -> Dict[str, Any]:
         """
         Pre-Planner stage: parse the user's natural-language query into structured key points.
         Returns a dict with keys: subject, key_points, intent_class, search_keywords, notes.
@@ -142,10 +150,10 @@ class MementoAgent:
         print("\n🎯 [Intent Extractor] Parsing user query...")
 
         extractor_prompt = [
-            {"role": "system", "content": load_prompt("intent_extractor_system")},
+            {"role": "system", "content": load_prompt("intent_extractor/system")},
             {"role": "user", "content": user_task},
         ]
-        response = self._call_llm(extractor_prompt)
+        response = await self._call_llm(extractor_prompt)
 
         try:
             json_match = re.search(r"\{[\s\S]*\}", response)
@@ -169,7 +177,7 @@ class MementoAgent:
         if not intent:
             return ""
         return load_prompt(
-            "intent_context",
+            "intent_extractor/context",
             subject=intent.get("subject", "(unknown)"),
             key_points=intent.get("key_points", []),
             intent_class=intent.get("intent_class", "(unknown)"),
@@ -177,7 +185,7 @@ class MementoAgent:
             notes=intent.get("notes", ""),
         )
 
-    def _call_planner(self, user_task: str, tool_descriptions: str, context_examples: str, driver_info: str = "", semantic_knowledge: List[str] = None, critique: Optional[Dict] = None, previous_findings: str = "", extracted_intent: Optional[Dict[str, Any]] = None) -> List[Dict]:
+    async def _call_planner(self, user_task: str, tool_descriptions: str, context_examples: str, driver_info: str = "", semantic_knowledge: List[str] = None, critique: Optional[Dict] = None, previous_findings: str = "", extracted_intent: Optional[Dict[str, Any]] = None) -> List[Dict]:
         """
         Planner LLM: Generates a free-form execution plan based on available tools and past memory.
         Returns a list of steps: [{"step": 1, "tool": "tool_name", "args": {...}, "reason": "..."}, ...]
@@ -189,16 +197,16 @@ class MementoAgent:
 
         memory_context = ""
         if context_examples:
-            memory_context = load_prompt("planner_memory_context", context_examples=context_examples)
+            memory_context = load_prompt("planner/memory_context", context_examples=context_examples)
 
         driver_context = ""
         if driver_info:
-            driver_context = load_prompt("planner_driver_context", driver_info=driver_info)
+            driver_context = load_prompt("planner/driver_context", driver_info=driver_info)
 
         semantic_context = ""
         if semantic_knowledge:
             lessons_text = "\n".join(f"- {lesson}" for lesson in semantic_knowledge)
-            semantic_context = load_prompt("planner_semantic_context", lessons_text=lessons_text)
+            semantic_context = load_prompt("planner/semantic_context", lessons_text=lessons_text)
 
         critique_context = ""
         if critique:
@@ -209,7 +217,7 @@ class MementoAgent:
             if len(prior) > 1800:
                 prior = prior[:1800] + "\n...(truncated)"
             critique_context = load_prompt(
-                "planner_critique_context",
+                "planner/critique_context",
                 issues=issues if issues else "none",
                 missing=missing if missing else "none",
                 suggested=suggested if suggested else "none (pick appropriate tools yourself)",
@@ -219,7 +227,7 @@ class MementoAgent:
         intent_context = self._format_intent_context(extracted_intent or {})
 
         planner_system = load_prompt(
-            "planner_system",
+            "planner/system",
             tool_descriptions=tool_descriptions,
             intent_context=intent_context,
             memory_context=memory_context,
@@ -232,7 +240,7 @@ class MementoAgent:
             {"role": "user", "content": f"Create an execution plan for: {user_task}"}
         ]
 
-        response = self._call_llm(planner_prompt)
+        response = await self._call_llm(planner_prompt)
 
         # Parse the plan
         try:
@@ -246,7 +254,7 @@ class MementoAgent:
 
         return []
 
-    def _call_executor(self, step: Dict, tool_result: str, accumulated_context: str, tips: List[Dict] = None) -> str:
+    async def _call_executor(self, step: Dict, tool_result: str, accumulated_context: str, tips: List[Dict] = None) -> str:
         """
         Executor LLM: Interprets tool results and extracts key insights.
         Uses procedural memory tips to improve interpretation when available.
@@ -262,9 +270,9 @@ class MementoAgent:
                 if summary:
                     tips_lines.append(f"- {summary[:200]}")
             if tips_lines:
-                tips_context = load_prompt("executor_tips_context", tips_lines="\n".join(tips_lines))
+                tips_context = load_prompt("executor/tips_context", tips_lines="\n".join(tips_lines))
 
-        executor_system = load_prompt("executor_system", tips_context=tips_context)
+        executor_system = load_prompt("executor/system", tips_context=tips_context)
         executor_prompt = [
             {"role": "system", "content": executor_system},
             {"role": "user", "content": f"""Step: {step.get('reason', 'Execute tool')}
@@ -279,17 +287,17 @@ Previous context:
 Summarize the key findings from this tool output:"""}
         ]
 
-        response = self._call_llm(executor_prompt)
+        response = await self._call_llm(executor_prompt)
         return response
 
-    def _call_summarizer(self, user_task: str, all_findings: str) -> str:
+    async def _call_summarizer(self, user_task: str, all_findings: str) -> str:
         """
         Final summarization using Planner LLM.
         """
         print("\n📊 [Planner] Generating final summary...")
         
         summary_prompt = [
-            {"role": "system", "content": load_prompt("summarizer_system")},
+            {"role": "system", "content": load_prompt("summarizer/system")},
             {"role": "user", "content": f"""Task: {user_task}
 
 Gathered Information:
@@ -298,10 +306,10 @@ Gathered Information:
 Provide your final analysis and recommendation (include Target Price, Stop-loss, and Risk/Reward):"""}
         ]
         
-        response = self._call_llm(summary_prompt)
+        response = await self._call_llm(summary_prompt)
         return response
 
-    def _extract_reflection_feedback(self, user_task: str, plan_text: str, final_analysis: str) -> dict:
+    async def _extract_reflection_feedback(self, user_task: str, plan_text: str, final_analysis: str) -> dict:
         """
         Extract structured feedback from this analysis cycle for memory update.
         Returns {"score": float, "lessons": [str]}
@@ -309,7 +317,7 @@ Provide your final analysis and recommendation (include Target Price, Stop-loss,
         print("\n💾 [Reflector] Extracting lessons for memory update...")
 
         feedback_prompt = [
-            {"role": "system", "content": load_prompt("feedback_extractor_system")},
+            {"role": "system", "content": load_prompt("reflector/feedback_extractor")},
             {"role": "user", "content": f"""Task: {user_task}
 
 Plan executed:
@@ -322,7 +330,7 @@ Extract score and lessons:"""}
         ]
 
         try:
-            response = self._call_llm(feedback_prompt)
+            response = await self._call_llm(feedback_prompt)
             json_match = re.search(r'\{[\s\S]*\}', response)
             if json_match:
                 feedback = json.loads(json_match.group(0))
@@ -337,28 +345,18 @@ Extract score and lessons:"""}
 
         return {"score": 0.7, "lessons": []}
 
-    def _call_reflector(self, user_task: str, analysis: str, plan_text: str = "", peer_context: dict = None, tech_data: dict = None, available_tools: str = "") -> Tuple[str, dict, dict]:
+    async def _call_reflector(self, user_task: str, analysis: str, plan_text: str = "", peer_context: dict = None, tech_data: dict = None, available_tools: str = "") -> Tuple[str, dict, dict]:
         """
         Self-Reflection: Reviews the analysis for logical consistency and completeness.
         Uses Reference Proxy verification when available.
         Returns (final_analysis, feedback_dict, verdict_dict).
-
-        verdict_dict schema:
-          {
-            "approved": bool,              # True if analysis is acceptable → stop refinement loop
-            "confidence": "High|Medium|Low",
-            "logical_issues": [str, ...],  # inconsistencies the planner should resolve
-            "missing_data": [str, ...],    # data gaps (e.g., "news_sentiment")
-            "suggested_tools": [str, ...], # tool names to fill gaps
-            "revised_analysis": Optional[str]  # minor wording rewrite; used only when approved=True
-          }
         """
         print("\n🔍 [Reflector] Self-reflection in progress...")
 
-        # Get settings
-        risk_tolerance = get_setting("risk_tolerance", "Medium")
+        # (Existing logic omitted for brevity in instruction but MUST be kept in implementation)
+        # ... [Reference Proxy Verification logic] ...
 
-        # Reference Proxy Verification
+        risk_tolerance = get_setting("risk_tolerance", "Medium")
         confidence_level = "Medium"
         verification_notes = []
 
@@ -382,20 +380,17 @@ Extract score and lessons:"""}
                     verification_notes.append(f"⚠️ DIVERGENT: {proxy_name} is {proxy_trend} but our signal is {our_signal}")
                 else:
                     verification_notes.append(f"📊 Reference: {proxy_name} ({proxy_trend}, corr={proxy_corr:.2f})")
-
             print(f"   🔗 Reference Proxy Verified: {proxy_name} ({proxy_trend})")
         elif peer_context:
             verification_notes.append("⚠️ No high-correlation proxy - independent analysis")
             print("   ⚠️ No Reference Proxy available")
 
-        print(f"   📋 Confidence Level: {confidence_level}")
-
         tools_hint = ""
         if available_tools:
-            tools_hint = load_prompt("reflector_tools_hint", available_tools=available_tools)
+            tools_hint = load_prompt("reflector/tools_hint", available_tools=available_tools)
 
         reflector_system = load_prompt(
-            "reflector_system",
+            "reflector/system",
             confidence_level=confidence_level,
             verification_notes="; ".join(verification_notes) if verification_notes else "N/A",
             risk_tolerance=risk_tolerance,
@@ -411,7 +406,7 @@ Analysis to review:
 Return the JSON verdict object now:"""}
         ]
 
-        response = self._call_llm(reflection_prompt)
+        response = await self._call_llm(reflection_prompt)
 
         verdict = self._parse_verdict(response)
         revised = verdict.get("revised_analysis")
@@ -427,10 +422,10 @@ Return the JSON verdict object now:"""}
             issues = verdict.get("logical_issues") or []
             missing = verdict.get("missing_data") or []
             print(f"   🔁 Rejected — logical_issues={len(issues)}, missing_data={len(missing)}")
-            final_analysis = analysis  # keep current text; Planner will refine in next iteration
+            final_analysis = analysis 
 
         # Phase 2: Extract feedback for memory update (score + lessons)
-        feedback = self._extract_reflection_feedback(user_task, plan_text, final_analysis)
+        feedback = await self._extract_reflection_feedback(user_task, plan_text, final_analysis)
 
         return final_analysis, feedback, verdict
 
@@ -493,12 +488,12 @@ Return the JSON verdict object now:"""}
                 tool_descriptions = "\n".join([f"- {t.name}: {t.description}" for t in tools])
 
                 # 3. Intent extraction (so the single-loop LLM also gets structured key points)
-                extracted_intent = self._call_intent_extractor(user_task)
+                extracted_intent = await self._call_intent_extractor(user_task)
                 intent_context = self._format_intent_context(extracted_intent)
 
                 # 4. Planning & Execution Loop
                 run_system = load_prompt(
-                    "run_main_system",
+                    "run/main_system",
                     risk_tolerance=get_setting("risk_tolerance", "Medium"),
                     default_market=get_setting("default_market", "KR"),
                     user_task=user_task,
@@ -516,7 +511,7 @@ Return the JSON verdict object now:"""}
                 
                 print("\n🤔 Thinking...")
                 for _ in range(10):
-                    content = self._call_llm(history)
+                    content = await self._call_llm(history)
                     print(f"\n🤖 Agent: {content[:500]}...")
                     history.append({"role": "assistant", "content": content})
                     plan_text += content + "\n"
@@ -584,7 +579,7 @@ Return the JSON verdict object now:"""}
                     tool_descriptions = "\n".join([f"- {t.name}: {t.description}" for t in tools])
 
                     # 3. INTENT EXTRACTION (once, before the loop — reused across iterations)
-                    extracted_intent = self._call_intent_extractor(user_task)
+                    extracted_intent = await self._call_intent_extractor(user_task)
 
                     # 4. PLAN → EXECUTE → SUMMARIZE → REFLECT loop (iterative refinement)
                     MAX_ITER = 3
@@ -601,7 +596,7 @@ Return the JSON verdict object now:"""}
                         print(f"\n🔄 Iteration {iteration + 1}/{MAX_ITER}")
 
                         # PLANNER: first iteration uses full context; later iterations receive critique + prior findings
-                        plan = self._call_planner(
+                        plan = await self._call_planner(
                             user_task, tool_descriptions, context_examples,
                             semantic_knowledge=semantic_knowledge,
                             critique=critique,
@@ -651,10 +646,10 @@ Return the JSON verdict object now:"""}
 
                                                 # Ask LLM for industry competitors
                                                 fallback_prompt = [
-                                                    {"role": "system", "content": load_prompt("peer_fallback_system")},
-                                                    {"role": "user", "content": load_prompt("peer_fallback_user", ticker=ticker)}
+                                                    {"role": "system", "content": load_prompt("peer_fallback/system")},
+                                                    {"role": "user", "content": load_prompt("peer_fallback/user", ticker=ticker)}
                                                 ]
-                                                llm_response = self._call_llm(fallback_prompt)
+                                                llm_response = await self._call_llm(fallback_prompt)
 
                                                 try:
                                                     ticker_match = re.search(r'\[.*?\]', llm_response)
@@ -693,7 +688,7 @@ Return the JSON verdict object now:"""}
                                             pass
 
                                     # Executor interprets the result (with procedural memory tips)
-                                    interpretation = self._call_executor(step, tool_output, all_findings, tips)
+                                    interpretation = await self._call_executor(step, tool_output, all_findings, tips)
                                     all_findings += f"\n### [iter {iteration + 1}] Step {step.get('step')}: {step.get('reason', tool_name)}\n{interpretation}\n"
 
                                     # Save to procedural memory
@@ -710,10 +705,10 @@ Return the JSON verdict object now:"""}
                                     )
 
                         # SUMMARIZER: regenerate the analysis from the latest cumulative findings
-                        final_result = self._call_summarizer(user_task, all_findings)
+                        final_result = await self._call_summarizer(user_task, all_findings)
 
                         # REFLECTOR: structured verdict
-                        final_result, feedback, verdict = self._call_reflector(
+                        final_result, feedback, verdict = await self._call_reflector(
                             user_task, final_result, plan_text, peer_context, tech_data,
                             available_tools=tool_descriptions
                         )

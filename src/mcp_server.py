@@ -47,17 +47,16 @@ mcp = FastMCP("Stock Expert Agent Tools")
 
 @mcp.tool()
 def stock_price(ticker: str, market: str = "KR") -> str:
-    try:
-        return get_stock_price(ticker, market)
-    except Exception as e:
-        return f'{{"error": "Stock Price Error: {str(e)}"}}'
     """
     Get real-time stock price with key metrics.
     Args:
         ticker: Stock ticker (e.g., "005930.KS" for Samsung, "AAPL" for Apple)
         market: "KR" for Korean stocks, "US" for US stocks
     """
-    return get_stock_price(ticker, market)
+    try:
+        return get_stock_price(ticker, market)
+    except Exception as e:
+        return f'{{"error": "Stock Price Error: {str(e)}"}}'
 
 
 @mcp.tool()
@@ -84,10 +83,6 @@ def stock_financials(ticker: str) -> str:
 
 @mcp.tool()
 def stock_news(ticker: str = None, query: str = None, limit: int = 10) -> str:
-    try:
-        return get_market_news(ticker, query, limit)
-    except Exception as e:
-        return f'{{"error": "Stock News Error: {str(e)}"}}'
     """
     Get latest stock or market news.
     Args:
@@ -95,7 +90,10 @@ def stock_news(ticker: str = None, query: str = None, limit: int = 10) -> str:
         query: Search query for general market news
         limit: Max number of articles
     """
-    return get_market_news(ticker, query, limit)
+    try:
+        return get_market_news(ticker, query, limit)
+    except Exception as e:
+        return f'{{"error": "Stock News Error: {str(e)}"}}'
 
 
 @mcp.tool()
@@ -147,10 +145,6 @@ def stock_ai_predict(ticker: str, name: str, market: str = "KR") -> str:
 
 @mcp.tool()
 def analyze_drivers(ticker: str, name: str = "") -> str:
-    try:
-        return _analyze_drivers(ticker, name)
-    except Exception as e:
-        return f'{{"error": "Driver Analysis Error: {str(e)}"}}'
     """
     Analyze historical volatility to identify key price drivers.
     Returns keywords that historically move this stock (e.g., HBM, 파업, 실적).
@@ -159,7 +153,10 @@ def analyze_drivers(ticker: str, name: str = "") -> str:
         ticker: Stock ticker symbol (e.g., "005930.KS")
         name: Company name (optional)
     """
-    return _analyze_drivers(ticker, name)
+    try:
+        return _analyze_drivers(ticker, name)
+    except Exception as e:
+        return f'{{"error": "Driver Analysis Error: {str(e)}"}}'
 
 
 @mcp.tool()

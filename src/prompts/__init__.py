@@ -10,7 +10,9 @@ _BLANK_RUN = re.compile(r"\n{3,}")
 
 @lru_cache(maxsize=None)
 def _read_template(prompt_name: str) -> Template:
-    path = os.path.join(_DIR, f"{prompt_name}.md")
+    # Accept nested names like "planner/system" → prompts/planner/system.md
+    parts = prompt_name.split("/")
+    path = os.path.join(_DIR, *parts) + ".md"
     with open(path, "r", encoding="utf-8") as f:
         return Template(f.read())
 

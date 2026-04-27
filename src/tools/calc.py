@@ -1,9 +1,11 @@
 """
-Math Tool - Mathematical calculations
+Math Tool - Mathematical calculations using SymPy for safety
 """
 import json
-import math
+import sympy
 
+
+from utils.response import ToolResponse
 
 def calculate_math(expression: str) -> str:
     """
@@ -13,12 +15,9 @@ def calculate_math(expression: str) -> str:
     """
     print(f"🧮 [Math] Calculating: {expression}")
     try:
-        allowed = {
-            "sqrt": math.sqrt, "sin": math.sin, "cos": math.cos, "tan": math.tan,
-            "log": math.log, "log10": math.log10, "exp": math.exp,
-            "pi": math.pi, "e": math.e, "pow": pow, "abs": abs
-        }
-        result = eval(expression, {"__builtins__": {}}, allowed)
-        return json.dumps({"expression": expression, "result": result})
+        # Use sympy to safely evaluate the expression
+        expr = sympy.sympify(expression)
+        result = float(expr.evalf())
+        return ToolResponse.success({"expression": expression, "result": result})
     except Exception as e:
-        return json.dumps({"error": str(e)})
+        return ToolResponse.error(str(e))

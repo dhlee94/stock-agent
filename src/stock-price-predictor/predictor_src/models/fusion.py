@@ -41,6 +41,7 @@ class MultimodalFusion(nn.Module):
         
         # Gated Fusion
         fused = gate_val * price_emb + (1 - gate_val) * attn_output
+        fused = self.dropout(fused)
         fused = self.layer_norm(fused)
-        
+
         return fused.squeeze(1) # (batch, hidden_dim)

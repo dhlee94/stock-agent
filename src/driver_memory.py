@@ -13,18 +13,13 @@ from datetime import datetime, timedelta
 from typing import List, Dict, Any, Optional
 
 import yfinance as yf
-from dotenv import load_dotenv
+from config import LLM_PROVIDER, GROQ_API_KEY, GEMINI_API_KEY
+from database import get_top_drivers, get_ticker_info, add_driver, add_ticker
 
 try:
     from .prompts import load_prompt
 except ImportError:
     from prompts import load_prompt
-
-# Load environment
-load_dotenv(os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), ".env"))
-
-LLM_PROVIDER = os.environ.get("LLM_PROVIDER", "gemini").lower()
-GROQ_API_KEY = os.environ.get("GROQ_API_KEY")
 
 # Strict Financial Stopwords - filter these out from driver keywords
 FINANCIAL_STOPWORDS = {
@@ -164,13 +159,11 @@ class DriverMemory:
                 return response.choices[0].message.content
             except Exception as e:
                 print(f"   ⚠️ Groq error: {e}. Falling back to Gemini...")
-                # Fallback continues below
         
         # Fallback to Gemini
-        import google.generativeai as genai
-        GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY") or os.environ.get("GOOGLE_API_KEY")
         if GEMINI_API_KEY:
             try:
+                import google.generativeai as genai
                 genai.configure(api_key=GEMINI_API_KEY)
                 model = genai.GenerativeModel("gemini-2.0-flash")
                 response = model.generate_content(prompt)
@@ -264,7 +257,7 @@ class DriverMemory:
         if news_texts:
             news_context = "\n".join(news_texts[:15])
             extraction_prompt = load_prompt(
-                "driver_keyword_extraction",
+                "driver_memory/keyword_extraction",
                 name=name,
                 ticker=ticker,
                 news_context=news_context,

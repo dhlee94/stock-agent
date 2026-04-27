@@ -21,8 +21,11 @@ DB_PATH = os.path.normpath(DB_PATH)
 @contextmanager
 def get_connection():
     """Context manager for database connections."""
-    conn = sqlite3.connect(DB_PATH)
+    # Add timeout to handle 'database is locked' during concurrent writes
+    conn = sqlite3.connect(DB_PATH, timeout=30)
     conn.row_factory = sqlite3.Row
+    # Enable WAL mode for better concurrency
+    conn.execute("PRAGMA journal_mode=WAL")
     try:
         yield conn
         conn.commit()
@@ -101,6 +104,31 @@ def init_db():
                 value TEXT,
                 description TEXT,
                 updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        ''')
+        
+        # Episodic memory (trajectories)
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS episodic_memory (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                task TEXT,
+                plan_json TEXT,
+                result TEXT,
+                score REAL,
+                lessons_json TEXT,
+                embedding_json TEXT,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        ''')
+        
+        # Semantic memory (generalized lessons)
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS semantic_memory (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                lesson TEXT UNIQUE,
+                source_task TEXT,
+                embedding_json TEXT,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
         ''')
         

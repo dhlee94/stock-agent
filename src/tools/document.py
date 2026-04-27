@@ -5,22 +5,39 @@ import json
 import os
 
 
+from utils.response import ToolResponse
+
 def read_document(filepath: str) -> str:
     """
     Read the content of a local document file (txt, md, py, json, etc.).
     Args:
-        filepath: Absolute path to the file.
+        filepath: Relative or absolute path to the file.
     """
     print(f"📄 [Doc] Reading: {filepath}")
-    if not os.path.exists(filepath):
-        return json.dumps({"error": "File not found", "path": filepath})
+    
+    # Security: Resolve absolute path and restrict to project root
     try:
-        with open(filepath, 'r', encoding='utf-8') as f:
+        project_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+        abs_path = os.path.abspath(filepath)
+        
+        # Check if it's within project root
+        if not abs_path.startswith(project_root):
+            return ToolResponse.error("Access denied: Path is outside project root", {"path": filepath})
+            
+        # Block sensitive files
+        filename = os.path.basename(abs_path)
+        if filename in [".env", "database.py", "mcp_server.py"] or filename.startswith(".git"):
+             return ToolResponse.error("Access denied: Sensitive file", {"path": filepath})
+
+        if not os.path.exists(abs_path):
+            return ToolResponse.error("File not found", {"path": abs_path})
+
+        with open(abs_path, 'r', encoding='utf-8') as f:
             content = f.read()
-        return json.dumps({
-            "path": filepath,
+        return ToolResponse.success({
+            "path": abs_path,
             "size": len(content),
             "content": content[:5000] + ("..." if len(content) > 5000 else "")
         })
     except Exception as e:
-        return json.dumps({"error": str(e)})
+        return ToolResponse.error(str(e))

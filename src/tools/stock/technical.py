@@ -114,6 +114,8 @@ def _calculate_moving_averages(prices: List[float]) -> dict:
     }
 
 
+from utils.response import ToolResponse
+
 def technical_analysis(ticker: str, period: str = "6mo") -> str:
     """
     Perform comprehensive technical analysis on a stock.
@@ -121,7 +123,7 @@ def technical_analysis(ticker: str, period: str = "6mo") -> str:
         ticker: Stock ticker symbol
         period: Data period for analysis ("1mo", "3mo", "6mo", "1y")
     Returns:
-        JSON with RSI, MACD, Bollinger Bands, Moving Averages, and trading signals
+        Standardized JSON response
     """
     print(f"📈 [Technical] Analyzing: {ticker}")
     
@@ -130,7 +132,7 @@ def technical_analysis(ticker: str, period: str = "6mo") -> str:
         hist = stock.history(period=period)
         
         if hist.empty or len(hist) < 30:
-            return json.dumps({"status": "error", "error": "Insufficient data for analysis"})
+            return ToolResponse.error("Insufficient data for analysis")
         
         prices = hist['Close'].tolist()
         volumes = hist['Volume'].tolist()
@@ -185,8 +187,7 @@ def technical_analysis(ticker: str, period: str = "6mo") -> str:
         else:
             recommendation = "HOLD"
         
-        return json.dumps({
-            "status": "success",
+        return ToolResponse.success({
             "ticker": ticker,
             "period": period,
             "indicators": {
@@ -204,7 +205,7 @@ def technical_analysis(ticker: str, period: str = "6mo") -> str:
             "signals": [{"indicator": s[0], "condition": s[1], "bias": s[2]} for s in signals],
             "recommendation": recommendation,
             "confidence": max(bullish, bearish) / len(signals) if signals else 0
-        }, ensure_ascii=False)
+        })
         
     except Exception as e:
-        return json.dumps({"status": "error", "ticker": ticker, "error": str(e)})
+        return ToolResponse.error(str(e), {"ticker": ticker})
