@@ -1,7 +1,11 @@
 import yfinance as yf
 import pandas as pd
 import numpy as np
-from pygooglenews import GoogleNews
+import sys
+import os
+# Add src to path if needed for local utility import
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..', '..')))
+from utils.google_news import GoogleNews
 from statsmodels.tsa.seasonal import seasonal_decompose
 
 class StockDataLoader:

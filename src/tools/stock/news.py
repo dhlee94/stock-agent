@@ -89,7 +89,7 @@ def get_market_news(ticker: str = None, query: str = None, limit: int = 10) -> s
                 effective_query = TICKER_TO_NAME[effective_query]
 
             try:
-                from pygooglenews import GoogleNews
+                from utils.google_news import GoogleNews
 
                 if market == 'US':
                     gn = GoogleNews(lang='en', country='US')
