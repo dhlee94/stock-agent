@@ -22,15 +22,19 @@ class MemoryStore:
         text = text.replace("\n", " ")
 
         if EMBEDDING_PROVIDER == "openai":
-            return self.client.embeddings.create(
-                input=[text],
-                model=EMBEDDING_MODEL
-            ).data[0].embedding
-        else:
+            try:
+                return self.client.embeddings.create(
+                    input=[text],
+                    model=EMBEDDING_MODEL
+                ).data[0].embedding
+            except Exception as e:
+                print(f"⚠️ OpenAI Embedding failed: {e}. Falling back to local...")
+        
+        # Try Gemini
+        if EMBEDDING_PROVIDER == "gemini" or GEMINI_API_KEY:
             try:
                 import google.generativeai as _genai
-                if GEMINI_API_KEY:
-                    _genai.configure(api_key=GEMINI_API_KEY)
+                _genai.configure(api_key=GEMINI_API_KEY)
                 gemini_embed_model = EMBEDDING_MODEL if EMBEDDING_PROVIDER == "gemini" else "models/text-embedding-004"
                 result = _genai.embed_content(
                     model=gemini_embed_model,
@@ -38,10 +42,37 @@ class MemoryStore:
                     task_type="retrieval_document"
                 )
                 return result['embedding']
-            except Exception:
-                # Fallback: deterministic hash-based embedding
-                np.random.seed(hash(text) % (2**32))
-                return np.random.rand(768).tolist()
+            except Exception as e:
+                print(f"⚠️ Gemini Embedding failed (Quota?): {e}. Falling back to local...")
+
+        # 🚀 Local Embedding Fallback (Free & Unlimited)
+        try:
+            from transformers import AutoTokenizer, AutoModel
+            import torch
+            
+            # Use a small, efficient model (approx 90MB)
+            model_name = "sentence-transformers/all-MiniLM-L6-v2"
+            
+            # Lazy load model to save memory
+            if not hasattr(self, '_local_tokenizer'):
+                print(f"📡 Downloading local embedding model ({model_name})...")
+                self._local_tokenizer = AutoTokenizer.from_pretrained(model_name)
+                self._local_model = AutoModel.from_pretrained(model_name)
+            
+            inputs = self._local_tokenizer(text, return_tensors='pt', padding=True, truncation=True, max_length=512)
+            with torch.no_grad():
+                outputs = self._local_model(**inputs)
+            
+            # Mean Pooling
+            embeddings = outputs.last_hidden_state.mean(dim=1)
+            return embeddings[0].tolist()
+            
+        except Exception as e:
+            print(f"⚠️ Local Embedding failed: {e}. Using deterministic fallback.")
+            # Final Fallback: deterministic hash-based (not recommended for search)
+            import numpy as np
+            np.random.seed(hash(text) % (2**32))
+            return np.random.rand(384).tolist() # MiniLM dim is 384
 
     REWRITE_SIMILARITY_THRESHOLD = 0.92
     REWRITE_MIN_IMPROVEMENT = 0.1
