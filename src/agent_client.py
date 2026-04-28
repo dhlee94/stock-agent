@@ -8,7 +8,8 @@ from typing import List, Dict, Any, Optional, Tuple
 
 # Use centralized config
 from config import (
-    LLM_PROVIDER, GEMINI_API_KEY, OPENAI_API_KEY, GROQ_API_KEY,
+    LLM_PROVIDER, LLM_MODEL,
+    GEMINI_API_KEY, OPENAI_API_KEY, GROQ_API_KEY, ANTHROPIC_API_KEY,
     DEFAULT_MARKET, RISK_TOLERANCE, SRC_DIR
 )
 from database import get_setting
@@ -34,6 +35,11 @@ elif LLM_PROVIDER == "groq":
         MOCK_MODE = True
     else:
         from groq import Groq
+elif LLM_PROVIDER == "anthropic":
+    if not ANTHROPIC_API_KEY:
+        MOCK_MODE = True
+    else:
+        import anthropic
 
 from mcp import ClientSession, StdioServerParameters
 from mcp.client.stdio import stdio_client
@@ -73,14 +79,17 @@ class MementoAgent:
             print(f"[Agent] Running in MOCK mode (no API key for {LLM_PROVIDER}).")
             self.llm = MockLLM()
         elif LLM_PROVIDER == "openai":
-            print("[Agent] Using OpenAI GPT-4o.")
+            print(f"[Agent] Using OpenAI ({LLM_MODEL}).")
             self.client = OpenAI(api_key=OPENAI_API_KEY)
         elif LLM_PROVIDER == "groq":
-            print("[Agent] Using Groq Llama 3.3 70B (fast inference).")
+            print(f"[Agent] Using Groq ({LLM_MODEL}, fast inference).")
             self.client = Groq(api_key=GROQ_API_KEY)
+        elif LLM_PROVIDER == "anthropic":
+            print(f"[Agent] Using Anthropic ({LLM_MODEL}).")
+            self.client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
         else:
-            print("[Agent] Using Gemini 2.0 Flash (free tier).")
-            self.model = genai.GenerativeModel('gemini-2.0-flash')
+            print(f"[Agent] Using Gemini ({LLM_MODEL}).")
+            self.model = genai.GenerativeModel(LLM_MODEL)
 
     async def _call_llm(self, messages):
         global LAST_API_CALL
@@ -90,6 +99,8 @@ class MementoAgent:
         # Rate limiting: Groq is fast, less limiting needed
         if LLM_PROVIDER == "groq":
             min_wait = 0.5  # Reduced from 1
+        elif LLM_PROVIDER == "anthropic":
+            min_wait = 0.5
         else:
             min_wait = 2.0  # Reduced from 7 (Gemini Flash has decent rate limits)
         
@@ -104,9 +115,9 @@ class MementoAgent:
             # Using asyncio wrapper for OpenAI if available, or just run in executor
             loop = asyncio.get_event_loop()
             response = await loop.run_in_executor(
-                None, 
+                None,
                 lambda: self.client.chat.completions.create(
-                    model="gpt-4o",
+                    model=LLM_MODEL,
                     messages=messages,
                     temperature=0.7
                 )
@@ -117,13 +128,36 @@ class MementoAgent:
             response = await loop.run_in_executor(
                 None,
                 lambda: self.client.chat.completions.create(
-                    model="llama-3.3-70b-versatile",
+                    model=LLM_MODEL,
                     messages=messages,
                     temperature=0.7,
                     max_tokens=4096
                 )
             )
             return response.choices[0].message.content
+        elif LLM_PROVIDER == "anthropic":
+            # Anthropic requires `system` as a separate top-level param;
+            # only user/assistant turns belong in `messages`.
+            system_parts = [m["content"] for m in messages if m["role"] == "system"]
+            chat_messages = [
+                {"role": m["role"], "content": m["content"]}
+                for m in messages if m["role"] in ("user", "assistant")
+            ]
+            kwargs = {
+                "model": LLM_MODEL,
+                "max_tokens": 4096,
+                "temperature": 0.7,
+                "messages": chat_messages,
+            }
+            if system_parts:
+                kwargs["system"] = "\n\n".join(system_parts)
+
+            loop = asyncio.get_event_loop()
+            response = await loop.run_in_executor(
+                None,
+                lambda: self.client.messages.create(**kwargs),
+            )
+            return response.content[0].text
         else:
             # Gemini format
             prompt = ""

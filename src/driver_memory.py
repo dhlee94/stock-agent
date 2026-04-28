@@ -13,7 +13,10 @@ from datetime import datetime, timedelta
 from typing import List, Dict, Any, Optional
 
 import yfinance as yf
-from config import LLM_PROVIDER, GROQ_API_KEY, GEMINI_API_KEY
+from config import (
+    KEYWORD_LLM_PROVIDER, KEYWORD_LLM_MODEL,
+    GROQ_API_KEY, GEMINI_API_KEY, OPENAI_API_KEY, ANTHROPIC_API_KEY,
+)
 from database import get_top_drivers, get_ticker_info, add_driver, add_ticker
 
 try:
@@ -145,13 +148,13 @@ class DriverMemory:
         print(f"   💾 Saved drivers for {ticker} to database: {keywords}")
     
     def _call_llm(self, prompt: str) -> str:
-        """Call LLM for keyword extraction."""
-        if LLM_PROVIDER == "groq" and GROQ_API_KEY:
+        """Call LLM for keyword extraction. Provider selected via KEYWORD_LLM_PROVIDER."""
+        if KEYWORD_LLM_PROVIDER == "groq" and GROQ_API_KEY:
             try:
                 from groq import Groq
                 client = Groq(api_key=GROQ_API_KEY)
                 response = client.chat.completions.create(
-                    model="llama-3.3-70b-versatile",
+                    model=KEYWORD_LLM_MODEL,
                     messages=[{"role": "user", "content": prompt}],
                     temperature=0.3,
                     max_tokens=500
@@ -159,13 +162,44 @@ class DriverMemory:
                 return response.choices[0].message.content
             except Exception as e:
                 print(f"   ⚠️ Groq error: {e}. Falling back to Gemini...")
-        
-        # Fallback to Gemini
+
+        if KEYWORD_LLM_PROVIDER == "openai" and OPENAI_API_KEY:
+            try:
+                from openai import OpenAI
+                client = OpenAI(api_key=OPENAI_API_KEY)
+                response = client.chat.completions.create(
+                    model=KEYWORD_LLM_MODEL,
+                    messages=[{"role": "user", "content": prompt}],
+                    temperature=0.3,
+                    max_tokens=500,
+                )
+                return response.choices[0].message.content
+            except Exception as e:
+                print(f"   ⚠️ OpenAI error: {e}. Falling back to Gemini...")
+
+        if KEYWORD_LLM_PROVIDER == "anthropic" and ANTHROPIC_API_KEY:
+            try:
+                import anthropic
+                client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
+                response = client.messages.create(
+                    model=KEYWORD_LLM_MODEL,
+                    max_tokens=500,
+                    temperature=0.3,
+                    messages=[{"role": "user", "content": prompt}],
+                )
+                return response.content[0].text
+            except Exception as e:
+                print(f"   ⚠️ Anthropic error: {e}. Falling back to Gemini...")
+
+        # Fallback (and default for KEYWORD_LLM_PROVIDER == "gemini"): Gemini.
+        # Use the configured model only if the chosen provider is gemini;
+        # otherwise fall back to a known-good default model.
         if GEMINI_API_KEY:
             try:
                 import google.generativeai as genai
                 genai.configure(api_key=GEMINI_API_KEY)
-                model = genai.GenerativeModel("gemini-2.0-flash")
+                gemini_model_name = KEYWORD_LLM_MODEL if KEYWORD_LLM_PROVIDER == "gemini" else "gemini-2.0-flash"
+                model = genai.GenerativeModel(gemini_model_name)
                 response = model.generate_content(prompt)
                 return response.text
             except Exception as e:

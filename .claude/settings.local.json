@@ -1,0 +1,9 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(python -c \"import ast; ast.parse\\(open\\('src/agent_client.py'\\).read\\(\\)\\); print\\('OK'\\)\")",
+      "Bash(python -c \"import ast; ast.parse\\(open\\('src/config.py'\\).read\\(\\)\\); print\\('OK'\\)\")",
+      "Bash(python *)"
+    ]
+  }
+}

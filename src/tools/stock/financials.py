@@ -103,26 +103,26 @@ def get_financials(ticker: str) -> str:
             try:
                 from pykrx import stock
                 from datetime import datetime, timedelta
-                print(f"   🇰🇷 [PyKRX] Enhancing data for {ticker}")
                 
                 code = ticker.split('.')[0]
-                # Fetch recent fundamental data (last 5 business days to ensure data)
+                # Fetch recent fundamental data
                 end_str = datetime.now().strftime("%Y%m%d")
-                start_str = (datetime.now() - timedelta(days=7)).strftime("%Y%m%d")
+                start_str = (datetime.now() - timedelta(days=10)).strftime("%Y%m%d")
+                
+                print(f"   🇰🇷 [PyKRX] Enhancing data for {ticker} ({start_str} ~ {end_str})")
                 
                 # get_market_fundamental returns index as Date
                 df = stock.get_market_fundamental(start_str, end_str, code)
                 
-                if not df.empty:
+                if df is not None and not df.empty:
                     # Use the most recent row
                     recent = df.iloc[-1]
                     
-                    # Overwrite fields with authoritative KRX data
-                    # Valid columns: BPS, PER, PBR, EPS, DIV, DPS
-                    if 'PER' in recent and recent['PER'] > 0:
+                    # Overwrite fields with authoritative KRX data if valid
+                    if 'PER' in recent and not hasattr(recent['PER'], 'len') and recent['PER'] > 0:
                         result_data['valuation']['trailing_pe'] = float(recent['PER'])
                     
-                    if 'PBR' in recent and recent['PBR'] > 0:
+                    if 'PBR' in recent and not hasattr(recent['PBR'], 'len') and recent['PBR'] > 0:
                         result_data['valuation']['price_to_book'] = float(recent['PBR'])
                         
                     if 'EPS' in recent:
@@ -132,11 +132,11 @@ def get_financials(ticker: str) -> str:
                         result_data['per_share']['book_value'] = float(recent['BPS'])
                         
                     if 'DIV' in recent:
-                        # PyKRX DIV is yield percent (e.g. 2.5) -> convert to decimal? 
-                        # yfinance expects 0.025? No, yfinance often gives 0.025. 
-                        # Let's check typical yfinance output. Usually decimal. 
-                        # PyKRX likely returns 2.5 for 2.5%.
                         result_data['dividend']['dividend_yield'] = float(recent['DIV']) / 100.0
+                    
+                    print(f"   ✅ [PyKRX] Successfully enhanced {ticker} metrics")
+                else:
+                    print(f"   ⚠️ [PyKRX] No fundamental data returned for {ticker}")
                         
             except Exception as e:
                 print(f"   ⚠️ [PyKRX] Enhancement failed: {str(e)}")

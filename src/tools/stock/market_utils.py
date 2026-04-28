@@ -85,7 +85,7 @@ def _translate_keywords_to_english(keywords: List[str]) -> List[str]:
     return result
 
 
-# Ticker to Name mapping (consolidated from other modules)
+# Ticker to Name mapping (Centralized Source)
 TICKER_TO_NAME = {
     # Korean Stocks
     '005930.KS': '삼성전자',
@@ -108,6 +108,9 @@ TICKER_TO_NAME = {
     '017670.KS': 'SK텔레콤',
     '015760.KS': '한국전력',
     '032830.KS': '삼성생명',
+    '373220.KS': 'LG에너지솔루션',
+    '005490.KS': '포스코홀딩스',
+    '012450.KS': '한화에어로스페이스',
     # US Stocks
     'AAPL': 'Apple',
     'MSFT': 'Microsoft',
@@ -124,8 +127,29 @@ TICKER_TO_NAME = {
     'CRM': 'Salesforce',
     'ORCL': 'Oracle',
     'QCOM': 'Qualcomm',
+    'TSM': 'TSMC',
+    'MU': 'Micron',
 }
 
+# Reverse mapping for entity mining fallback
+NAME_TO_TICKER = {v: k for k, v in TICKER_TO_NAME.items()}
+# Add some aliases
+NAME_TO_TICKER.update({
+    "삼성": "005930.KS",
+    "하이닉스": "000660.KS",
+    "현대자동차": "005380.KS",
+    "네이버": "035420.KS",
+    "구글": "GOOGL",
+    "아마존": "AMZN",
+    "테슬라": "TSLA",
+    "메타": "META",
+    "인텔": "INTC",
+    "퀄컴": "QCOM",
+    "마이크론": "MU",
+    "애플": "AAPL",
+    "엔비디아": "NVDA",
+    "마이크로소프트": "MSFT",
+})
 
 def get_company_name(ticker: str) -> str:
     """Get company name from ticker."""
@@ -143,5 +167,7 @@ def get_english_name(ticker: str) -> str:
         '000270.KS': 'Kia',
         '051910.KS': 'LG Chem',
         '006400.KS': 'Samsung SDI',
+        '373220.KS': 'LG Energy Solution',
+        '005490.KS': 'POSCO Holdings',
     }
     return english_names.get(ticker, TICKER_TO_NAME.get(ticker, ticker))

@@ -1,19 +1,30 @@
 """
-Search Tool - Web search functionality
+Search Tool - Web search functionality using DuckDuckGo
 """
 import json
+from duckduckgo_search import DDGS
 
-
-def search_web(query: str) -> str:
+def search_web(query: str, max_results: int = 5) -> str:
     """
-    Search the web for information.
+    Search the web for real-time information.
     Args:
         query: The search query.
+        max_results: Maximum number of results to return.
     """
     print(f"🔎 [Search] Query: '{query}'")
-    return json.dumps({
-        "results": [
-            {"title": f"Result for {query}", "snippet": "This is a mock search result describing the topic.", "link": "http://example.com/1"},
-            {"title": "Another related page", "snippet": "More information relevant to the search query.", "link": "http://example.com/2"}
-        ]
-    }, ensure_ascii=False)
+    try:
+        with DDGS() as ddgs:
+            results = []
+            for r in ddgs.text(query, max_results=max_results):
+                results.append({
+                    "title": r.get('title'),
+                    "snippet": r.get('body'),
+                    "link": r.get('href')
+                })
+            
+            if not results:
+                return json.dumps({"error": f"No results found for '{query}'"}, ensure_ascii=False)
+                
+            return json.dumps({"results": results}, ensure_ascii=False)
+    except Exception as e:
+        return json.dumps({"error": f"Search failed: {str(e)}"}, ensure_ascii=False)

@@ -1,0 +1,25 @@
+services:
+  app:
+    build: .
+    image: stock-agent:latest
+    container_name: stock-agent-app
+    command: ["python", "-m", "web.app"]
+    ports:
+      - "8000:8000"
+    env_file:
+      - .env
+    volumes:
+      - ./data:/app/data
+    restart: unless-stopped
+
+  scheduler:
+    image: stock-agent:latest
+    container_name: stock-agent-scheduler
+    depends_on:
+      - app
+    command: ["python", "-m", "scheduler.main"]
+    env_file:
+      - .env
+    volumes:
+      - ./data:/app/data
+    restart: unless-stopped

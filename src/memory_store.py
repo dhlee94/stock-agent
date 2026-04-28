@@ -2,37 +2,38 @@ import json
 import os
 import numpy as np
 from typing import List, Dict, Any
-from config import LLM_PROVIDER, GEMINI_API_KEY, OPENAI_API_KEY
+from config import EMBEDDING_PROVIDER, EMBEDDING_MODEL, GEMINI_API_KEY, OPENAI_API_KEY
 from database import get_connection
 
 class MemoryStore:
     def __init__(self):
         # Database is initialized in database.py
         print("[Memory] Initialized with SQLite database.")
-        
-        if LLM_PROVIDER == "openai":
+
+        if EMBEDDING_PROVIDER == "openai":
             from openai import OpenAI
             self.client = OpenAI(api_key=OPENAI_API_KEY)
             print("[Memory] Using OpenAI embeddings.")
         else:
             self.client = None
-            print("[Memory] Using Gemini embeddings.")
+            print(f"[Memory] Using Gemini embeddings (EMBEDDING_PROVIDER={EMBEDDING_PROVIDER}).")
 
     def _get_embedding(self, text: str) -> List[float]:
         text = text.replace("\n", " ")
 
-        if LLM_PROVIDER == "openai":
+        if EMBEDDING_PROVIDER == "openai":
             return self.client.embeddings.create(
                 input=[text],
-                model="text-embedding-3-small"
+                model=EMBEDDING_MODEL
             ).data[0].embedding
         else:
             try:
                 import google.generativeai as _genai
                 if GEMINI_API_KEY:
                     _genai.configure(api_key=GEMINI_API_KEY)
+                gemini_embed_model = EMBEDDING_MODEL if EMBEDDING_PROVIDER == "gemini" else "models/text-embedding-004"
                 result = _genai.embed_content(
-                    model="models/text-embedding-004",
+                    model=gemini_embed_model,
                     content=text,
                     task_type="retrieval_document"
                 )
@@ -119,7 +120,7 @@ class SemanticMemory:
     """Stores generalized knowledge in SQLite."""
     def __init__(self):
         print("[SemanticMemory] Initialized with SQLite database.")
-        if LLM_PROVIDER == "openai":
+        if EMBEDDING_PROVIDER == "openai":
             from openai import OpenAI
             self.client = OpenAI(api_key=OPENAI_API_KEY)
         else:
