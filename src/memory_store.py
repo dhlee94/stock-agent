@@ -50,12 +50,12 @@ class MemoryStore:
             from transformers import AutoTokenizer, AutoModel
             import torch
             
-            # Use a small, efficient model (approx 90MB)
-            model_name = "sentence-transformers/all-MiniLM-L6-v2"
+            # Use a model that outputs 768 dimensions to match Gemini (text-embedding-004)
+            model_name = "sentence-transformers/all-distilroberta-v1"
             
             # Lazy load model to save memory
             if not hasattr(self, '_local_tokenizer'):
-                print(f"📡 Downloading local embedding model ({model_name})...")
+                print(f"📡 Downloading local embedding model ({model_name}) for 768-dim compatibility...")
                 self._local_tokenizer = AutoTokenizer.from_pretrained(model_name)
                 self._local_model = AutoModel.from_pretrained(model_name)
             
@@ -69,10 +69,10 @@ class MemoryStore:
             
         except Exception as e:
             print(f"⚠️ Local Embedding failed: {e}. Using deterministic fallback.")
-            # Final Fallback: deterministic hash-based (not recommended for search)
+            # Final Fallback: match 768 dimensions
             import numpy as np
             np.random.seed(hash(text) % (2**32))
-            return np.random.rand(384).tolist() # MiniLM dim is 384
+            return np.random.rand(768).tolist() 
 
     REWRITE_SIMILARITY_THRESHOLD = 0.92
     REWRITE_MIN_IMPROVEMENT = 0.1
@@ -90,6 +90,8 @@ class MemoryStore:
             
             for row in rows:
                 existing_emb = np.array(json.loads(row['embedding_json']))
+                if existing_emb.shape != query.shape:
+                    continue
                 similarity = np.dot(query, existing_emb) / (
                     np.linalg.norm(query) * np.linalg.norm(existing_emb) + 1e-9
                 )
