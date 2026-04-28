@@ -328,7 +328,7 @@ Summarize the key findings from this tool output:"""}
         """
         Final summarization using Planner LLM.
         """
-        print("\n📊 [Planner] Generating final summary...")
+        print("\n📊 [Summarizer] Generating final summary...")
         
         summary_prompt = [
             {"role": "system", "content": load_prompt("summarizer/system")},
