@@ -24,8 +24,14 @@ SCHEDULER_WATCHLIST=005930.KS,NVDA
 
 ### 2. Docker로 실행 (추천)
 ```bash
-docker-compose up --build
+# 스케줄러(텔레그램 리포트)만 실행 — 디폴트
+docker compose up -d --build
+
+# WebUI까지 함께 실행 (포트 8000)
+docker compose --profile web up -d --build
 ```
+WebUI(`app` 서비스)는 `web` 프로파일에 묶여 있어 명시적으로 켜야 뜹니다.
+스케줄러는 단독 실행되며 web 서비스에 의존하지 않습니다.
 
 ### 3. 로컬 실행
 ```bash

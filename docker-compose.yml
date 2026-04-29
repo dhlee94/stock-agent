@@ -13,12 +13,12 @@ services:
     volumes:
       - ./data:/app/data
     restart: unless-stopped
+    profiles: ["web"]
 
   scheduler:
+    build: .
     image: stock-agent:latest
     container_name: stock-agent-scheduler
-    depends_on:
-      - app
     command: ["python", "-m", "scheduler.main"]
     env_file:
       - .env
