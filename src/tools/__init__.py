@@ -18,7 +18,8 @@ from stock import (
     technical_analysis,
     compare_stocks,
     get_sector_analysis,
-    analyze_stock_ai,
+    news_sentiment,
+    price_forecast,
 )
 
 # Utility Tools
@@ -38,7 +39,8 @@ __all__ = [
     'technical_analysis',
     'compare_stocks',
     'get_sector_analysis',
-    'analyze_stock_ai',
+    'news_sentiment',
+    'price_forecast',
     # Utility Tools
     'search_web',
     'crawl_url',

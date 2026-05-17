@@ -26,7 +26,8 @@ from tools.stock import (
     get_financials,
     get_market_news,
     technical_analysis,
-    analyze_stock_ai,
+    news_sentiment,
+    price_forecast,
 )
 
 app = FastAPI(title="Stock Expert AI", description="AI 주식 전문가")
@@ -96,12 +97,16 @@ async def api_analyze(ticker: str = Form(...), name: str = Form(...), market: st
         except Exception:
             news_data = {"status": "error", "news": []}
         
-        # Try AI prediction (may fail if model not loaded)
+        # Independent signals: news sentiment + price forecast
         try:
-            ai_data = json.loads(analyze_stock_ai(ticker, name, market))
+            sentiment_data = json.loads(news_sentiment(ticker, name, market))
         except Exception:
-            ai_data = {"status": "unavailable", "message": "AI model not loaded"}
-        
+            sentiment_data = {"status": "unavailable"}
+        try:
+            forecast_data = json.loads(price_forecast(ticker, name, market))
+        except Exception:
+            forecast_data = {"status": "unavailable"}
+
         return JSONResponse(content={
             "status": "success",
             "ticker": ticker,
@@ -109,7 +114,8 @@ async def api_analyze(ticker: str = Form(...), name: str = Form(...), market: st
             "price": price_data,
             "technical": tech_data,
             "news": news_data,
-            "ai_prediction": ai_data,
+            "news_sentiment": sentiment_data,
+            "price_forecast": forecast_data,
         })
     except Exception as e:
         return JSONResponse(content={"status": "error", "error": str(e)})

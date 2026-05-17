@@ -1,38 +1,60 @@
 """
-AI Stock Predictor Tool - Using Chronos + FinBERT for prediction
-This wraps the existing stock_tool.py predictor.
+Stock signal MCP wrappers — two independent tools:
+  - news_sentiment: FinBERT-based sentiment of recent headlines
+  - price_forecast: Chronos-based price forecast (median + q10/q90 bands)
+
+These wrap `stock_tool.get_news_sentiment` / `stock_tool.get_price_forecast`.
+The agent decides how to weigh the two signals.
 """
 import json
 import sys
 import os
 
-# Add parent directories to path for stock_tool import
 TOOLS_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 SRC_DIR = os.path.dirname(TOOLS_DIR)
 sys.path.insert(0, SRC_DIR)
 
-from stock_tool import analyze_stock as _predict
+from stock_tool import (
+    get_news_sentiment as _get_news_sentiment,
+    get_price_forecast as _get_price_forecast,
+)
 
 
-def analyze_stock_ai(ticker: str, name: str, market: str = "KR") -> str:
+def news_sentiment(ticker: str, name: str, market: str = "KR") -> str:
     """
-    Analyze a stock using AI (Chronos + FinBERT multimodal fusion).
-    Returns current price, AI sentiment score, and buy/sell recommendation.
+    FinBERT sentiment of recent news for the given ticker.
     Args:
-        ticker: Stock ticker symbol (e.g., "005930.KS" for Samsung, "NVDA" for NVIDIA)
-        name: Company name (e.g., "Samsung Electronics", "NVIDIA")
-        market: "KR" for Korean stocks, "US" for US stocks
+        ticker: e.g. "005930.KS", "NVDA"
+        name: e.g. "Samsung Electronics", "NVIDIA"
+        market: "KR" or "US"
     Returns:
-        JSON with AI analysis including sentiment, prediction, and recommendation
+        JSON string with `distribution` (positive/neutral/negative),
+        `dominant`, `headlines`, `count`.
     """
-    print(f"🤖 [AI Predictor] Analyzing: {name} ({ticker})")
-    
+    print(f"📰 [NewsSentiment] {name} ({ticker})")
     try:
-        result = _predict(ticker, name, market)
-        return json.dumps(result, ensure_ascii=False)
+        return json.dumps(_get_news_sentiment(ticker, name, market), ensure_ascii=False)
     except Exception as e:
-        return json.dumps({
-            "status": "error",
-            "ticker": ticker,
-            "error": str(e)
-        })
+        return json.dumps({"status": "error", "ticker": ticker, "error": str(e)})
+
+
+def price_forecast(ticker: str, name: str, market: str = "KR", forecast_steps: int = 30) -> str:
+    """
+    Chronos price forecast for the given ticker.
+    Args:
+        ticker: e.g. "005930.KS", "NVDA"
+        name: e.g. "Samsung Electronics", "NVIDIA"
+        market: "KR" or "US"
+        forecast_steps: Number of future steps to predict (default 30)
+    Returns:
+        JSON string with `pct_change`, `direction`, `final_median`,
+        `forecast_data` (per-day median/lower/upper).
+    """
+    print(f"🔮 [PriceForecast] {name} ({ticker}) — {forecast_steps} steps")
+    try:
+        return json.dumps(
+            _get_price_forecast(ticker, name, market, forecast_steps),
+            ensure_ascii=False,
+        )
+    except Exception as e:
+        return json.dumps({"status": "error", "ticker": ticker, "error": str(e)})

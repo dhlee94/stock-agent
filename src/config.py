@@ -45,6 +45,11 @@ OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY")
 GROQ_API_KEY = os.environ.get("GROQ_API_KEY")
 ANTHROPIC_API_KEY = os.environ.get("ANTHROPIC_API_KEY")
 
+# News source — Naver Open API (free, 25k req/day per app)
+# Get keys at https://developers.naver.com/apps/#/list (register an app, enable 검색).
+NAVER_CLIENT_ID = os.environ.get("NAVER_CLIENT_ID", "")
+NAVER_CLIENT_SECRET = os.environ.get("NAVER_CLIENT_SECRET", "")
+
 # App Settings
 DEFAULT_MARKET = os.environ.get("DEFAULT_MARKET", "KR")
 RISK_TOLERANCE = os.environ.get("RISK_TOLERANCE", "Medium")

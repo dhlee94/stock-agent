@@ -119,7 +119,7 @@ class MementoAgent:
                 lambda: self.client.chat.completions.create(
                     model=LLM_MODEL,
                     messages=messages,
-                    temperature=0.7
+                    temperature=0.3
                 )
             )
             return response.choices[0].message.content
@@ -130,7 +130,7 @@ class MementoAgent:
                 lambda: self.client.chat.completions.create(
                     model=LLM_MODEL,
                     messages=messages,
-                    temperature=0.7,
+                    temperature=0.3,
                     max_tokens=4096
                 )
             )
@@ -146,7 +146,7 @@ class MementoAgent:
             kwargs = {
                 "model": LLM_MODEL,
                 "max_tokens": 4096,
-                "temperature": 0.7,
+                "temperature": 0.3,
                 "messages": chat_messages,
             }
             if system_parts:

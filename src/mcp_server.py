@@ -21,7 +21,8 @@ from tools.stock import (
     technical_analysis,
     compare_stocks,
     get_sector_analysis,
-    analyze_stock_ai,
+    news_sentiment,
+    price_forecast,
     analyze_peer_group,
 )
 
@@ -82,16 +83,31 @@ def stock_financials(ticker: str) -> str:
 
 
 @mcp.tool()
-def stock_news(ticker: str = None, query: str = None, limit: int = 10) -> str:
+def stock_news(ticker: str = None, query: str = None, limit: int = 10, source: str = "auto") -> str:
     """
     Get latest stock or market news.
+
     Args:
-        ticker: Stock ticker for company-specific news
-        query: Search query for general market news
-        limit: Max number of articles
+        ticker: Stock ticker for company-specific news.
+        query: Search query — pass any user-emphasized event/term/topic
+               (translated to the market's language). Without `query`,
+               only a generic feed is returned.
+        limit: Max number of articles (default 10).
+        source: News source selection. One of:
+                  - "auto"     : (default) Route KR tickers to Naver (if keys
+                                 configured) for richer Korean coverage; US
+                                 tickers to yfinance.
+                  - "naver"    : Force Naver Open API. Best for Korean tickers
+                                 (.KS suffix) and Korean-language news.
+                                 Falls back to yfinance if NAVER_* keys missing.
+                  - "yfinance" : Force Yahoo Finance + Google News fallback.
+                                 No API key required. Best for US tickers and
+                                 as a global fallback.
+                Prefer 'naver' for KR tickers (better headlines, more sources),
+                'yfinance' for US tickers, 'auto' when unsure.
     """
     try:
-        return get_market_news(ticker, query, limit)
+        return get_market_news(ticker, query, limit, source)
     except Exception as e:
         return f'{{"error": "Stock News Error: {str(e)}"}}'
 
@@ -131,16 +147,42 @@ def stock_sector(sector: str = None, market: str = "KR") -> str:
 
 
 @mcp.tool()
-def stock_ai_predict(ticker: str, name: str, market: str = "KR") -> str:
+def stock_news_sentiment(ticker: str, name: str, market: str = "KR") -> str:
     """
-    AI-powered prediction using Chronos + FinBERT multimodal fusion.
-    Returns AI sentiment score and buy/sell recommendation.
+    FinBERT sentiment of recent news for the ticker.
+    Returns an aggregate distribution {positive, neutral, negative}, the
+    dominant label, and per-headline labels with scores. This is an
+    INDEPENDENT signal — it does not look at price.
+
+    Combine with `stock_chronos_forecast` and explain agreement / conflict
+    explicitly. Sentiment dominance does not, by itself, justify a trade.
+
+    Args:
+        ticker: Stock ticker symbol (e.g., "005930.KS", "NVDA")
+        name: Company name (e.g., "Samsung Electronics", "NVIDIA")
+        market: "KR" or "US"
+    """
+    return news_sentiment(ticker, name, market)
+
+
+@mcp.tool()
+def stock_chronos_forecast(ticker: str, name: str, market: str = "KR", forecast_steps: int = 30) -> str:
+    """
+    Chronos quantile price forecast (pretrained time-series model).
+    Returns median pct_change, direction (up/down), and the full
+    median / q10 / q90 trajectory. This is an INDEPENDENT signal —
+    it does not look at news.
+
+    Combine with `stock_news_sentiment` and explain agreement / conflict
+    explicitly. Wide q10–q90 bands indicate low model confidence.
+
     Args:
         ticker: Stock ticker symbol
         name: Company name
         market: "KR" or "US"
+        forecast_steps: Number of future steps to predict (default 30)
     """
-    return analyze_stock_ai(ticker, name, market)
+    return price_forecast(ticker, name, market, forecast_steps)
 
 
 @mcp.tool()
@@ -184,41 +226,39 @@ def analyze_peers(ticker: str, similarity_threshold: float = 0.7, compare_with: 
 def calculate_risk(ticker: str, market: str = "KR") -> str:
     """
     Calculate Target Price, Stop-loss, and Risk/Reward ratio.
-    Uses technical analysis (Bollinger Bands, Support/Resistance) and AI prediction.
-    Call this AFTER stock_technical and stock_ai_predict for accurate results.
+    Uses technical analysis (Bollinger Bands, Support/Resistance) plus the
+    Chronos price forecast as an optional directional prior.
+    Call this AFTER stock_technical (and optionally stock_chronos_forecast).
     Args:
         ticker: Stock ticker symbol
         market: "KR" or "US"
     """
     import json
     from risk_manager import calculate_risk_levels
-    
+
     try:
-        # Get current price
         price_data = json.loads(get_stock_price(ticker, market))
         if price_data.get("status") == "error":
             return json.dumps({"error": f"Failed to get price: {price_data.get('error')}"})
         current_price = price_data.get("current_price", 0)
-        
-        # Get technical data
+
         tech_data = json.loads(technical_analysis(ticker))
         if tech_data.get("status") == "error":
             return json.dumps({"error": f"Failed to get technical data: {tech_data.get('error')}"})
-        
-        # Get AI prediction (optional)
+
+        # Optional Chronos directional prior (no news fusion here on purpose)
         try:
-            ai_data = json.loads(analyze_stock_ai(ticker, price_data.get("name", ticker), market))
-            ai_prediction = {"predicted_change_pct": ai_data.get("predicted_change_pct", 0)}
-        except:
+            forecast_data = json.loads(price_forecast(ticker, price_data.get("name", ticker), market))
+            ai_prediction = {"predicted_change_pct": forecast_data.get("pct_change", 0)}
+        except Exception:
             ai_prediction = None
-        
-        # Calculate risk levels
+
         result = calculate_risk_levels(current_price, tech_data, ai_prediction)
         result["ticker"] = ticker
         result["market"] = market
-        
+
         return json.dumps(result, ensure_ascii=False)
-        
+
     except Exception as e:
         return json.dumps({"error": str(e)})
 
@@ -271,7 +311,9 @@ if __name__ == "__main__":
     print("")
     print("📈 Stock Tools:")
     print("   stock_price, stock_chart, stock_financials, stock_news")
-    print("   stock_technical, stock_compare, stock_sector, stock_ai_predict")
+    print("   stock_technical, stock_compare, stock_sector")
+    print("   stock_news_sentiment, stock_chronos_forecast")
+    print("   analyze_drivers, analyze_peers, calculate_risk")
     print("")
     print("🛠️ Utility Tools:")
     print("   web_search, web_crawl, run_python, calc_math, read_file, save_memory")
