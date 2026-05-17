@@ -61,3 +61,6 @@ data/*.db
 data/driver_memory.json
 data/procedural_memory.json
 semantic_memory.json
+
+# Claude IDE
+.claude/
