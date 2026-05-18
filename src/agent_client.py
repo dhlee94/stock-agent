@@ -13,6 +13,9 @@ from config import (
     DEFAULT_MARKET, RISK_TOLERANCE, SRC_DIR
 )
 from database import get_setting
+from tools.stock.kr_listing import lookup_kr_ticker
+from tools.stock.us_listing import lookup_us_ticker, is_valid_us_ticker
+from tools.stock.market_utils import NAME_TO_TICKER
 
 # Provider setup
 MOCK_MODE = False
@@ -66,6 +69,65 @@ class MockLLM:
         elif self.step == 2:
             return 'DONE: I have searched for information. Here is the summary: AI is advancing rapidly.'
         return 'DONE: Task completed.'
+
+# Intent-extractor LLMs hallucinate tickers for names outside the small
+# hardcoded NAME_TO_TICKER map. We re-resolve the company name from
+# `subject` against authoritative listings (KRX for .KS/.KQ, NASDAQ/NYSE/AMEX
+# for US) and overwrite the LLM's ticker whenever the listing disagrees.
+_KR_TICKER_RE = re.compile(r"\(\s*(\d{6})\.(KS|KQ)\s*\)")
+_US_TICKER_RE = re.compile(r"\(\s*([A-Z][A-Z0-9.\-]{0,5})\s*\)")
+
+
+def _resolve_us_name(name: str) -> Optional[str]:
+    """Resolve a US company name via curated alias map first, then listing."""
+    if not name:
+        return None
+    aliased = NAME_TO_TICKER.get(name) or NAME_TO_TICKER.get(name.strip())
+    if aliased and not aliased.endswith((".KS", ".KQ")):
+        return aliased
+    try:
+        return lookup_us_ticker(name)
+    except Exception as e:
+        print(f"   ⚠️ US ticker lookup failed for '{name}': {e}")
+        return None
+
+
+def _verify_kr_ticker_in_subject(intent: Dict[str, Any]) -> None:
+    subject = intent.get("subject", "")
+    if not isinstance(subject, str) or not subject:
+        return
+
+    m = _KR_TICKER_RE.search(subject)
+    if m:
+        name = subject[: m.start()].strip().rstrip(",;:-")
+        if not name:
+            return
+        try:
+            resolved = lookup_kr_ticker(name)
+        except Exception as e:
+            print(f"   ⚠️ KR ticker lookup failed for '{name}': {e}")
+            return
+        if not resolved:
+            return
+        llm_ticker = f"{m.group(1)}.{m.group(2)}"
+        if resolved != llm_ticker:
+            print(f"   🔧 Corrected KR ticker: {name} {llm_ticker} → {resolved} (KRX listing)")
+            intent["subject"] = f"{name} ({resolved})"
+        return
+
+    m = _US_TICKER_RE.search(subject)
+    if m:
+        llm_sym = m.group(1)
+        name = subject[: m.start()].strip().rstrip(",;:-")
+        if not name:
+            return
+        resolved = _resolve_us_name(name)
+        if resolved and resolved != llm_sym:
+            print(f"   🔧 Corrected US ticker: {name} {llm_sym} → {resolved} (listing/alias)")
+            intent["subject"] = f"{name} ({resolved})"
+        elif not resolved and not is_valid_us_ticker(llm_sym):
+            print(f"   ⚠️ LLM ticker {llm_sym!r} for '{name}' not found in US listings")
+
 
 class MementoAgent:
     def __init__(self):
@@ -195,6 +257,7 @@ class MementoAgent:
                 print("   ⚠️ Extractor produced no JSON — falling back")
                 return {}
             intent = json.loads(json_match.group(0))
+            _verify_kr_ticker_in_subject(intent)
             print(f"   📍 Subject: {intent.get('subject', '?')}")
             print(f"   📍 Key points: {intent.get('key_points', [])}")
             print(f"   📍 Intent: {intent.get('intent_class', '?')}")

@@ -60,6 +60,8 @@ driver_memory.json
 data/*.db
 data/driver_memory.json
 data/procedural_memory.json
+data/kr_listing.csv
+data/us_listing.csv
 semantic_memory.json
 
 # Claude IDE
