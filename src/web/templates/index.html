@@ -83,6 +83,28 @@
                 </div>
             </div>
 
+            <!-- Model Comparison Card -->
+            <div class="card model-card">
+                <h3>🤖 모델 비교</h3>
+                <div class="model-grid">
+                    <div class="model-item">
+                        <div class="model-name">Chronos-2</div>
+                        <div class="model-badge">Amazon · Apache 2.0</div>
+                        <div id="chronosDirection" class="model-direction">-</div>
+                        <div id="chronosPct" class="model-pct">-</div>
+                    </div>
+                    <div class="model-consensus">
+                        <div id="consensusLabel" class="consensus-label">-</div>
+                    </div>
+                    <div class="model-item" id="moiraiItem" style="display:none">
+                        <div class="model-name">Moirai 2.0</div>
+                        <div class="model-badge">Salesforce · NC</div>
+                        <div id="moiraiDirection" class="model-direction">-</div>
+                        <div id="moiraiPct" class="model-pct">-</div>
+                    </div>
+                </div>
+            </div>
+
             <!-- Technical Analysis Card -->
             <div class="card tech-card">
                 <h3>📊 기술적 분석</h3>
@@ -219,7 +241,8 @@
             const currency = market === 'US' ? '$' : '₩';
             const price = data.price;
             const tech = data.technical;
-            const ai = data.ai_prediction;
+            const forecast = data.price_forecast;
+            const moirai = data.moirai_forecast || null;
 
             // Price info
             document.getElementById('stockName').textContent = `${data.name} (${data.ticker})`;
@@ -232,8 +255,11 @@
             document.getElementById('dayLow').textContent = currency + formatNumber(price.day_low);
             document.getElementById('volume').textContent = formatVolume(price.volume);
 
-            // Render Chart
-            renderChart(price.chart_data, ai.forecast_data);
+            // Chart
+            renderChart(forecast, moirai);
+
+            // Model comparison
+            renderModelComparison(forecast, moirai);
 
             // Technical
             if (tech.status === 'success') {
@@ -252,18 +278,15 @@
                 recEl.className = 'recommendation ' + getRecClass(tech.recommendation);
             }
 
-            // AI Info
+            // AI Info (sentiment + forecast summary)
             const aiEl = document.getElementById('aiResult');
-            if (ai.status === 'success') {
-                aiEl.innerHTML = `
-                    <div class="ai-score">AI 점수: <b>${ai.ai_score || '-'}</b></div>
-                    <div class="ai-sentiment">감성: <b>${ai.sentiment || '-'}</b></div>
-                    <div class="ai-forecast">예측(30일): <b>${ai.forecast || '-'}</b></div>
-                    <div class="ai-recommendation">${ai.recommendation || '-'}</div>
-                `;
-            } else {
-                aiEl.innerHTML = `<p class="ai-unavailable">AI 데이터 없음 (${ai.message || ''})</p>`;
-            }
+            const sentiment = data.news_sentiment;
+            const pct = forecast?.pct_change;
+            aiEl.innerHTML = `
+                <div class="ai-sentiment">뉴스 감성: <b>${sentiment?.dominant || '-'}</b></div>
+                <div class="ai-forecast">Chronos-2 예측(30일): <b>${pct != null ? (pct >= 0 ? '+' : '') + pct.toFixed(2) + '%' : '-'}</b></div>
+                ${moirai ? `<div class="ai-forecast">Moirai 2.0 예측(30일): <b>${(moirai.pct_change >= 0 ? '+' : '') + moirai.pct_change.toFixed(2) + '%'}</b></div>` : ''}
+            `;
 
             // News
             const newsEl = document.getElementById('newsList');
@@ -275,66 +298,115 @@
             document.getElementById('results').classList.remove('hidden');
         }
 
-        function renderChart(historyData, forecastData) {
+        function renderModelComparison(forecast, moirai) {
+            const fDir = forecast?.direction;
+            const fPct = forecast?.pct_change;
+            const chronosEl = document.getElementById('chronosDirection');
+            const chronosPctEl = document.getElementById('chronosPct');
+            chronosEl.textContent = fDir === 'up' ? '▲ 상승' : fDir === 'down' ? '▼ 하락' : '-';
+            chronosEl.className = 'model-direction ' + (fDir === 'up' ? 'up' : fDir === 'down' ? 'down' : '');
+            chronosPctEl.textContent = fPct != null ? (fPct >= 0 ? '+' : '') + fPct.toFixed(2) + '%' : '-';
+            chronosPctEl.className = 'model-pct ' + (fPct >= 0 ? 'up' : 'down');
+
+            const consensusEl = document.getElementById('consensusLabel');
+            const moiraiItem = document.getElementById('moiraiItem');
+
+            if (moirai && moirai.status !== 'error') {
+                moiraiItem.style.display = '';
+                const mDir = moirai.direction;
+                const mPct = moirai.pct_change;
+                document.getElementById('moiraiDirection').textContent = mDir === 'up' ? '▲ 상승' : '▼ 하락';
+                document.getElementById('moiraiDirection').className = 'model-direction ' + (mDir === 'up' ? 'up' : 'down');
+                document.getElementById('moiraiPct').textContent = (mPct >= 0 ? '+' : '') + mPct.toFixed(2) + '%';
+                document.getElementById('moiraiPct').className = 'model-pct ' + (mPct >= 0 ? 'up' : 'down');
+
+                const agree = fDir === mDir;
+                consensusEl.textContent = agree ? '✅ 합의' : '⚠️ 불일치';
+                consensusEl.className = 'consensus-label ' + (agree ? 'agree' : 'disagree');
+            } else {
+                moiraiItem.style.display = 'none';
+                consensusEl.textContent = '';
+            }
+        }
+
+        function renderChart(forecast, moirai) {
             const ctx = document.getElementById('forecastChart').getContext('2d');
             if (chartInstance) chartInstance.destroy();
 
-            // Prepare data
-            // History: last 30 days
-            const labels = [];
-            const historicalPrices = [];
+            const fd = forecast?.forecast_data;
+            if (!fd) return;
 
-            // If historical chart data is available in price object (needs modifying app.py to include history)
-            // For now, assuming price object has chart_data or we use forecast start
+            const labels = fd.map(d => d.date);
+            const datasets = [
+                {
+                    label: 'Chronos-2 (중위값)',
+                    data: fd.map(d => d.price),
+                    borderColor: '#a855f7',
+                    borderDash: [5, 5],
+                    tension: 0.4,
+                    pointRadius: 0,
+                    borderWidth: 2,
+                },
+                {
+                    label: 'Chronos-2 신뢰구간',
+                    data: fd.map(d => d.upper),
+                    borderColor: 'transparent',
+                    backgroundColor: 'rgba(168,85,247,0.1)',
+                    fill: '+1',
+                    pointRadius: 0,
+                },
+                {
+                    label: '',
+                    data: fd.map(d => d.lower),
+                    borderColor: 'transparent',
+                    backgroundColor: 'rgba(168,85,247,0.1)',
+                    fill: false,
+                    pointRadius: 0,
+                }
+            ];
 
-            // Let's mix history and forecast
-            // Since we don't have full history in 'price' object yet, let's use forecastData only for now or mock history
-            // Actually, app.py should pass history. Let's fix app.py next.
-
-            // Placeholder logic assuming forecastData exists
-            if (!forecastData) return;
-
-            const predLabels = forecastData.map(d => d.date);
-            const predPrices = forecastData.map(d => d.price);
-            const lowerBound = forecastData.map(d => d.lower);
-            const upperBound = forecastData.map(d => d.upper);
+            if (moirai && moirai.status !== 'error' && moirai.forecast_data) {
+                const md = moirai.forecast_data;
+                datasets.push({
+                    label: 'Moirai 2.0 (중위값)',
+                    data: md.map(d => d.price),
+                    borderColor: '#22d3ee',
+                    borderDash: [3, 3],
+                    tension: 0.4,
+                    pointRadius: 0,
+                    borderWidth: 2,
+                });
+                datasets.push({
+                    label: 'Moirai 2.0 신뢰구간',
+                    data: md.map(d => d.upper),
+                    borderColor: 'transparent',
+                    backgroundColor: 'rgba(34,211,238,0.08)',
+                    fill: '+1',
+                    pointRadius: 0,
+                });
+                datasets.push({
+                    label: '',
+                    data: md.map(d => d.lower),
+                    borderColor: 'transparent',
+                    backgroundColor: 'rgba(34,211,238,0.08)',
+                    fill: false,
+                    pointRadius: 0,
+                });
+            }
 
             chartInstance = new Chart(ctx, {
                 type: 'line',
-                data: {
-                    labels: predLabels,
-                    datasets: [
-                        {
-                            label: 'AI 예측 (중위값)',
-                            data: predPrices,
-                            borderColor: '#a855f7', // Purple
-                            borderDash: [5, 5],
-                            tension: 0.4,
-                            pointRadius: 0
-                        },
-                        {
-                            label: '신뢰구간 상한',
-                            data: upperBound,
-                            borderColor: 'transparent',
-                            backgroundColor: 'rgba(168, 85, 247, 0.1)',
-                            fill: '+1',
-                            pointRadius: 0
-                        },
-                        {
-                            label: '신뢰구간 하한',
-                            data: lowerBound,
-                            borderColor: 'transparent',
-                            backgroundColor: 'rgba(168, 85, 247, 0.1)',
-                            fill: false,
-                            pointRadius: 0
-                        }
-                    ]
-                },
+                data: { labels, datasets },
                 options: {
                     responsive: true,
                     maintainAspectRatio: false,
                     plugins: {
-                        legend: { labels: { color: '#ccc' } }
+                        legend: {
+                            labels: {
+                                color: '#ccc',
+                                filter: item => item.text !== ''
+                            }
+                        }
                     },
                     scales: {
                         x: { ticks: { color: '#888' }, grid: { color: '#333' } },
