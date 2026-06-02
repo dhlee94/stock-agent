@@ -145,15 +145,16 @@ class StockBrain:
             "count": len(news_list),
         }
 
-    def get_price_forecast(self, forecast_steps=30, price_context=None, current_price=None, context_df=None):
+    def get_price_forecast(self, forecast_steps=30, context_period=None,
+                           price_context=None, current_price=None, context_df=None):
         """
         Chronos quantile forecast. Routes to v2 (multivariate) or v1 (univariate)
-        based on CHRONOS_MODEL. Returns:
-            { "model", "current_price", "forecast_steps", "final_median",
-              "pct_change", "direction", "median", "lower_q10", "upper_q90" }
+        based on CHRONOS_MODEL.
+        context_period: yfinance 기간 문자열 (예: '3mo', '6mo', '1y').
+                        None이면 forecast_steps에 비례해 자동 계산.
         """
         if self._chronos_v2:
-            return self._forecast_v2(context_df, current_price, forecast_steps)
+            return self._forecast_v2(context_df, current_price, forecast_steps, context_period)
         else:
             return self._forecast_v1(price_context, current_price, forecast_steps)
 
@@ -176,13 +177,13 @@ class StockBrain:
 
         return self._build_result(med, low, high, current_price, forecast_steps)
 
-    def _forecast_v2(self, context_df, current_price, forecast_steps):
+    def _forecast_v2(self, context_df, current_price, forecast_steps, context_period=None):
         """Chronos-2 multivariate forecast (Close + volume_norm + hl_range).
         Input tensor: (1, n_variates=3, history_length)
         Output:       (n_variates, num_samples, forecast_steps) — variate 0 is target.
         """
         if context_df is None:
-            prep = self.loader.prepare_multivariate_df()
+            prep = self.loader.prepare_multivariate_df(period=context_period, forecast_steps=forecast_steps)
             context_df = prep["context_df"]
             current_price = prep["current_price"]
 
@@ -218,7 +219,8 @@ class StockBrain:
         }
 
 
-    def get_price_forecast_moirai(self, price_context=None, current_price=None, forecast_steps=30):
+    def get_price_forecast_moirai(self, price_context=None, current_price=None,
+                                   forecast_steps=30, context_period=None):
         """
         Moirai 2.0 quantile forecast for the next `forecast_steps` periods.
         Requires MOIRAI_ENABLED=true and uni2ts installed.
@@ -230,8 +232,7 @@ class StockBrain:
         from uni2ts.model.moirai2.forecast import Moirai2Forecast
 
         if price_context is None or current_price is None:
-            # Use daily OHLCV data for 30-day ahead forecast (5-min intraday underestimates volatility)
-            prep = self.loader.prepare_multivariate_df()
+            prep = self.loader.prepare_multivariate_df(period=context_period, forecast_steps=forecast_steps)
             price_context = prep["context_df"]["target"].values
             current_price = prep["current_price"]
 

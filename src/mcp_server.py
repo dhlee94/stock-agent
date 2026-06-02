@@ -176,42 +176,51 @@ def stock_news_sentiment(ticker: str, name: str, market: str = "KR") -> str:
 
 if CHRONOS_ENABLED:
     @mcp.tool()
-    def stock_chronos_forecast(ticker: str, name: str, market: str = "KR", forecast_steps: int = 30) -> str:
+    def stock_chronos_forecast(ticker: str, name: str, market: str = "KR",
+                                forecast_steps: int = 30, context_period: str = None) -> str:
         """
         Chronos-2 multivariate price forecast (Close + Volume + H-L range covariates).
         Returns median pct_change, direction (up/down), and the full
         median / q10 / q90 trajectory. INDEPENDENT signal — does not look at news.
 
-        Combine with `stock_news_sentiment` and `stock_moirai_forecast`.
-        Explain agreement / conflict explicitly. Wide q10–q90 bands = low confidence.
+        context_period: same semantics as stock_moirai_forecast. None = auto.
 
         Args:
             ticker: Stock ticker symbol
             name: Company name
             market: "KR" or "US"
             forecast_steps: Number of future steps to predict (default 30)
+            context_period: Historical window, e.g. '1mo','3mo','6mo','1y','2y'. None = auto.
         """
-        return price_forecast(ticker, name, market, forecast_steps)
+        return price_forecast(ticker, name, market, forecast_steps, context_period)
 
 
 if MOIRAI_ENABLED:
     @mcp.tool()
-    def stock_moirai_forecast(ticker: str, name: str, market: str = "KR", forecast_steps: int = 30) -> str:
+    def stock_moirai_forecast(ticker: str, name: str, market: str = "KR",
+                               forecast_steps: int = 30, context_period: str = None) -> str:
         """
-        Moirai 2.0 quantile price forecast (univariate, decoder-only foundation model).
+        Moirai 2.0 quantile price forecast (primary forecaster).
         Returns median pct_change, direction (up/down), and the full
         median / q10 / q90 trajectory. INDEPENDENT signal — does not look at news.
 
-        Always call this alongside stock_chronos_forecast and compare the two:
-        agreement = higher confidence, disagreement = high uncertainty.
+        context_period controls how much historical data the model sees.
+        Omit it (None) for the auto-default (≈5× forecast_steps in trading days).
+        Override it when the situation calls for a different window:
+          - '1mo'  : 급등락·이벤트 직후 → 최근 흐름만 반영
+          - '3mo'  : 단기 모멘텀 중심
+          - '6mo'  : 기본값 (30일 예측 시)
+          - '1y'   : 계절성·장기 추세 반영
+          - '2y'   : 경기 사이클 전체 포함
 
         Args:
             ticker: Stock ticker symbol
             name: Company name
             market: "KR" or "US"
             forecast_steps: Number of future steps to predict (default 30)
+            context_period: Historical window, e.g. '1mo','3mo','6mo','1y','2y'. None = auto.
         """
-        return price_forecast_moirai(ticker, name, market, forecast_steps)
+        return price_forecast_moirai(ticker, name, market, forecast_steps, context_period)
 
 
 @mcp.tool()

@@ -82,7 +82,8 @@ def get_news_sentiment(ticker: str, name: str, market: str = "KR") -> dict:
         }
 
 
-def get_price_forecast(ticker: str, name: str, market: str = "KR", forecast_steps: int = 30) -> dict:
+def get_price_forecast(ticker: str, name: str, market: str = "KR",
+                       forecast_steps: int = 30, context_period: str = None) -> dict:
     """
     Chronos quantile price forecast for the next `forecast_steps` periods.
     INDEPENDENT signal — does not consult news.
@@ -92,7 +93,7 @@ def get_price_forecast(ticker: str, name: str, market: str = "KR", forecast_step
     try:
         brain = get_stock_brain(ticker, name, market)
         tz, currency, fmt = _market_format(market)
-        forecast = brain.get_price_forecast(forecast_steps=forecast_steps)
+        forecast = brain.get_price_forecast(forecast_steps=forecast_steps, context_period=context_period)
         cur_price = forecast.get("current_price", 0)
 
         last_date = datetime.now(tz)
@@ -132,7 +133,8 @@ def get_price_forecast(ticker: str, name: str, market: str = "KR", forecast_step
         }
 
 
-def get_price_forecast_moirai(ticker: str, name: str, market: str = "KR", forecast_steps: int = 30) -> dict:
+def get_price_forecast_moirai(ticker: str, name: str, market: str = "KR",
+                               forecast_steps: int = 30, context_period: str = None) -> dict:
     """
     Moirai 2.0 quantile price forecast for the next `forecast_steps` periods.
     Requires MOIRAI_ENABLED=true in env. INDEPENDENT signal — does not consult news.
@@ -140,7 +142,7 @@ def get_price_forecast_moirai(ticker: str, name: str, market: str = "KR", foreca
     try:
         brain = get_stock_brain(ticker, name, market)
         tz, currency, fmt = _market_format(market)
-        forecast = brain.get_price_forecast_moirai(forecast_steps=forecast_steps)
+        forecast = brain.get_price_forecast_moirai(forecast_steps=forecast_steps, context_period=context_period)
         if forecast.get("status") == "error":
             return forecast
 

@@ -62,11 +62,24 @@ class StockDataLoader:
             raise ValueError(f"No data found for {self.symbol}")
         return df
 
-    def prepare_multivariate_df(self, period='3mo'):
+    @staticmethod
+    def auto_period(forecast_steps: int) -> str:
+        """forecast_steps 기준 적정 컨텍스트 기간 자동 계산 (약 5배 비율)."""
+        if forecast_steps <= 10:  return '2mo'   # ~42일 컨텍스트
+        if forecast_steps <= 20:  return '4mo'   # ~84일 컨텍스트
+        if forecast_steps <= 30:  return '6mo'   # ~126일 컨텍스트
+        if forecast_steps <= 60:  return '1y'    # ~252일 컨텍스트
+        return '2y'
+
+    def prepare_multivariate_df(self, period: str = None, forecast_steps: int = 30):
         """
-        Chronos-2 predict_df용 다변량 컨텍스트 DataFrame.
+        Chronos-2 / Moirai 입력용 다변량 컨텍스트 DataFrame.
         Target: Close / Covariates: volume_norm, hl_range=(H-L)/C
+        period: yfinance 기간 문자열 (예: '3mo', '6mo', '1y').
+                None이면 forecast_steps에 맞춰 자동 계산.
         """
+        if period is None:
+            period = self.auto_period(forecast_steps)
         df = self.fetch_daily(period=period)
         news = self.get_news()
 
