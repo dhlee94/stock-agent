@@ -17,6 +17,7 @@ sys.path.insert(0, SRC_DIR)
 from stock_tool import (
     get_news_sentiment as _get_news_sentiment,
     get_price_forecast as _get_price_forecast,
+    get_price_forecast_moirai as _get_price_forecast_moirai,
 )
 
 
@@ -54,6 +55,29 @@ def price_forecast(ticker: str, name: str, market: str = "KR", forecast_steps: i
     try:
         return json.dumps(
             _get_price_forecast(ticker, name, market, forecast_steps),
+            ensure_ascii=False,
+        )
+    except Exception as e:
+        return json.dumps({"status": "error", "ticker": ticker, "error": str(e)})
+
+
+def price_forecast_moirai(ticker: str, name: str, market: str = "KR", forecast_steps: int = 30) -> str:
+    """
+    Moirai 2.0 price forecast for the given ticker.
+    Requires MOIRAI_ENABLED=true in .env and uni2ts installed.
+    Args:
+        ticker: e.g. "005930.KS", "NVDA"
+        name: e.g. "Samsung Electronics", "NVIDIA"
+        market: "KR" or "US"
+        forecast_steps: Number of future steps to predict (default 30)
+    Returns:
+        JSON string with `pct_change`, `direction`, `final_median`,
+        `forecast_data` (per-day median/lower/upper), `model`.
+    """
+    print(f"🔮 [MoiraiForecast] {name} ({ticker}) — {forecast_steps} steps")
+    try:
+        return json.dumps(
+            _get_price_forecast_moirai(ticker, name, market, forecast_steps),
             ensure_ascii=False,
         )
     except Exception as e:

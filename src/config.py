@@ -50,6 +50,13 @@ ANTHROPIC_API_KEY = os.environ.get("ANTHROPIC_API_KEY")
 NAVER_CLIENT_ID = os.environ.get("NAVER_CLIENT_ID", "")
 NAVER_CLIENT_SECRET = os.environ.get("NAVER_CLIENT_SECRET", "")
 
+# Forecasting model selection
+# Chronos: amazon/chronos-bolt-small (v2, fast) or amazon/chronos-t5-small (v1)
+CHRONOS_MODEL = os.environ.get("CHRONOS_MODEL", "amazon/chronos-2")
+# Moirai 2.0: disabled by default (requires uni2ts, CC-BY-NC-4.0 — research only)
+MOIRAI_ENABLED = os.environ.get("MOIRAI_ENABLED", "false").lower() == "true"
+MOIRAI_MODEL = os.environ.get("MOIRAI_MODEL", "Salesforce/moirai-2.0-R-small")
+
 # App Settings
 DEFAULT_MARKET = os.environ.get("DEFAULT_MARKET", "KR")
 RISK_TOLERANCE = os.environ.get("RISK_TOLERANCE", "Medium")

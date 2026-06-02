@@ -23,6 +23,7 @@ from tools.stock import (
     get_sector_analysis,
     news_sentiment,
     price_forecast,
+    price_forecast_moirai,
     analyze_peer_group,
 )
 
@@ -183,6 +184,25 @@ def stock_chronos_forecast(ticker: str, name: str, market: str = "KR", forecast_
         forecast_steps: Number of future steps to predict (default 30)
     """
     return price_forecast(ticker, name, market, forecast_steps)
+
+
+@mcp.tool()
+def stock_moirai_forecast(ticker: str, name: str, market: str = "KR", forecast_steps: int = 30) -> str:
+    """
+    Moirai 2.0 quantile price forecast (univariate, decoder-only foundation model).
+    Returns median pct_change, direction (up/down), and the full
+    median / q10 / q90 trajectory. INDEPENDENT signal — does not look at news.
+
+    Requires MOIRAI_ENABLED=true in .env. Compare with stock_chronos_forecast
+    to see if the two models agree — disagreement indicates high uncertainty.
+
+    Args:
+        ticker: Stock ticker symbol
+        name: Company name
+        market: "KR" or "US"
+        forecast_steps: Number of future steps to predict (default 30)
+    """
+    return price_forecast_moirai(ticker, name, market, forecast_steps)
 
 
 @mcp.tool()

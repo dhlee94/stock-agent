@@ -1,6 +1,7 @@
 import yfinance as yf
 import pandas as pd
 import numpy as np
+from datetime import timezone
 import sys
 import os
 # Add src to path if needed for local utility import
@@ -54,17 +55,50 @@ class StockDataLoader:
             'resid': decomposition.resid.iloc[-1]        # 잔차
         }
 
+    def fetch_daily(self, period='3mo'):
+        """일봉 데이터 수집 (Chronos-2 다변량 입력용)"""
+        df = yf.Ticker(self.symbol).history(period=period, interval='1d')
+        if df.empty:
+            raise ValueError(f"No data found for {self.symbol}")
+        return df
+
+    def prepare_multivariate_df(self, period='3mo'):
+        """
+        Chronos-2 predict_df용 다변량 컨텍스트 DataFrame.
+        Target: Close / Covariates: volume_norm, hl_range=(H-L)/C
+        """
+        df = self.fetch_daily(period=period)
+        news = self.get_news()
+
+        # predict_df는 timezone-naive timestamp 필요
+        idx = df.index.tz_convert(None) if df.index.tz is not None else df.index
+        vol_mean = df['Volume'].mean() or 1.0
+
+        context_df = pd.DataFrame({
+            'id': self.symbol,
+            'timestamp': idx,
+            'target': df['Close'].values,
+            'volume_norm': (df['Volume'] / vol_mean).values,
+            'hl_range': ((df['High'] - df['Low']) / df['Close']).values,
+        })
+
+        return {
+            'context_df': context_df,
+            'current_price': float(df['Close'].iloc[-1]),
+            'news': news,
+        }
+
     def prepare_all(self):
-        """모델 입력용 데이터 묶음 생성"""
+        """모델 입력용 데이터 묶음 생성 (Chronos v1 / 감성분석용)"""
         df = self.fetch_price_data()
         news = self.get_news()
-        
-        # 최근 50개 데이터 (Chronos/Fusion 입력용)
+
+        # 최근 50개 데이터 (Chronos v1 입력용)
         price_context = df['Close'].values[-50:]
-        
+
         # 변동성 계산 (표준편차)
         volatility = df['Close'].pct_change().std()
-        
+
         return {
             'price_context': price_context,
             'current_price': df['Close'].iloc[-1],

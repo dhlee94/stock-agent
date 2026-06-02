@@ -83,17 +83,14 @@ def get_price_forecast(ticker: str, name: str, market: str = "KR", forecast_step
     """
     Chronos quantile price forecast for the next `forecast_steps` periods.
     INDEPENDENT signal — does not consult news.
+    Automatically uses multivariate (Chronos-2) or univariate (Chronos-Bolt/v1)
+    based on the CHRONOS_MODEL env var.
     """
     try:
         brain = get_stock_brain(ticker, name, market)
         tz, currency, fmt = _market_format(market)
-        prep = brain.loader.prepare_all()
-        forecast = brain.get_price_forecast(
-            price_context=prep.get("price_context"),
-            current_price=prep.get("current_price"),
-            forecast_steps=forecast_steps,
-        )
-        cur_price = forecast.get("current_price", prep.get("current_price", 0))
+        forecast = brain.get_price_forecast(forecast_steps=forecast_steps)
+        cur_price = forecast.get("current_price", 0)
 
         last_date = datetime.now(tz)
         forecast_dates = [(last_date + timedelta(days=i + 1)).strftime("%Y-%m-%d") for i in range(forecast_steps)]
@@ -128,6 +125,62 @@ def get_price_forecast(ticker: str, name: str, market: str = "KR", forecast_step
             "status": "error",
             "ticker": ticker,
             "tool": "price_forecast",
+            "error": f"{type(e).__name__}: {e}",
+        }
+
+
+def get_price_forecast_moirai(ticker: str, name: str, market: str = "KR", forecast_steps: int = 30) -> dict:
+    """
+    Moirai 2.0 quantile price forecast for the next `forecast_steps` periods.
+    Requires MOIRAI_ENABLED=true in env. INDEPENDENT signal — does not consult news.
+    """
+    try:
+        brain = get_stock_brain(ticker, name, market)
+        tz, currency, fmt = _market_format(market)
+        prep = brain.loader.prepare_all()
+        forecast = brain.get_price_forecast_moirai(
+            price_context=prep.get("price_context"),
+            current_price=prep.get("current_price"),
+            forecast_steps=forecast_steps,
+        )
+        if forecast.get("status") == "error":
+            return forecast
+
+        cur_price = forecast.get("current_price", prep.get("current_price", 0))
+        last_date = datetime.now(tz)
+        forecast_dates = [(last_date + timedelta(days=i + 1)).strftime("%Y-%m-%d") for i in range(forecast_steps)]
+        forecast_data = [
+            {
+                "date": forecast_dates[i],
+                "price": forecast["median"][i] if i < len(forecast.get("median", [])) else None,
+                "lower": forecast["lower_q10"][i] if i < len(forecast.get("lower_q10", [])) else None,
+                "upper": forecast["upper_q90"][i] if i < len(forecast.get("upper_q90", [])) else None,
+            }
+            for i in range(forecast_steps)
+        ]
+
+        return {
+            "status": "success",
+            "ticker": ticker,
+            "name": name,
+            "market": market,
+            "model": forecast.get("model"),
+            "timestamp": datetime.now(tz).isoformat(),
+            "current_price": f"{currency}{cur_price:{fmt}}",
+            "current_price_raw": cur_price,
+            "forecast_steps": forecast.get("forecast_steps", forecast_steps),
+            "final_median": forecast.get("final_median"),
+            "pct_change": forecast.get("pct_change"),
+            "direction": forecast.get("direction"),
+            "forecast_data": forecast_data,
+        }
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        return {
+            "status": "error",
+            "ticker": ticker,
+            "tool": "price_forecast_moirai",
             "error": f"{type(e).__name__}: {e}",
         }
 

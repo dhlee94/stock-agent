@@ -14,6 +14,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 COPY requirements.txt .
 RUN pip install --no-cache-dir --upgrade pip setuptools wheel
 RUN pip install --no-cache-dir -r requirements.txt
+# uni2ts has conflicting pins (scipy, torch); install core deps first, then uni2ts --no-deps
+RUN pip install --no-cache-dir lightning gluonts hydra-core jaxtyping datasets tensorboard orjson multiprocess
+RUN pip install --no-cache-dir --no-deps uni2ts
 
 COPY src/ ./src/
 
