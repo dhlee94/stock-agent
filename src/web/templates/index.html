@@ -92,6 +92,7 @@
                         <div class="model-badge">Salesforce · CC-BY-NC-4.0</div>
                         <div id="moiraiDirection" class="model-direction">-</div>
                         <div id="moiraiPct" class="model-pct">-</div>
+                        <div id="moiraiTrajectory" class="model-trajectory"></div>
                         <div id="moiraiCI" class="model-ci"></div>
                     </div>
                     <div class="model-consensus">
@@ -318,6 +319,19 @@
                 document.getElementById('moiraiDirection').className = 'model-direction ' + (mDir === 'up' ? 'up' : 'down');
                 document.getElementById('moiraiPct').textContent = (mPct >= 0 ? '+' : '') + mPct.toFixed(2) + '%';
                 document.getElementById('moiraiPct').className = 'model-pct ' + (mPct >= 0 ? 'up' : 'down');
+
+                // 궤적 방향 전환 경고
+                const traj = moirai.trajectory || {};
+                const trajEl = document.getElementById('moiraiTrajectory');
+                if (trajEl) {
+                    const shapeLabel = {
+                        'up': '', 'down': '',
+                        'up_then_down': `↑${traj.short_pct > 0 ? '+' : ''}${traj.short_pct}% → ↓${traj.long_pct}% (${traj.turning_day}일차 전환)`,
+                        'down_then_up': `↓${traj.short_pct}% → ↑+${traj.long_pct}% (${traj.turning_day}일차 전환)`
+                    }[traj.shape] || '';
+                    trajEl.textContent = shapeLabel;
+                    trajEl.className = 'model-trajectory' + (shapeLabel ? ' has-turn' : '');
+                }
 
                 // 신뢰구간 과신 경고 (평균 구간폭 < 1%)
                 const fd = moirai.forecast_data || [];

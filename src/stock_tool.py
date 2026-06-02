@@ -60,6 +60,42 @@ def _biz_dates(start: datetime, n: int) -> list:
     return [d.strftime("%Y-%m-%d") for d in dates]
 
 
+def _trajectory_shape(medians: list, cur_price: float) -> dict:
+    """
+    예측 궤적의 방향 전환 감지.
+    - turning_point: 최고점/최저점이 중간에 있으면 전환 인덱스 반환
+    - shape: 'up', 'down', 'up_then_down', 'down_then_up'
+    - short_dir / long_dir: 전반부/후반부 방향
+    """
+    if not medians or len(medians) < 4:
+        return {"shape": "unknown"}
+
+    n = len(medians)
+    mid = n // 2
+    short_pct = (medians[mid - 1] - cur_price) / cur_price * 100
+    long_pct = (medians[-1] - cur_price) / cur_price * 100
+    short_dir = "up" if short_pct > 0 else "down"
+    long_dir = "up" if long_pct > 0 else "down"
+
+    if short_dir == long_dir:
+        shape = short_dir
+    elif short_dir == "up" and long_dir == "down":
+        shape = "up_then_down"
+    else:
+        shape = "down_then_up"
+
+    result = {"shape": shape, "short_dir": short_dir, "long_dir": long_dir,
+              "short_pct": round(short_pct, 2), "long_pct": round(long_pct, 2)}
+
+    # 전환점 위치 (최고점 or 최저점 인덱스)
+    if shape == "up_then_down":
+        result["turning_day"] = int(medians.index(max(medians))) + 1
+    elif shape == "down_then_up":
+        result["turning_day"] = int(medians.index(min(medians))) + 1
+
+    return result
+
+
 def get_news_sentiment(ticker: str, name: str, market: str = "KR") -> dict:
     """
     FinBERT sentiment of recent news for `ticker`.
@@ -115,6 +151,8 @@ def get_price_forecast(ticker: str, name: str, market: str = "KR",
             for i in range(forecast_steps)
         ]
 
+        trajectory = _trajectory_shape(forecast.get("median", []), cur_price)
+
         return {
             "status": "success",
             "ticker": ticker,
@@ -127,6 +165,7 @@ def get_price_forecast(ticker: str, name: str, market: str = "KR",
             "final_median": forecast.get("final_median"),
             "pct_change": forecast.get("pct_change"),
             "direction": forecast.get("direction"),
+            "trajectory": trajectory,
             "forecast_data": forecast_data,
         }
     except Exception as e:
@@ -179,6 +218,7 @@ def get_price_forecast_moirai(ticker: str, name: str, market: str = "KR",
             "final_median": forecast.get("final_median"),
             "pct_change": forecast.get("pct_change"),
             "direction": forecast.get("direction"),
+            "trajectory": _trajectory_shape(forecast.get("median", []), cur_price),
             "forecast_data": forecast_data,
         }
     except Exception as e:

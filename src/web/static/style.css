@@ -517,3 +517,13 @@ body {
     margin-top: 4px;
 }
 .model-ci:has(⚠️) { color: #fb923c; }
+
+.model-trajectory {
+    font-size: 0.7rem;
+    color: #888;
+    margin-top: 3px;
+}
+.model-trajectory.has-turn {
+    color: #fb923c;
+    font-weight: 500;
+}
