@@ -282,10 +282,11 @@
             const aiEl = document.getElementById('aiResult');
             const sentiment = data.news_sentiment;
             const pct = forecast?.pct_change;
+            const moiraiPct = moirai?.pct_change;
             aiEl.innerHTML = `
                 <div class="ai-sentiment">뉴스 감성: <b>${sentiment?.dominant || '-'}</b></div>
-                <div class="ai-forecast">Chronos-2 예측(30일): <b>${pct != null ? (pct >= 0 ? '+' : '') + pct.toFixed(2) + '%' : '-'}</b></div>
-                ${moirai ? `<div class="ai-forecast">Moirai 2.0 예측(30일): <b>${(moirai.pct_change >= 0 ? '+' : '') + moirai.pct_change.toFixed(2) + '%'}</b></div>` : ''}
+                ${moirai && moirai.status !== 'error' ? `<div class="ai-forecast">Moirai 2.0 예측(30일): <b>${(moiraiPct >= 0 ? '+' : '') + moiraiPct.toFixed(2) + '%'}</b></div>` : ''}
+                ${pct != null ? `<div class="ai-forecast">Chronos-2 예측(30일): <b>${(pct >= 0 ? '+' : '') + pct.toFixed(2) + '%'}</b></div>` : ''}
             `;
 
             // News
@@ -344,45 +345,21 @@
             const ctx = document.getElementById('forecastChart').getContext('2d');
             if (chartInstance) chartInstance.destroy();
 
+            const md = moirai?.forecast_data;
             const fd = forecast?.forecast_data;
-            if (!fd) return;
+            if (!md && !fd) return;
 
-            const labels = fd.map(d => d.date);
-            const datasets = [
-                {
-                    label: 'Chronos-2 (중위값)',
-                    data: fd.map(d => d.price),
-                    borderColor: '#a855f7',
-                    borderDash: [5, 5],
-                    tension: 0.4,
-                    pointRadius: 0,
-                    borderWidth: 2,
-                },
-                {
-                    label: 'Chronos-2 신뢰구간',
-                    data: fd.map(d => d.upper),
-                    borderColor: 'transparent',
-                    backgroundColor: 'rgba(168,85,247,0.1)',
-                    fill: '+1',
-                    pointRadius: 0,
-                },
-                {
-                    label: '',
-                    data: fd.map(d => d.lower),
-                    borderColor: 'transparent',
-                    backgroundColor: 'rgba(168,85,247,0.1)',
-                    fill: false,
-                    pointRadius: 0,
-                }
-            ];
+            // Use Moirai labels if available, otherwise Chronos
+            const labels = (md || fd).map(d => d.date);
+            const datasets = [];
 
-            if (moirai && moirai.status !== 'error' && moirai.forecast_data) {
-                const md = moirai.forecast_data;
+            // Moirai — primary (cyan)
+            if (md) {
                 datasets.push({
                     label: 'Moirai 2.0 (중위값)',
                     data: md.map(d => d.price),
                     borderColor: '#22d3ee',
-                    borderDash: [3, 3],
+                    borderDash: [5, 5],
                     tension: 0.4,
                     pointRadius: 0,
                     borderWidth: 2,
@@ -391,7 +368,7 @@
                     label: 'Moirai 2.0 신뢰구간',
                     data: md.map(d => d.upper),
                     borderColor: 'transparent',
-                    backgroundColor: 'rgba(34,211,238,0.08)',
+                    backgroundColor: 'rgba(34,211,238,0.1)',
                     fill: '+1',
                     pointRadius: 0,
                 });
@@ -399,7 +376,36 @@
                     label: '',
                     data: md.map(d => d.lower),
                     borderColor: 'transparent',
-                    backgroundColor: 'rgba(34,211,238,0.08)',
+                    backgroundColor: 'rgba(34,211,238,0.1)',
+                    fill: false,
+                    pointRadius: 0,
+                });
+            }
+
+            // Chronos — secondary (purple)
+            if (fd) {
+                datasets.push({
+                    label: 'Chronos-2 (중위값)',
+                    data: fd.map(d => d.price),
+                    borderColor: '#a855f7',
+                    borderDash: [3, 3],
+                    tension: 0.4,
+                    pointRadius: 0,
+                    borderWidth: 2,
+                });
+                datasets.push({
+                    label: 'Chronos-2 신뢰구간',
+                    data: fd.map(d => d.upper),
+                    borderColor: 'transparent',
+                    backgroundColor: 'rgba(168,85,247,0.08)',
+                    fill: '+1',
+                    pointRadius: 0,
+                });
+                datasets.push({
+                    label: '',
+                    data: fd.map(d => d.lower),
+                    borderColor: 'transparent',
+                    backgroundColor: 'rgba(168,85,247,0.08)',
                     fill: false,
                     pointRadius: 0,
                 });
