@@ -5,12 +5,19 @@ This server exposes professional stock analysis tools via MCP protocol.
 """
 import sys
 import os
+from pathlib import Path
+from dotenv import load_dotenv
+
+# Load .env before anything else so MOIRAI_ENABLED is available at import time
+load_dotenv(Path(__file__).parent.parent / ".env")
 
 # Add src directory to path for imports when running as script
 SRC_DIR = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, SRC_DIR)
 
 from mcp.server.fastmcp import FastMCP
+
+MOIRAI_ENABLED = os.environ.get("MOIRAI_ENABLED", "false").lower() == "true"
 
 # Stock Tools
 from tools.stock import (
@@ -174,8 +181,8 @@ def stock_chronos_forecast(ticker: str, name: str, market: str = "KR", forecast_
     median / q10 / q90 trajectory. This is an INDEPENDENT signal —
     it does not look at news.
 
-    Combine with `stock_news_sentiment` and explain agreement / conflict
-    explicitly. Wide q10–q90 bands indicate low model confidence.
+    Combine with `stock_news_sentiment` and (if available) `stock_moirai_forecast`.
+    Explain agreement / conflict explicitly. Wide q10–q90 bands = low confidence.
 
     Args:
         ticker: Stock ticker symbol
@@ -186,23 +193,24 @@ def stock_chronos_forecast(ticker: str, name: str, market: str = "KR", forecast_
     return price_forecast(ticker, name, market, forecast_steps)
 
 
-@mcp.tool()
-def stock_moirai_forecast(ticker: str, name: str, market: str = "KR", forecast_steps: int = 30) -> str:
-    """
-    Moirai 2.0 quantile price forecast (univariate, decoder-only foundation model).
-    Returns median pct_change, direction (up/down), and the full
-    median / q10 / q90 trajectory. INDEPENDENT signal — does not look at news.
+if MOIRAI_ENABLED:
+    @mcp.tool()
+    def stock_moirai_forecast(ticker: str, name: str, market: str = "KR", forecast_steps: int = 30) -> str:
+        """
+        Moirai 2.0 quantile price forecast (univariate, decoder-only foundation model).
+        Returns median pct_change, direction (up/down), and the full
+        median / q10 / q90 trajectory. INDEPENDENT signal — does not look at news.
 
-    Requires MOIRAI_ENABLED=true in .env. Compare with stock_chronos_forecast
-    to see if the two models agree — disagreement indicates high uncertainty.
+        Always call this alongside stock_chronos_forecast and compare the two:
+        agreement = higher confidence, disagreement = high uncertainty.
 
-    Args:
-        ticker: Stock ticker symbol
-        name: Company name
-        market: "KR" or "US"
-        forecast_steps: Number of future steps to predict (default 30)
-    """
-    return price_forecast_moirai(ticker, name, market, forecast_steps)
+        Args:
+            ticker: Stock ticker symbol
+            name: Company name
+            market: "KR" or "US"
+            forecast_steps: Number of future steps to predict (default 30)
+        """
+        return price_forecast_moirai(ticker, name, market, forecast_steps)
 
 
 @mcp.tool()
@@ -332,7 +340,9 @@ if __name__ == "__main__":
     print("📈 Stock Tools:")
     print("   stock_price, stock_chart, stock_financials, stock_news")
     print("   stock_technical, stock_compare, stock_sector")
-    print("   stock_news_sentiment, stock_chronos_forecast")
+    moirai_status = "enabled" if MOIRAI_ENABLED else "disabled (set MOIRAI_ENABLED=true)"
+    print(f"   stock_news_sentiment, stock_chronos_forecast")
+    print(f"   stock_moirai_forecast [{moirai_status}]")
     print("   analyze_drivers, analyze_peers, calculate_risk")
     print("")
     print("🛠️ Utility Tools:")
