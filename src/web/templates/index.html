@@ -92,6 +92,7 @@
                         <div class="model-badge">Salesforce · CC-BY-NC-4.0</div>
                         <div id="moiraiDirection" class="model-direction">-</div>
                         <div id="moiraiPct" class="model-pct">-</div>
+                        <div id="moiraiCI" class="model-ci"></div>
                     </div>
                     <div class="model-consensus">
                         <div id="consensusLabel" class="consensus-label">-</div>
@@ -190,7 +191,11 @@
                 const data = await response.json();
 
                 if (data.status === 'success') {
-                    displayResults(data, market);
+                    if (data.price?.status === 'error') {
+                        alert(`종목 코드를 찾을 수 없습니다: ${ticker}\n올바른 형식: KR → 005930.KS, US → AAPL`);
+                    } else {
+                        displayResults(data, market);
+                    }
                 } else {
                     alert('분석 실패: ' + data.error);
                 }
@@ -313,6 +318,15 @@
                 document.getElementById('moiraiDirection').className = 'model-direction ' + (mDir === 'up' ? 'up' : 'down');
                 document.getElementById('moiraiPct').textContent = (mPct >= 0 ? '+' : '') + mPct.toFixed(2) + '%';
                 document.getElementById('moiraiPct').className = 'model-pct ' + (mPct >= 0 ? 'up' : 'down');
+
+                // 신뢰구간 과신 경고 (평균 구간폭 < 1%)
+                const fd = moirai.forecast_data || [];
+                const cur = moirai.current_price_raw || 0;
+                if (fd.length && cur) {
+                    const avgSpread = fd.reduce((s, d) => s + (d.upper - d.lower), 0) / fd.length / cur * 100;
+                    const ciEl = document.getElementById('moiraiCI');
+                    if (ciEl) ciEl.textContent = avgSpread < 1.0 ? `⚠️ 신뢰구간 좁음 (${avgSpread.toFixed(1)}%)` : `CI: ±${(avgSpread/2).toFixed(1)}%`;
+                }
             } else {
                 moiraiItem.style.display = 'none';
             }

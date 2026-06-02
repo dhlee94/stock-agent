@@ -230,8 +230,9 @@ class StockBrain:
         from uni2ts.model.moirai2.forecast import Moirai2Forecast
 
         if price_context is None or current_price is None:
-            prep = self.loader.prepare_all()
-            price_context = prep["price_context"]
+            # Use daily OHLCV data for 30-day ahead forecast (5-min intraday underestimates volatility)
+            prep = self.loader.prepare_multivariate_df()
+            price_context = prep["context_df"]["target"].values
             current_price = prep["current_price"]
 
         if price_context is None or len(price_context) == 0:

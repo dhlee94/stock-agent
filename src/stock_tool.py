@@ -31,17 +31,20 @@ _stock_brain_cache = {}
 
 def get_stock_brain(ticker: str, name: str, market: str):
     """
-    Lazily build (and cache) a StockBrain for (ticker, market).
-    Raises on load failure — callers wrap and return a structured error.
-    Failures are NOT cached so transient issues (e.g. first-run model download)
-    can recover on the next call.
+    Lazily build (and cache) a StockBrain per market.
+    FinBERT and Moirai models are market-specific but ticker-agnostic,
+    so caching by market avoids reloading heavy models for every new ticker.
+    The loader is updated per call so data always reflects the requested ticker.
     """
-    cache_key = f"{ticker}_{market}"
-    if cache_key not in _stock_brain_cache:
+    if market not in _stock_brain_cache:
         from main import StockBrain  # heavy imports happen here, on first use
-        print(f"🔄 [StockTool] Initializing Brain for {ticker}...")
-        _stock_brain_cache[cache_key] = StockBrain(ticker, name, market)
-    return _stock_brain_cache[cache_key]
+        print(f"🔄 [StockTool] Initializing Brain for market={market} (ticker={ticker})...")
+        _stock_brain_cache[market] = StockBrain(ticker, name, market)
+    brain = _stock_brain_cache[market]
+    # Update loader symbol/name so data fetching targets the requested ticker
+    brain.loader.symbol = ticker
+    brain.loader.name = name
+    return brain
 
 
 def _market_format(market: str):
@@ -137,16 +140,11 @@ def get_price_forecast_moirai(ticker: str, name: str, market: str = "KR", foreca
     try:
         brain = get_stock_brain(ticker, name, market)
         tz, currency, fmt = _market_format(market)
-        prep = brain.loader.prepare_all()
-        forecast = brain.get_price_forecast_moirai(
-            price_context=prep.get("price_context"),
-            current_price=prep.get("current_price"),
-            forecast_steps=forecast_steps,
-        )
+        forecast = brain.get_price_forecast_moirai(forecast_steps=forecast_steps)
         if forecast.get("status") == "error":
             return forecast
 
-        cur_price = forecast.get("current_price", prep.get("current_price", 0))
+        cur_price = forecast.get("current_price", 0)
         last_date = datetime.now(tz)
         forecast_dates = [(last_date + timedelta(days=i + 1)).strftime("%Y-%m-%d") for i in range(forecast_steps)]
         forecast_data = [
