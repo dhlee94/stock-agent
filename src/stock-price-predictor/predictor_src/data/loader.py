@@ -66,11 +66,12 @@ class StockDataLoader:
 
     @staticmethod
     def auto_period(forecast_steps: int) -> str:
-        """forecast_steps 기준 적정 컨텍스트 기간 자동 계산 (약 5배 비율)."""
-        if forecast_steps <= 10:  return '2mo'
-        if forecast_steps <= 20:  return '4mo'
-        if forecast_steps <= 30:  return '6mo'
-        if forecast_steps <= 60:  return '1y'
+        """forecast_steps 기준 적정 컨텍스트 기간 자동 계산."""
+        if forecast_steps <= 5:   return '1mo'   # 단기 피드백용 (~21일, 4.2x)
+        if forecast_steps <= 10:  return '2mo'   # ~42일
+        if forecast_steps <= 20:  return '4mo'   # ~84일
+        if forecast_steps <= 30:  return '6mo'   # ~126일
+        if forecast_steps <= 60:  return '1y'    # ~252일
         return '2y'
 
     def prepare_multivariate_df(self, period: str = None, forecast_steps: int = 30):

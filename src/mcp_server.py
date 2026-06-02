@@ -48,6 +48,9 @@ from tools import (
 # Driver Memory
 from driver_memory import analyze_drivers as _analyze_drivers
 
+# Prediction accuracy
+from database import get_forecast_accuracy as _get_forecast_accuracy, get_global_accuracy_summary
+
 # Initialize MCP Server
 mcp = FastMCP("Stock Expert Agent Tools")
 
@@ -339,6 +342,40 @@ def read_file(filepath: str) -> str:
 def save_memory(task: str, plan: str, result: str, feedback_score: float) -> str:
     """Save analysis result to memory for future reference."""
     return save_feedback(task, plan, result, feedback_score)
+
+
+@mcp.tool()
+def get_forecast_accuracy(ticker: str) -> str:
+    """
+    Return historical 5-day direction forecast accuracy for a ticker,
+    grouped by context_period used. Call this BEFORE stock_moirai_forecast
+    to choose the context_period that performed best for this ticker.
+
+    Returns accuracy_pct per context_period (requires ≥3 evaluated predictions).
+    If no history yet, returns empty list — use default context_period.
+
+    Example output:
+      [{"context_period": "1mo", "total": 8, "hits": 6, "accuracy_pct": 75.0},
+       {"context_period": "2mo", "total": 5, "hits": 3, "accuracy_pct": 60.0}]
+    """
+    import json
+    try:
+        rows = _get_forecast_accuracy(ticker)
+        if not rows:
+            # Fall back to global summary
+            global_rows = get_global_accuracy_summary()
+            return json.dumps({
+                "ticker": ticker,
+                "ticker_history": [],
+                "global_summary": global_rows,
+                "note": "No ticker-specific history yet. Global summary shown."
+            }, ensure_ascii=False)
+        return json.dumps({
+            "ticker": ticker,
+            "ticker_history": rows,
+        }, ensure_ascii=False)
+    except Exception as e:
+        return json.dumps({"error": str(e)})
 
 
 # =========================================================

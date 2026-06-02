@@ -54,9 +54,9 @@ When multiple salient terms appear, combine them in `query` (e.g., user: "넷플
 - **Unsure / mixed** → `source="auto"` (default) routes based on ticker market.
 The response field `source_used` records which source actually answered — feed that to the Summarizer when discussing coverage.
 
-## Two-signal model — `stock_chronos_forecast` vs `stock_news_sentiment`
+## Two-signal model — `stock_moirai_forecast` vs `stock_news_sentiment`
 These two tools intentionally produce INDEPENDENT signals.
-- `stock_chronos_forecast` looks only at past prices → returns `pct_change`, `direction`, and a q10/q90 band. Wide bands = low confidence.
+- `stock_moirai_forecast` looks only at past prices → returns `pct_change`, `direction`, q10/q90 band, and `trajectory` (shape of forecast curve). Wide bands = low confidence.
 - `stock_news_sentiment` looks only at recent headlines → returns `distribution` (label → prob), `supported_labels`, and per-headline labels. **Note**: the US model emits 3 classes (positive / neutral / negative) but the KR model emits only 2 (positive / negative) — no neutral option. Read `supported_labels` to know which schema you got.
 - They are NOT pre-combined in code. When both are useful, call both and let the Summarizer reason about agreement vs conflict.
 - Plausible patterns:
@@ -64,6 +64,20 @@ These two tools intentionally produce INDEPENDENT signals.
   - Conflicting (e.g., forecast UP + sentiment negative) → flag uncertainty, do not pick one and silently drop the other.
   - Only one is needed: pure technical questions ("RSI 어때?") → forecast only; pure event questions ("실적 후 분위기?") → sentiment only.
 - **Failure handling**: if a tool returns `{"status": "error", ...}` (e.g. model load failure, network), do NOT silently fabricate the signal. Continue with the remaining tools and let the Summarizer mark the missing signal as "unavailable" in the final report.
+
+## `stock_moirai_forecast` — context_period selection
+`stock_moirai_forecast` accepts `forecast_steps` and `context_period` (optional).
+
+**Step 1 — check history first**: Call `get_forecast_accuracy(ticker)` before forecasting.
+If ticker-specific history exists, use the `context_period` with the highest `accuracy_pct`.
+If no history yet, use the situation-based defaults below.
+
+**Step 2 — situation-based defaults (when no history)**:
+- Recent sharp move / event (급등락, 실적, 이벤트 직후) → `context_period="1mo"` (recent trend only)
+- Normal analysis / medium-term outlook → `context_period="1mo"` (default for 5-step learning)
+- Long-term trend / sector cycle question → `context_period="6mo"` or `"1y"`
+
+**forecast_steps for Planner learning**: Use `forecast_steps=5` when you want the prediction recorded for accuracy tracking (5 trading days = 1 week). Use `forecast_steps=30` for user-facing 30-day outlook.
 
 ## Other guidelines
 - Understand the user's intent first, then choose the most relevant tools.

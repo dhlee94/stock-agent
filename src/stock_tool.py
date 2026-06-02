@@ -15,6 +15,7 @@ import base64
 import json
 from datetime import datetime, timedelta
 import pandas as pd
+from database import save_prediction, init_db
 import pytz
 
 # Monkey patch for libraries using deprecated base64.decodestring
@@ -205,6 +206,26 @@ def get_price_forecast_moirai(ticker: str, name: str, market: str = "KR",
             for i in range(forecast_steps)
         ]
 
+        # 5-step 예측은 피드백 루프용으로 DB에 저장 (target_date = 5 영업일 후)
+        if forecast_steps == 5 and forecast.get("direction") and cur_price:
+            try:
+                init_db()
+                target_date = forecast_dates[-1]  # 5번째 영업일
+                save_prediction(
+                    ticker=ticker, market=market,
+                    context_period=context_period or "auto",
+                    forecast_steps=forecast_steps,
+                    predicted_at=last_date.strftime("%Y-%m-%d"),
+                    target_date=target_date,
+                    current_price=cur_price,
+                    predicted_direction=forecast["direction"],
+                    predicted_pct=forecast.get("pct_change", 0),
+                    model=forecast.get("model", ""),
+                )
+                print(f"📝 [PredictionLog] {ticker} direction={forecast['direction']} target={target_date}")
+            except Exception as log_err:
+                print(f"⚠️  [PredictionLog] save failed: {log_err}")
+
         return {
             "status": "success",
             "ticker": ticker,
@@ -221,6 +242,7 @@ def get_price_forecast_moirai(ticker: str, name: str, market: str = "KR",
             "trajectory": _trajectory_shape(forecast.get("median", []), cur_price),
             "forecast_data": forecast_data,
         }
+
     except Exception as e:
         import traceback
         traceback.print_exc()

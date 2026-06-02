@@ -132,11 +132,35 @@ def init_db():
             )
         ''')
         
+        # Prediction log — 5-day direction forecast tracking for Planner feedback
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS prediction_log (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                ticker TEXT NOT NULL,
+                market TEXT NOT NULL,
+                context_period TEXT,
+                forecast_steps INTEGER,
+                predicted_at TEXT NOT NULL,
+                target_date TEXT NOT NULL,
+                current_price REAL,
+                predicted_direction TEXT,
+                predicted_pct REAL,
+                actual_price REAL,
+                actual_direction TEXT,
+                correct INTEGER,
+                evaluated_at TEXT,
+                model TEXT,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        ''')
+        cursor.execute('CREATE INDEX IF NOT EXISTS idx_pred_ticker ON prediction_log(ticker)')
+        cursor.execute('CREATE INDEX IF NOT EXISTS idx_pred_target ON prediction_log(target_date)')
+
         # Create indexes
         cursor.execute('CREATE INDEX IF NOT EXISTS idx_tickers_sector ON tickers(sector_id)')
         cursor.execute('CREATE INDEX IF NOT EXISTS idx_driver_ticker ON driver_memory(ticker)')
         cursor.execute('CREATE INDEX IF NOT EXISTS idx_proc_tool ON procedural_memory(tool_name)')
-        
+
         print("✅ Database initialized successfully")
 
 
@@ -353,6 +377,91 @@ def get_tool_stats() -> List[Dict[str, Any]]:
             ORDER BY total_calls DESC
         ''')
         return [dict(row) for row in cursor.fetchall()]
+
+
+# ============================================================
+# PREDICTION LOG OPERATIONS
+# ============================================================
+
+def save_prediction(ticker: str, market: str, context_period: str,
+                    forecast_steps: int, predicted_at: str, target_date: str,
+                    current_price: float, predicted_direction: str,
+                    predicted_pct: float, model: str) -> int:
+    """Save a forecast prediction for later evaluation."""
+    with get_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute('''
+            INSERT INTO prediction_log
+              (ticker, market, context_period, forecast_steps,
+               predicted_at, target_date, current_price,
+               predicted_direction, predicted_pct, model)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ''', (ticker, market, context_period, forecast_steps,
+              predicted_at, target_date, current_price,
+              predicted_direction, predicted_pct, model))
+        return cursor.lastrowid
+
+
+def get_pending_predictions(as_of_date: str) -> List[Dict[str, Any]]:
+    """Return predictions whose target_date has passed and haven't been evaluated."""
+    with get_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute('''
+            SELECT * FROM prediction_log
+            WHERE target_date <= ? AND evaluated_at IS NULL
+            ORDER BY target_date ASC
+        ''', (as_of_date,))
+        return [dict(r) for r in cursor.fetchall()]
+
+
+def evaluate_prediction(pred_id: int, actual_price: float,
+                        actual_direction: str, evaluated_at: str):
+    """Fill in actual price / direction and set correct flag."""
+    with get_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute('''
+            UPDATE prediction_log
+            SET actual_price = ?,
+                actual_direction = ?,
+                correct = (CASE WHEN predicted_direction = ? THEN 1 ELSE 0 END),
+                evaluated_at = ?
+            WHERE id = ?
+        ''', (actual_price, actual_direction, actual_direction, evaluated_at, pred_id))
+
+
+def get_forecast_accuracy(ticker: str, min_samples: int = 3) -> List[Dict[str, Any]]:
+    """Return direction accuracy grouped by context_period for a ticker."""
+    with get_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute('''
+            SELECT context_period,
+                   COUNT(*) AS total,
+                   SUM(correct) AS hits,
+                   ROUND(AVG(correct) * 100, 1) AS accuracy_pct
+            FROM prediction_log
+            WHERE ticker = ? AND evaluated_at IS NOT NULL
+            GROUP BY context_period
+            HAVING total >= ?
+            ORDER BY accuracy_pct DESC
+        ''', (ticker, min_samples))
+        return [dict(r) for r in cursor.fetchall()]
+
+
+def get_global_accuracy_summary(min_samples: int = 5) -> List[Dict[str, Any]]:
+    """Return accuracy grouped by (market, context_period) across all tickers."""
+    with get_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute('''
+            SELECT market, context_period,
+                   COUNT(*) AS total,
+                   ROUND(AVG(correct) * 100, 1) AS accuracy_pct
+            FROM prediction_log
+            WHERE evaluated_at IS NOT NULL
+            GROUP BY market, context_period
+            HAVING total >= ?
+            ORDER BY market, accuracy_pct DESC
+        ''', (min_samples,))
+        return [dict(r) for r in cursor.fetchall()]
 
 
 # ============================================================
