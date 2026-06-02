@@ -14,6 +14,7 @@ import os
 import base64
 import json
 from datetime import datetime, timedelta
+import pandas as pd
 import pytz
 
 # Monkey patch for libraries using deprecated base64.decodestring
@@ -51,6 +52,12 @@ def _market_format(market: str):
     if market == "US":
         return pytz.timezone("US/Eastern"), "$", ",.2f"
     return pytz.timezone("Asia/Seoul"), "₩", ",.0f"
+
+
+def _biz_dates(start: datetime, n: int) -> list:
+    """Return n business days (Mon–Fri) starting after start date."""
+    dates = pd.bdate_range(start=start + timedelta(days=1), periods=n)
+    return [d.strftime("%Y-%m-%d") for d in dates]
 
 
 def get_news_sentiment(ticker: str, name: str, market: str = "KR") -> dict:
@@ -97,7 +104,7 @@ def get_price_forecast(ticker: str, name: str, market: str = "KR",
         cur_price = forecast.get("current_price", 0)
 
         last_date = datetime.now(tz)
-        forecast_dates = [(last_date + timedelta(days=i + 1)).strftime("%Y-%m-%d") for i in range(forecast_steps)]
+        forecast_dates = _biz_dates(last_date, forecast_steps)
         forecast_data = [
             {
                 "date": forecast_dates[i],
@@ -148,7 +155,7 @@ def get_price_forecast_moirai(ticker: str, name: str, market: str = "KR",
 
         cur_price = forecast.get("current_price", 0)
         last_date = datetime.now(tz)
-        forecast_dates = [(last_date + timedelta(days=i + 1)).strftime("%Y-%m-%d") for i in range(forecast_steps)]
+        forecast_dates = _biz_dates(last_date, forecast_steps)
         forecast_data = [
             {
                 "date": forecast_dates[i],

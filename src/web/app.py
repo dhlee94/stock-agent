@@ -87,7 +87,8 @@ async def api_financials(ticker: str):
 
 
 @app.post("/api/analyze")
-async def api_analyze(ticker: str = Form(...), name: str = Form(...), market: str = Form("KR")):
+async def api_analyze(ticker: str = Form(...), name: str = Form(...),
+                      market: str = Form("KR"), forecast_steps: int = Form(30)):
     """Full AI analysis"""
     try:
         # Get all data
@@ -109,14 +110,14 @@ async def api_analyze(ticker: str = Form(...), name: str = Form(...), market: st
         forecast_data = None
         if CHRONOS_ENABLED:
             try:
-                forecast_data = json.loads(price_forecast(ticker, name, market))
+                forecast_data = json.loads(price_forecast(ticker, name, market, forecast_steps))
             except Exception:
                 forecast_data = {"status": "unavailable"}
 
         moirai_data = None
         if MOIRAI_ENABLED:
             try:
-                moirai_data = json.loads(price_forecast_moirai(ticker, name, market))
+                moirai_data = json.loads(price_forecast_moirai(ticker, name, market, forecast_steps))
             except Exception:
                 moirai_data = {"status": "unavailable"}
 

@@ -62,25 +62,36 @@ class StockDataLoader:
             raise ValueError(f"No data found for {self.symbol}")
         return df
 
+    VALID_PERIODS = {'1mo', '2mo', '3mo', '4mo', '6mo', '1y', '2y'}
+
     @staticmethod
     def auto_period(forecast_steps: int) -> str:
         """forecast_steps 기준 적정 컨텍스트 기간 자동 계산 (약 5배 비율)."""
-        if forecast_steps <= 10:  return '2mo'   # ~42일 컨텍스트
-        if forecast_steps <= 20:  return '4mo'   # ~84일 컨텍스트
-        if forecast_steps <= 30:  return '6mo'   # ~126일 컨텍스트
-        if forecast_steps <= 60:  return '1y'    # ~252일 컨텍스트
+        if forecast_steps <= 10:  return '2mo'
+        if forecast_steps <= 20:  return '4mo'
+        if forecast_steps <= 30:  return '6mo'
+        if forecast_steps <= 60:  return '1y'
         return '2y'
 
     def prepare_multivariate_df(self, period: str = None, forecast_steps: int = 30):
         """
         Chronos-2 / Moirai 입력용 다변량 컨텍스트 DataFrame.
-        Target: Close / Covariates: volume_norm, hl_range=(H-L)/C
-        period: yfinance 기간 문자열 (예: '3mo', '6mo', '1y').
-                None이면 forecast_steps에 맞춰 자동 계산.
+        period: yfinance 기간 문자열. None이면 forecast_steps에 맞춰 자동 계산.
+                허용값: 1mo, 2mo, 3mo, 4mo, 6mo, 1y, 2y
         """
         if period is None:
             period = self.auto_period(forecast_steps)
+        elif period not in self.VALID_PERIODS:
+            raise ValueError(
+                f"Invalid context_period '{period}'. "
+                f"Allowed: {sorted(self.VALID_PERIODS)}"
+            )
         df = self.fetch_daily(period=period)
+        if len(df) < 20:
+            raise ValueError(
+                f"Insufficient context data for {self.symbol}: "
+                f"got {len(df)} rows with period='{period}' (minimum 20 required)"
+            )
         news = self.get_news()
 
         # predict_df는 timezone-naive timestamp 필요
