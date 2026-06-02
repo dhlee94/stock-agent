@@ -491,3 +491,22 @@ body {
 .consensus-label { font-size: 1.1rem; font-weight: 700; white-space: nowrap; }
 .consensus-label.agree { color: #4ade80; }
 .consensus-label.disagree { color: #fb923c; }
+
+.model-primary {
+    font-size: 0.65rem;
+    background: rgba(168,85,247,0.25);
+    color: #c084fc;
+    padding: 1px 6px;
+    border-radius: 4px;
+    font-weight: 500;
+    vertical-align: middle;
+}
+.model-secondary {
+    font-size: 0.65rem;
+    background: rgba(34,211,238,0.15);
+    color: #67e8f9;
+    padding: 1px 6px;
+    border-radius: 4px;
+    font-weight: 500;
+    vertical-align: middle;
+}

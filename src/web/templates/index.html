@@ -87,20 +87,20 @@
             <div class="card model-card">
                 <h3>🤖 모델 비교</h3>
                 <div class="model-grid">
-                    <div class="model-item">
-                        <div class="model-name">Chronos-2</div>
-                        <div class="model-badge">Amazon · Apache 2.0</div>
-                        <div id="chronosDirection" class="model-direction">-</div>
-                        <div id="chronosPct" class="model-pct">-</div>
+                    <div class="model-item" id="moiraiItem" style="display:none">
+                        <div class="model-name">Moirai 2.0 <span class="model-primary">primary</span></div>
+                        <div class="model-badge">Salesforce · CC-BY-NC-4.0</div>
+                        <div id="moiraiDirection" class="model-direction">-</div>
+                        <div id="moiraiPct" class="model-pct">-</div>
                     </div>
                     <div class="model-consensus">
                         <div id="consensusLabel" class="consensus-label">-</div>
                     </div>
-                    <div class="model-item" id="moiraiItem" style="display:none">
-                        <div class="model-name">Moirai 2.0</div>
-                        <div class="model-badge">Salesforce · NC</div>
-                        <div id="moiraiDirection" class="model-direction">-</div>
-                        <div id="moiraiPct" class="model-pct">-</div>
+                    <div class="model-item" id="chronosItem" style="display:none">
+                        <div class="model-name">Chronos-2 <span class="model-secondary">sub</span></div>
+                        <div class="model-badge">Amazon · Apache 2.0</div>
+                        <div id="chronosDirection" class="model-direction">-</div>
+                        <div id="chronosPct" class="model-pct">-</div>
                     </div>
                 </div>
             </div>
@@ -299,18 +299,11 @@
         }
 
         function renderModelComparison(forecast, moirai) {
-            const fDir = forecast?.direction;
-            const fPct = forecast?.pct_change;
-            const chronosEl = document.getElementById('chronosDirection');
-            const chronosPctEl = document.getElementById('chronosPct');
-            chronosEl.textContent = fDir === 'up' ? '▲ 상승' : fDir === 'down' ? '▼ 하락' : '-';
-            chronosEl.className = 'model-direction ' + (fDir === 'up' ? 'up' : fDir === 'down' ? 'down' : '');
-            chronosPctEl.textContent = fPct != null ? (fPct >= 0 ? '+' : '') + fPct.toFixed(2) + '%' : '-';
-            chronosPctEl.className = 'model-pct ' + (fPct >= 0 ? 'up' : 'down');
-
             const consensusEl = document.getElementById('consensusLabel');
-            const moiraiItem = document.getElementById('moiraiItem');
+            const moiraiItem  = document.getElementById('moiraiItem');
+            const chronosItem = document.getElementById('chronosItem');
 
+            // Moirai — primary
             if (moirai && moirai.status !== 'error') {
                 moiraiItem.style.display = '';
                 const mDir = moirai.direction;
@@ -319,12 +312,30 @@
                 document.getElementById('moiraiDirection').className = 'model-direction ' + (mDir === 'up' ? 'up' : 'down');
                 document.getElementById('moiraiPct').textContent = (mPct >= 0 ? '+' : '') + mPct.toFixed(2) + '%';
                 document.getElementById('moiraiPct').className = 'model-pct ' + (mPct >= 0 ? 'up' : 'down');
+            } else {
+                moiraiItem.style.display = 'none';
+            }
 
-                const agree = fDir === mDir;
+            // Chronos — secondary
+            if (forecast && forecast.status !== 'error' && forecast.pct_change != null) {
+                chronosItem.style.display = '';
+                const fDir = forecast.direction;
+                const fPct = forecast.pct_change;
+                document.getElementById('chronosDirection').textContent = fDir === 'up' ? '▲ 상승' : '▼ 하락';
+                document.getElementById('chronosDirection').className = 'model-direction ' + (fDir === 'up' ? 'up' : 'down');
+                document.getElementById('chronosPct').textContent = (fPct >= 0 ? '+' : '') + fPct.toFixed(2) + '%';
+                document.getElementById('chronosPct').className = 'model-pct ' + (fPct >= 0 ? 'up' : 'down');
+            } else {
+                chronosItem.style.display = 'none';
+            }
+
+            // Consensus (only when both visible)
+            const bothVisible = moiraiItem.style.display !== 'none' && chronosItem.style.display !== 'none';
+            if (bothVisible) {
+                const agree = moirai.direction === forecast.direction;
                 consensusEl.textContent = agree ? '✅ 합의' : '⚠️ 불일치';
                 consensusEl.className = 'consensus-label ' + (agree ? 'agree' : 'disagree');
             } else {
-                moiraiItem.style.display = 'none';
                 consensusEl.textContent = '';
             }
         }

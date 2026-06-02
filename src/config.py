@@ -51,11 +51,12 @@ NAVER_CLIENT_ID = os.environ.get("NAVER_CLIENT_ID", "")
 NAVER_CLIENT_SECRET = os.environ.get("NAVER_CLIENT_SECRET", "")
 
 # Forecasting model selection
-# Chronos: amazon/chronos-bolt-small (v2, fast) or amazon/chronos-t5-small (v1)
-CHRONOS_MODEL = os.environ.get("CHRONOS_MODEL", "amazon/chronos-2")
-# Moirai 2.0: disabled by default (requires uni2ts, CC-BY-NC-4.0 — research only)
-MOIRAI_ENABLED = os.environ.get("MOIRAI_ENABLED", "false").lower() == "true"
+# Moirai 2.0: primary forecaster (CC-BY-NC-4.0 — research/non-commercial only)
+MOIRAI_ENABLED = os.environ.get("MOIRAI_ENABLED", "true").lower() == "true"
 MOIRAI_MODEL = os.environ.get("MOIRAI_MODEL", "Salesforce/moirai-2.0-R-small")
+# Chronos-2: secondary signal, off by default (Apache 2.0 — commercial OK)
+CHRONOS_ENABLED = os.environ.get("CHRONOS_ENABLED", "false").lower() == "true"
+CHRONOS_MODEL = os.environ.get("CHRONOS_MODEL", "amazon/chronos-2")
 
 # App Settings
 DEFAULT_MARKET = os.environ.get("DEFAULT_MARKET", "KR")

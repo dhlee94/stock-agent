@@ -31,7 +31,8 @@ from tools.stock import (
     price_forecast_moirai,
 )
 
-MOIRAI_ENABLED = os.environ.get("MOIRAI_ENABLED", "false").lower() == "true"
+MOIRAI_ENABLED  = os.environ.get("MOIRAI_ENABLED",  "true").lower()  == "true"
+CHRONOS_ENABLED = os.environ.get("CHRONOS_ENABLED", "false").lower() == "true"
 
 app = FastAPI(title="Stock Expert AI", description="AI 주식 전문가")
 
@@ -105,10 +106,12 @@ async def api_analyze(ticker: str = Form(...), name: str = Form(...), market: st
             sentiment_data = json.loads(news_sentiment(ticker, name, market))
         except Exception:
             sentiment_data = {"status": "unavailable"}
-        try:
-            forecast_data = json.loads(price_forecast(ticker, name, market))
-        except Exception:
-            forecast_data = {"status": "unavailable"}
+        forecast_data = None
+        if CHRONOS_ENABLED:
+            try:
+                forecast_data = json.loads(price_forecast(ticker, name, market))
+            except Exception:
+                forecast_data = {"status": "unavailable"}
 
         moirai_data = None
         if MOIRAI_ENABLED:
@@ -125,8 +128,9 @@ async def api_analyze(ticker: str = Form(...), name: str = Form(...), market: st
             "technical": tech_data,
             "news": news_data,
             "news_sentiment": sentiment_data,
-            "price_forecast": forecast_data,
         }
+        if forecast_data is not None:
+            response["price_forecast"] = forecast_data
         if moirai_data is not None:
             response["moirai_forecast"] = moirai_data
 

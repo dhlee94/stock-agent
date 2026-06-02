@@ -17,7 +17,8 @@ sys.path.insert(0, SRC_DIR)
 
 from mcp.server.fastmcp import FastMCP
 
-MOIRAI_ENABLED = os.environ.get("MOIRAI_ENABLED", "false").lower() == "true"
+MOIRAI_ENABLED  = os.environ.get("MOIRAI_ENABLED",  "true").lower()  == "true"
+CHRONOS_ENABLED = os.environ.get("CHRONOS_ENABLED", "false").lower() == "true"
 
 # Stock Tools
 from tools.stock import (
@@ -173,24 +174,24 @@ def stock_news_sentiment(ticker: str, name: str, market: str = "KR") -> str:
     return news_sentiment(ticker, name, market)
 
 
-@mcp.tool()
-def stock_chronos_forecast(ticker: str, name: str, market: str = "KR", forecast_steps: int = 30) -> str:
-    """
-    Chronos quantile price forecast (pretrained time-series model).
-    Returns median pct_change, direction (up/down), and the full
-    median / q10 / q90 trajectory. This is an INDEPENDENT signal —
-    it does not look at news.
+if CHRONOS_ENABLED:
+    @mcp.tool()
+    def stock_chronos_forecast(ticker: str, name: str, market: str = "KR", forecast_steps: int = 30) -> str:
+        """
+        Chronos-2 multivariate price forecast (Close + Volume + H-L range covariates).
+        Returns median pct_change, direction (up/down), and the full
+        median / q10 / q90 trajectory. INDEPENDENT signal — does not look at news.
 
-    Combine with `stock_news_sentiment` and (if available) `stock_moirai_forecast`.
-    Explain agreement / conflict explicitly. Wide q10–q90 bands = low confidence.
+        Combine with `stock_news_sentiment` and `stock_moirai_forecast`.
+        Explain agreement / conflict explicitly. Wide q10–q90 bands = low confidence.
 
-    Args:
-        ticker: Stock ticker symbol
-        name: Company name
-        market: "KR" or "US"
-        forecast_steps: Number of future steps to predict (default 30)
-    """
-    return price_forecast(ticker, name, market, forecast_steps)
+        Args:
+            ticker: Stock ticker symbol
+            name: Company name
+            market: "KR" or "US"
+            forecast_steps: Number of future steps to predict (default 30)
+        """
+        return price_forecast(ticker, name, market, forecast_steps)
 
 
 if MOIRAI_ENABLED:
@@ -340,9 +341,11 @@ if __name__ == "__main__":
     print("📈 Stock Tools:")
     print("   stock_price, stock_chart, stock_financials, stock_news")
     print("   stock_technical, stock_compare, stock_sector")
-    moirai_status = "enabled" if MOIRAI_ENABLED else "disabled (set MOIRAI_ENABLED=true)"
-    print(f"   stock_news_sentiment, stock_chronos_forecast")
-    print(f"   stock_moirai_forecast [{moirai_status}]")
+    chronos_status = "enabled" if CHRONOS_ENABLED else "disabled"
+    moirai_status  = "enabled" if MOIRAI_ENABLED  else "disabled"
+    print(f"   stock_news_sentiment")
+    print(f"   stock_chronos_forecast [{chronos_status}]")
+    print(f"   stock_moirai_forecast  [{moirai_status}]")
     print("   analyze_drivers, analyze_peers, calculate_risk")
     print("")
     print("🛠️ Utility Tools:")
