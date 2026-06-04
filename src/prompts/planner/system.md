@@ -87,11 +87,25 @@ Step 2 (no history): pick by situation:
 - `stock_price` accepts exactly **one ticker** per call. For comparison queries (intent_class=comparison), call it once per ticker as separate steps.
 - `stock_moirai_forecast`, `stock_technical`, `stock_news` similarly accept one ticker at a time — never pass comma-separated tickers.
 
-## Sector / market-wide queries (no specific ticker)
-When the user asks about a sector ("바이오주", "반도체 섹터", "2차전지") or market ("코스피", "나스닥") without naming a specific stock:
-1. Use `stock_sector` first — it returns an overview and top tickers in the sector.
-2. Use `stock_news` with the sector keyword as `query` (e.g., `{"query": "바이오 제약"}`) and no ticker, or with `ticker` set to the market index.
-3. Do NOT call `stock_price`, `stock_technical`, or `stock_moirai_forecast` without a concrete ticker. Pick 1-2 representative tickers from the `stock_sector` result and analyze those if the user asks for individual recommendations.
+## Sector / market-wide queries — Top-down approach ⚠️ MANDATORY
+
+**OVERRIDE**: When `subject` contains no specific ticker (e.g., "바이오주", "반도체 섹터", "2차전지", "코스피"), this rule overrides ALL other planning guidelines including vague_status defaults. You MUST follow these exact 4 steps — no more, no less:
+
+```
+Step 1: stock_sector(sector=<섹터명>, market=<KR|US>)
+Step 2: stock_compare(tickers=<top 4-5 tickers from step 1 result>, period="1mo")
+Step 3: [내부 판단] step 2 결과에서 1위 ticker 선정 — 추가 툴 호출 없음
+Step 4: stock_technical(ticker=<winner>)
+Step 5: stock_moirai_forecast(ticker=<winner>, forecast_steps=<forecast_horizon>)
+Step 6: stock_news(ticker=<winner>, query=<섹터 키워드>)
+Step 7: calculate_risk(ticker=<winner>)
+```
+
+**Rules:**
+- Step 3은 툴 호출 없이 step 2 결과만으로 판단 (별도 step 불필요)
+- 총 6 steps (step 3 제외) — 절대 이 이상 추가하지 말 것
+- step 4~7은 winner 단 1개 ticker에만 적용 — 여러 종목에 반복 적용 금지
+- `stock_sector` 없이 `stock_price`/`stock_technical`을 섹터 이름으로 직접 호출 금지
 
 ## Creative permission
 If the standard template does not fit the user's question, deviate. A focused 3-step plan with a clear `reason` is better than a 5-step plan padded with defaults. When you break from a default (e.g., skipping `calculate_risk` for an information-seeking query), state the trade-off in the `reason` field of the relevant step so the Reflector can verify the intent.

@@ -132,6 +132,54 @@ def _verify_kr_ticker_in_subject(intent: Dict[str, Any]) -> None:
             print(f"   ⚠️ LLM ticker {llm_sym!r} for '{name}' not found in US listings")
 
 
+def _build_sector_plan(intent: Dict[str, Any], user_task: str):
+    """
+    subject에 구체적 ticker가 없으면 Top-down 섹터 고정 플랜 반환.
+    ticker가 있거나 intent가 없으면 None 반환 (Planner가 자유 플래닝).
+    """
+    if not intent:
+        return None
+    subject = intent.get("subject", "")
+    # 구체적 ticker 패턴 (.KS / .KQ / 대문자 US ticker) 이 subject에 있으면 일반 쿼리
+    if re.search(r'\b[A-Z]{1,6}\b|\d{6}\.(KS|KQ)', subject):
+        return None
+
+    # sector / market 키워드 감지
+    sector_keywords = [
+        "바이오", "제약", "헬스케어", "반도체", "IT", "2차전지", "배터리",
+        "자동차", "화학", "금융", "은행", "보험", "증권", "건설", "부동산",
+        "에너지", "방산", "유통", "소비재", "미디어", "게임", "Tech",
+        "biotech", "semiconductor", "EV", "healthcare",
+    ]
+    task_lower = (user_task + " " + subject).lower()
+    if not any(kw.lower() in task_lower for kw in sector_keywords):
+        return None
+
+    # 섹터명 추출 (subject 첫 단어 활용)
+    sector_name = subject.split("(")[0].strip() or "전체"
+    market = "KR" if any(k in task_lower for k in ["코스피", "코스닥", "ks", "kr", "한국"]) else "KR"
+    # US 명시적 언급 시
+    if any(k in task_lower for k in ["nasdaq", "nyse", "s&p", "us ", "미국"]):
+        market = "US"
+
+    forecast_horizon = intent.get("forecast_horizon", 5) or 5
+
+    # Iteration 1: 섹터 개요 + 비교만 → findings에 실제 ticker 확보
+    # Iteration 2: Planner가 findings의 winner ticker로 deep analysis 자유 플래닝
+    return [
+        {
+            "step": 1, "tool": "stock_sector",
+            "args": {"sector": sector_name, "market": market},
+            "reason": f"{sector_name} 섹터 모멘텀·상위 종목 파악"
+        },
+        {
+            "step": 2, "tool": "stock_news",
+            "args": {"query": sector_name, "market": market},
+            "reason": f"{sector_name} 섹터 최신 뉴스 및 이슈 확인"
+        },
+    ]
+
+
 class MementoAgent:
     def __init__(self):
         self.memory = MemoryStore()
@@ -723,6 +771,9 @@ Return the JSON verdict object now:"""}
                     # 3. INTENT EXTRACTION (once, before the loop — reused across iterations)
                     extracted_intent = await self._call_intent_extractor(user_task)
 
+                    # Sector query detection: subject에 구체적 ticker가 없으면 sector 플랜 고정
+                    _sector_plan = _build_sector_plan(extracted_intent, user_task)
+
                     # 4. PLAN → EXECUTE → SUMMARIZE → REFLECT loop (iterative refinement)
                     MAX_ITER = 3
                     all_findings = ""
@@ -737,14 +788,18 @@ Return the JSON verdict object now:"""}
                     for iteration in range(MAX_ITER):
                         print(f"\n🔄 Iteration {iteration + 1}/{MAX_ITER}")
 
-                        # PLANNER: first iteration uses full context; later iterations receive critique + prior findings
-                        plan = await self._call_planner(
-                            user_task, tool_descriptions, context_examples,
-                            semantic_knowledge=semantic_knowledge,
-                            critique=critique,
-                            previous_findings=all_findings,
-                            extracted_intent=extracted_intent,
-                        )
+                        # PLANNER: sector 쿼리는 고정 플랜 사용, 나머지는 LLM 플래닝
+                        if _sector_plan and iteration == 0:
+                            plan = _sector_plan
+                            print(f"   🏭 [Sector Plan] Using fixed top-down plan ({len(plan)} steps)")
+                        else:
+                            plan = await self._call_planner(
+                                user_task, tool_descriptions, context_examples,
+                                semantic_knowledge=semantic_knowledge,
+                                critique=critique,
+                                previous_findings=all_findings,
+                                extracted_intent=extracted_intent,
+                            )
 
                         if not plan:
                             if iteration == 0:
