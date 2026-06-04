@@ -437,7 +437,7 @@ Gathered Information:
 Provide your final analysis and recommendation (include Target Price, Stop-loss, and Risk/Reward):"""}
         ]
         
-        response = await self._call_llm(summary_prompt, model=SUMMARIZER_MODEL)
+        response = await self._call_llm(summary_prompt, model=SUMMARIZER_MODEL, max_tokens=8192)
         return response
 
     async def _extract_reflection_feedback(self, user_task: str, plan_text: str, final_analysis: str) -> dict:
@@ -835,7 +835,11 @@ Return the JSON verdict object now:"""}
                                     if tool_name == "stock_technical":
                                         try:
                                             tech_data = json.loads(tool_output)
-                                            print(f"   📈 Technical data captured: {tech_data.get('recommendation', 'N/A')}")
+                                            rec = tech_data.get("recommendation") or tech_data.get("status", "N/A")
+                                            if tech_data.get("status") == "error":
+                                                print(f"   ⚠️ Technical tool error: {tech_data.get('error', 'unknown')}")
+                                            else:
+                                                print(f"   📈 Technical data captured: {rec}")
                                         except:
                                             pass
 

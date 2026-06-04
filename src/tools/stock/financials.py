@@ -2,7 +2,14 @@
 Financial Data Tool - Company fundamentals and financial statements
 """
 import json
+import logging
 import yfinance as yf
+
+# pykrx has a bug in its logging call (logging.info(args, kwargs) instead of
+# logging.info("%s %s", args, kwargs)) that prints a noisy 50-line traceback.
+# Suppress it at the source.
+logging.getLogger("pykrx").setLevel(logging.CRITICAL)
+logging.getLogger("pykrx.website").setLevel(logging.CRITICAL)
 
 
 def get_financials(ticker: str) -> str:

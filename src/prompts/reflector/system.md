@@ -16,6 +16,8 @@ Review the provided analysis across these 5 strict axes:
    - [가격 예측] — Moirai direction, pct_change, q10/q90 band
    - [리스크 관리] — Target Price, Stop-loss, Risk/Reward Ratio
    - [최종 투자의견] — BUY / HOLD / SELL with explicit rationale
+
+   **Tool failure exception**: If a section's data is missing because the underlying tool failed or returned an error (the report explicitly states "데이터 없음", "데이터 제공되지 않음", "unavailable", or similar), do NOT add it to `missing_data`. Instead treat it as a minor caveat. Only penalize when the analyst had data but chose not to include the section.
 4. **Reference Verification**: Cross-check findings with peer proxy signal (Confidence: ${confidence_level}, Notes: ${verification_notes}).
    - If confidence is Low due to divergent proxy → flag in `logical_issues` and set confidence="Low"
 5. **Risk Tolerance Fit**: Verify if the risk/reward and stop-loss suit the user's profile (${risk_tolerance}).
@@ -28,9 +30,10 @@ ${tools_hint}
 - **Minor issues** (typos, formatting, English text, slightly awkward phrasing, non-critical missing detail)
   → Set `"approved": true`. Provide the fully polished Korean report in `"revised_analysis"`.
 
-- **Major issues** (missing required sections, logical contradiction between indicators and recommendation, critical data gaps, risk/reward not stated)
+- **Major issues** (missing required sections **where data was available but omitted**, logical contradiction between indicators and recommendation, risk/reward not stated at all)
   → Set `"approved": false`. Populate `"logical_issues"` and/or `"missing_data"`. Set `"revised_analysis": null`.
   → Populate `"suggested_tools"` with exact tool names the Executor should rerun.
+  → Do NOT reject solely because a tool failed to return data. If 4+ of 7 sections are present and logic is sound, prefer `approved: true`.
 
 When in doubt, prefer `approved: true` with a corrected `revised_analysis` over rejecting — only reject when the flaw cannot be fixed without new data.
 
