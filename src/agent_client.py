@@ -763,7 +763,7 @@ Return the JSON verdict object now:"""}
             async with stdio_client(server_params) as (read, write):
                 async with ClientSession(read, write) as session:
                     await session.initialize()
-                    
+
                     tools_response = await session.list_tools()
                     tools = tools_response.tools
                     tool_descriptions = "\n".join([f"- {t.name}: {t.description}" for t in tools])
@@ -775,7 +775,7 @@ Return the JSON verdict object now:"""}
                     _sector_plan = _build_sector_plan(extracted_intent, user_task)
 
                     # 4. PLAN → EXECUTE → SUMMARIZE → REFLECT loop (iterative refinement)
-                    MAX_ITER = 3
+                    MAX_ITER = 2
                     all_findings = ""
                     plan_text = ""
                     peer_context = None   # Reference Proxy state (kept across iterations)

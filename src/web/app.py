@@ -145,7 +145,7 @@ async def api_analyze(ticker: str = Form(...), name: str = Form(...),
 async def api_chat(message: str = Form(...)):
     """Natural language chat with AI agent"""
     try:
-        result = await asyncio.wait_for(agent.run_for_web(message), timeout=300)
+        result = await asyncio.wait_for(agent.run_for_web(message), timeout=600)
         return JSONResponse(content={
             "status": "success",
             "response": result
@@ -153,7 +153,7 @@ async def api_chat(message: str = Form(...)):
     except (asyncio.TimeoutError, TimeoutError):
         return JSONResponse(content={
             "status": "error",
-            "error": "분석 시간이 초과되었습니다 (5분). 더 구체적인 종목명을 입력하시거나 다시 시도해주세요."
+            "error": "분석 시간이 초과되었습니다 (10분). 더 구체적인 종목명을 입력하시거나 다시 시도해주세요."
         })
     except asyncio.CancelledError:
         return JSONResponse(content={
