@@ -31,7 +31,7 @@ DEFAULT_KEYWORD_MODELS = {
     "anthropic": "claude-haiku-4-5-20251001",
 }
 DEFAULT_EMBEDDING_MODELS = {
-    "gemini": "models/text-embedding-004",
+    "gemini": "models/gemini-embedding-001",
     "openai": "text-embedding-3-small",
 }
 

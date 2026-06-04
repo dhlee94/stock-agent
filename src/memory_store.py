@@ -34,18 +34,17 @@ class MemoryStore:
         # 2. Try Gemini
         if EMBEDDING_PROVIDER == "gemini" or GEMINI_API_KEY:
             try:
-                import google.generativeai as _genai
-                _genai.configure(api_key=GEMINI_API_KEY)
-                # Use a more stable model name if 004 fails
-                model_name = EMBEDDING_MODEL if EMBEDDING_PROVIDER == "gemini" else "models/embedding-001"
-                result = _genai.embed_content(
+                from google import genai as _genai
+                _client = _genai.Client(api_key=GEMINI_API_KEY)
+                model_name = EMBEDDING_MODEL if EMBEDDING_PROVIDER == "gemini" else "models/gemini-embedding-001"
+                result = _client.models.embed_content(
                     model=model_name,
-                    content=text,
-                    task_type="retrieval_document"
+                    contents=text,
+                    config=_genai.types.EmbedContentConfig(task_type="RETRIEVAL_DOCUMENT"),
                 )
-                return result['embedding']
+                return result.embeddings[0].values
             except Exception as e:
-                pass # Silent fallback to local
+                pass  # Silent fallback to local
 
         # 3. 🚀 Local Embedding Fallback (Singleton Pattern)
         try:

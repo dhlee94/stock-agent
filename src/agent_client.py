@@ -29,8 +29,8 @@ if LLM_PROVIDER == "gemini":
     if not GEMINI_API_KEY:
         MOCK_MODE = True
     else:
-        import google.generativeai as genai
-        genai.configure(api_key=GEMINI_API_KEY)
+        from google import genai as _gemini_genai
+        _gemini_client = _gemini_genai.Client(api_key=GEMINI_API_KEY)
 elif LLM_PROVIDER == "openai":
     if not OPENAI_API_KEY:
         MOCK_MODE = True
@@ -154,7 +154,7 @@ class MementoAgent:
             self.client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
         else:
             print(f"[Agent] Using Gemini ({LLM_MODEL}).")
-            self.model = genai.GenerativeModel(LLM_MODEL)
+            self.gemini_client = _gemini_client
 
     async def _call_llm(self, messages, model: str = None, max_tokens: int = 4096):
         global LAST_API_CALL
@@ -223,13 +223,7 @@ class MementoAgent:
             )
             return response.content[0].text
         else:
-            # Gemini: create a new GenerativeModel if model override differs
-            import google.generativeai as genai
-            gem_model = (
-                genai.GenerativeModel(effective_model)
-                if effective_model != LLM_MODEL
-                else self.model
-            )
+            # Gemini (google-genai SDK)
             prompt = ""
             for msg in messages:
                 role = msg["role"]
@@ -240,7 +234,10 @@ class MementoAgent:
                     prompt += f"User: {content}\n\n"
                 elif role == "assistant":
                     prompt += f"Assistant: {content}\n\n"
-            response = await gem_model.generate_content_async(prompt)
+            response = await self.gemini_client.aio.models.generate_content(
+                model=effective_model,
+                contents=prompt,
+            )
             return response.text
 
     async def _call_intent_extractor(self, user_task: str) -> Dict[str, Any]:
