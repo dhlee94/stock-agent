@@ -187,6 +187,11 @@ class MementoAgent:
         self.procedural_memory = ProceduralMemory()
         self.driver_memory = DriverMemory()
         self.server_script = os.path.join(os.path.dirname(os.path.abspath(__file__)), "mcp_server.py")
+        # MCP 싱글톤 세션 — Moirai 콜드 스타트를 최초 1회로 제한
+        self._mcp_session = None
+        self._mcp_exit_stack = None
+        self._mcp_tools_desc = ""
+        self._mcp_lock = None  # lazy: 이벤트 루프 없이 __init__에서 생성 불가
         
         if MOCK_MODE:
             print(f"[Agent] Running in MOCK mode (no API key for {LLM_PROVIDER}).")
@@ -203,6 +208,50 @@ class MementoAgent:
         else:
             print(f"[Agent] Using Gemini ({LLM_MODEL}).")
             self.gemini_client = _gemini_client
+
+    async def _ensure_mcp_session(self):
+        """싱글톤 MCP 세션 반환. 죽어있으면 재생성."""
+        if self._mcp_lock is None:
+            self._mcp_lock = asyncio.Lock()
+
+        async with self._mcp_lock:
+            if self._mcp_session is not None:
+                try:
+                    await self._mcp_session.list_tools()
+                    return self._mcp_session, self._mcp_tools_desc
+                except Exception:
+                    print("🔌 [MCP] Session dead — recreating...")
+                    await self._reset_mcp_session()
+
+            from contextlib import AsyncExitStack
+            stack = AsyncExitStack()
+            server_params = StdioServerParameters(
+                command=sys.executable,
+                args=[self.server_script],
+            )
+            read, write = await stack.enter_async_context(stdio_client(server_params))
+            session = await stack.enter_async_context(ClientSession(read, write))
+            await session.initialize()
+
+            tools_response = await session.list_tools()
+            self._mcp_tools_desc = "\n".join(
+                [f"- {t.name}: {t.description}" for t in tools_response.tools]
+            )
+            self._mcp_session = session
+            self._mcp_exit_stack = stack
+            print("🔌 [MCP] New persistent session created")
+            return self._mcp_session, self._mcp_tools_desc
+
+    async def _reset_mcp_session(self):
+        """MCP 세션 닫고 상태 초기화."""
+        if self._mcp_exit_stack:
+            try:
+                await self._mcp_exit_stack.aclose()
+            except Exception:
+                pass
+        self._mcp_session = None
+        self._mcp_exit_stack = None
+        self._mcp_tools_desc = ""
 
     async def _call_llm(self, messages, model: str = None, max_tokens: int = 4096):
         global LAST_API_CALL
@@ -753,215 +802,190 @@ Return the JSON verdict object now:"""}
         if semantic_knowledge:
             print(f"🧠 Retrieved {len(semantic_knowledge)} generalized lessons from Semantic Memory")
 
-        # 2. Connect to MCP Server
-        server_params = StdioServerParameters(
-            command=sys.executable,
-            args=[self.server_script],
-        )
+        # 2. MCP 세션 획득 (싱글톤 — Moirai 콜드 스타트 최초 1회)
+        try:
+            session, tool_descriptions = await self._ensure_mcp_session()
+        except Exception as e:
+            return f"MCP 서버 시작 실패: {e}"
 
         try:
-            async with stdio_client(server_params) as (read, write):
-                async with ClientSession(read, write) as session:
-                    await session.initialize()
+            # 3. INTENT EXTRACTION (once, before the loop — reused across iterations)
+            extracted_intent = await self._call_intent_extractor(user_task)
 
-                    tools_response = await session.list_tools()
-                    tools = tools_response.tools
-                    tool_descriptions = "\n".join([f"- {t.name}: {t.description}" for t in tools])
+            # Sector query detection: subject에 구체적 ticker가 없으면 sector 플랜 고정
+            _sector_plan = _build_sector_plan(extracted_intent, user_task)
 
-                    # 3. INTENT EXTRACTION (once, before the loop — reused across iterations)
-                    extracted_intent = await self._call_intent_extractor(user_task)
+            # 4. PLAN → EXECUTE → SUMMARIZE → REFLECT loop (iterative refinement)
+            MAX_ITER = 2
+            all_findings = ""
+            plan_text = ""
+            peer_context = None
+            tech_data = None
+            critique = None
+            final_result = ""
+            feedback = None
+            verdict = None
 
-                    # Sector query detection: subject에 구체적 ticker가 없으면 sector 플랜 고정
-                    _sector_plan = _build_sector_plan(extracted_intent, user_task)
+            for iteration in range(MAX_ITER):
+                print(f"\n🔄 Iteration {iteration + 1}/{MAX_ITER}")
 
-                    # 4. PLAN → EXECUTE → SUMMARIZE → REFLECT loop (iterative refinement)
-                    MAX_ITER = 2
-                    all_findings = ""
-                    plan_text = ""
-                    peer_context = None   # Reference Proxy state (kept across iterations)
-                    tech_data = None      # Technical signal (kept across iterations)
-                    critique = None       # Reflector verdict from previous iteration
-                    final_result = ""
-                    feedback = None
-                    verdict = None
-
-                    for iteration in range(MAX_ITER):
-                        print(f"\n🔄 Iteration {iteration + 1}/{MAX_ITER}")
-
-                        # PLANNER: sector 쿼리는 고정 플랜 사용, 나머지는 LLM 플래닝
-                        if _sector_plan and iteration == 0:
-                            plan = _sector_plan
-                            print(f"   🏭 [Sector Plan] Using fixed top-down plan ({len(plan)} steps)")
-                        else:
-                            plan = await self._call_planner(
-                                user_task, tool_descriptions, context_examples,
-                                semantic_knowledge=semantic_knowledge,
-                                critique=critique,
-                                previous_findings=all_findings,
-                                extracted_intent=extracted_intent,
-                            )
-
-                        if not plan:
-                            if iteration == 0:
-                                saved_result = "계획 생성에 실패했습니다. 다시 시도해주세요."
-                                return saved_result
-                            # Refinement iteration returned []: Planner decided no new tool call is needed.
-                            # Skip the executor and let the Summarizer/Reflector re-reason over existing findings.
-                            print("   ℹ️ No new plan steps — re-summarizing with existing findings")
-                        else:
-                            # Step 수 상한: iteration마다 최대 8 step
-                            MAX_STEPS_PER_ITER = 8
-                            if len(plan) > MAX_STEPS_PER_ITER:
-                                print(f"   ⚠️ Plan has {len(plan)} steps — capping at {MAX_STEPS_PER_ITER}")
-                                plan = plan[:MAX_STEPS_PER_ITER]
-
-                            plan_text += f"\n--- Iteration {iteration + 1} ---\n" + json.dumps(plan, ensure_ascii=False, indent=2)
-
-                            # EXECUTOR: run each step in this iteration's plan
-                            for step in plan:
-                                tool_name = step.get("tool")
-                                args = step.get("args", {})
-
-                                if not tool_name:
-                                    continue
-
-                                # Get tips from procedural memory
-                                tips = self.procedural_memory.get_tool_tips(tool_name)
-                                if tips:
-                                    print(f"   💡 Found {len(tips)} past executions for {tool_name} — passing to Executor")
-
-                                try:
-                                    # Execute tool
-                                    print(f"   ⚡ Executing: {tool_name}")
-                                    result = await session.call_tool(tool_name, arguments=args)
-                                    tool_output = result.content[0].text
-
-                                    # Capture peer analysis result for Reflector
-                                    if tool_name == "analyze_peers":
-                                        try:
-                                            peer_data = json.loads(tool_output)
-                                            peers_found = peer_data.get("entity_mining", {}).get("found_peers", 0)
-
-                                            # FALLBACK: If no peers found, use LLM to identify competitors
-                                            if peers_found == 0 and not args.get("compare_with"):
-                                                print(f"   ⚠️ No peers found, using LLM fallback...")
-                                                ticker = args.get("ticker", "")
-
-                                                # Ask LLM for industry competitors
-                                                fallback_prompt = [
-                                                    {"role": "system", "content": load_prompt("peer_fallback/system")},
-                                                    {"role": "user", "content": load_prompt("peer_fallback/user", ticker=ticker)}
-                                                ]
-                                                llm_response = await self._call_llm(fallback_prompt)
-
-                                                try:
-                                                    obj_match = re.search(r'\{[\s\S]*?\}', llm_response)
-                                                    if obj_match:
-                                                        fallback_data = json.loads(obj_match.group(0))
-                                                        competitor_tickers = fallback_data.get("tickers", [])
-                                                        rationale = fallback_data.get("rationale", "")
-                                                        if rationale:
-                                                            print(f"   🤖 Peer rationale: {rationale}")
-                                                    else:
-                                                        competitor_tickers = []
-                                                    if competitor_tickers:
-                                                        print(f"   🤖 LLM identified competitors: {competitor_tickers}")
-
-                                                        retry_result = await session.call_tool(
-                                                            "analyze_peers",
-                                                            arguments={"ticker": ticker, "compare_with": competitor_tickers}
-                                                        )
-                                                        tool_output = retry_result.content[0].text
-                                                        peer_data = json.loads(tool_output)
-                                                        peers_found = peer_data.get("entity_mining", {}).get("found_peers", 0)
-                                                        print(f"   ✅ Retry successful: {peers_found} peers found")
-                                                except Exception as e:
-                                                    print(f"   ⚠️ LLM fallback failed: {e}")
-
-                                            reference_proxy = peer_data.get("reference_proxy")
-                                            peer_context = {
-                                                "peers_found": peers_found,
-                                                "reference_proxy": reference_proxy,
-                                                "synthesis": peer_data.get("synthesis", ""),
-                                                "has_high_correlation": reference_proxy is not None
-                                            }
-                                            print(f"   📊 Peer context captured for Reflector verification")
-                                        except:
-                                            pass
-
-                                    # Capture technical signal for alignment check
-                                    if tool_name == "stock_technical":
-                                        try:
-                                            tech_data = json.loads(tool_output)
-                                            rec = tech_data.get("recommendation") or tech_data.get("status", "N/A")
-                                            if tech_data.get("status") == "error":
-                                                print(f"   ⚠️ Technical tool error: {tech_data.get('error', 'unknown')}")
-                                            else:
-                                                print(f"   📈 Technical data captured: {rec}")
-                                        except:
-                                            pass
-
-                                    # Specialist agents for key signal tools; generic Executor otherwise
-                                    if tool_name in ("stock_news", "stock_news_sentiment"):
-                                        interpretation = await self._call_news_analyst(tool_output)
-                                    elif tool_name == "stock_technical":
-                                        interpretation = await self._call_technical_analyst(tool_output)
-                                    elif tool_name in ("stock_moirai_forecast", "stock_chronos_forecast"):
-                                        interpretation = await self._call_forecast_interpreter(tool_output)
-                                    else:
-                                        interpretation = await self._call_executor(step, tool_output, all_findings, tips)
-                                    all_findings += f"\n### [iter {iteration + 1}] Step {step.get('step')}: {step.get('reason', tool_name)}\n{interpretation}\n"
-
-                                    # Save to procedural memory
-                                    self.procedural_memory.save_tool_execution(
-                                        tool_name, args, True, interpretation
-                                    )
-
-                                except Exception as e:
-                                    err_type = type(e).__name__
-                                    print(f"   ⚠️ Step failed: {err_type}: {e}")
-                                    all_findings += f"\n### [iter {iteration + 1}] Step {step.get('step')}: Failed - {str(e)}\n"
-                                    self.procedural_memory.save_tool_execution(
-                                        tool_name, args, False, str(e)
-                                    )
-                                    # MCP 파이프 끊김 — 더 이상 툴 호출 불가, 즉시 요약으로
-                                    if "BrokenResourceError" in err_type or "BrokenPipeError" in err_type:
-                                        print("   🔴 MCP pipe broken — summarizing with collected findings")
-                                        if all_findings:
-                                            saved_result = await self._call_summarizer(user_task, all_findings)
-                                        return saved_result or "MCP 서버 연결이 끊어졌습니다. 다시 시도해주세요."
-
-                        # SUMMARIZER: regenerate the analysis from the latest cumulative findings
-                        final_result = await self._call_summarizer(user_task, all_findings)
-
-                        # REFLECTOR: structured verdict
-                        final_result, feedback, verdict = await self._call_reflector(
-                            user_task, final_result, plan_text, peer_context, tech_data,
-                            available_tools=tool_descriptions
-                        )
-
-                        if verdict.get("approved"):
-                            print(f"   ✅ Reflector approved on iteration {iteration + 1}")
-                            break
-
-                        if iteration < MAX_ITER - 1:
-                            critique = verdict
-                            print(f"   🔁 Rejected — scheduling refinement iteration {iteration + 2}")
-                        else:
-                            print("   ⚠️ Max iterations reached — using current analysis")
-
-                    # Save result before leaving context
-                    saved_result = final_result if final_result else "분석을 완료하지 못했습니다."
-
-                    # 7. Save to Memory with real score and lessons from Reflector
-                    self.memory.save_trajectory(
-                        user_task, plan_text, final_result,
-                        feedback["score"], feedback["lessons"]
+                # PLANNER: sector 쿼리는 고정 플랜 사용, 나머지는 LLM 플래닝
+                if _sector_plan and iteration == 0:
+                    plan = _sector_plan
+                    print(f"   🏭 [Sector Plan] Using fixed top-down plan ({len(plan)} steps)")
+                else:
+                    plan = await self._call_planner(
+                        user_task, tool_descriptions, context_examples,
+                        semantic_knowledge=semantic_knowledge,
+                        critique=critique,
+                        previous_findings=all_findings,
+                        extracted_intent=extracted_intent,
                     )
 
-                    # 8. Save each lesson to Semantic Memory for cross-task generalization
-                    for lesson in feedback.get("lessons", []):
-                        self.semantic_memory.save_knowledge(lesson, user_task)
+                if not plan:
+                    if iteration == 0:
+                        saved_result = "계획 생성에 실패했습니다. 다시 시도해주세요."
+                        return saved_result
+                    print("   ℹ️ No new plan steps — re-summarizing with existing findings")
+                else:
+                    MAX_STEPS_PER_ITER = 8
+                    if len(plan) > MAX_STEPS_PER_ITER:
+                        print(f"   ⚠️ Plan has {len(plan)} steps — capping at {MAX_STEPS_PER_ITER}")
+                        plan = plan[:MAX_STEPS_PER_ITER]
+
+                    plan_text += f"\n--- Iteration {iteration + 1} ---\n" + json.dumps(plan, ensure_ascii=False, indent=2)
+
+                    for step in plan:
+                        tool_name = step.get("tool")
+                        args = step.get("args", {})
+
+                        if not tool_name:
+                            continue
+
+                        tips = self.procedural_memory.get_tool_tips(tool_name)
+                        if tips:
+                            print(f"   💡 Found {len(tips)} past executions for {tool_name} — passing to Executor")
+
+                        try:
+                            print(f"   ⚡ Executing: {tool_name}")
+                            result = await session.call_tool(tool_name, arguments=args)
+                            tool_output = result.content[0].text
+
+                            if tool_name == "analyze_peers":
+                                try:
+                                    peer_data = json.loads(tool_output)
+                                    peers_found = peer_data.get("entity_mining", {}).get("found_peers", 0)
+
+                                    if peers_found == 0 and not args.get("compare_with"):
+                                        print(f"   ⚠️ No peers found, using LLM fallback...")
+                                        ticker = args.get("ticker", "")
+                                        fallback_prompt = [
+                                            {"role": "system", "content": load_prompt("peer_fallback/system")},
+                                            {"role": "user", "content": load_prompt("peer_fallback/user", ticker=ticker)}
+                                        ]
+                                        llm_response = await self._call_llm(fallback_prompt)
+                                        try:
+                                            obj_match = re.search(r'\{[\s\S]*?\}', llm_response)
+                                            if obj_match:
+                                                fallback_data = json.loads(obj_match.group(0))
+                                                competitor_tickers = fallback_data.get("tickers", [])
+                                                rationale = fallback_data.get("rationale", "")
+                                                if rationale:
+                                                    print(f"   🤖 Peer rationale: {rationale}")
+                                            else:
+                                                competitor_tickers = []
+                                            if competitor_tickers:
+                                                print(f"   🤖 LLM identified competitors: {competitor_tickers}")
+                                                retry_result = await session.call_tool(
+                                                    "analyze_peers",
+                                                    arguments={"ticker": ticker, "compare_with": competitor_tickers}
+                                                )
+                                                tool_output = retry_result.content[0].text
+                                                peer_data = json.loads(tool_output)
+                                                peers_found = peer_data.get("entity_mining", {}).get("found_peers", 0)
+                                                print(f"   ✅ Retry successful: {peers_found} peers found")
+                                        except Exception as e:
+                                            print(f"   ⚠️ LLM fallback failed: {e}")
+
+                                    reference_proxy = peer_data.get("reference_proxy")
+                                    peer_context = {
+                                        "peers_found": peers_found,
+                                        "reference_proxy": reference_proxy,
+                                        "synthesis": peer_data.get("synthesis", ""),
+                                        "has_high_correlation": reference_proxy is not None
+                                    }
+                                    print(f"   📊 Peer context captured for Reflector verification")
+                                except:
+                                    pass
+
+                            if tool_name == "stock_technical":
+                                try:
+                                    tech_data = json.loads(tool_output)
+                                    rec = tech_data.get("recommendation") or tech_data.get("status", "N/A")
+                                    if tech_data.get("status") == "error":
+                                        print(f"   ⚠️ Technical tool error: {tech_data.get('error', 'unknown')}")
+                                    else:
+                                        print(f"   📈 Technical data captured: {rec}")
+                                except:
+                                    pass
+
+                            if tool_name in ("stock_news", "stock_news_sentiment"):
+                                interpretation = await self._call_news_analyst(tool_output)
+                            elif tool_name == "stock_technical":
+                                interpretation = await self._call_technical_analyst(tool_output)
+                            elif tool_name in ("stock_moirai_forecast", "stock_chronos_forecast"):
+                                interpretation = await self._call_forecast_interpreter(tool_output)
+                            else:
+                                interpretation = await self._call_executor(step, tool_output, all_findings, tips)
+                            all_findings += f"\n### [iter {iteration + 1}] Step {step.get('step')}: {step.get('reason', tool_name)}\n{interpretation}\n"
+
+                            self.procedural_memory.save_tool_execution(
+                                tool_name, args, True, interpretation
+                            )
+
+                        except Exception as e:
+                            err_type = type(e).__name__
+                            print(f"   ⚠️ Step failed: {err_type}: {e}")
+                            all_findings += f"\n### [iter {iteration + 1}] Step {step.get('step')}: Failed - {str(e)}\n"
+                            self.procedural_memory.save_tool_execution(
+                                tool_name, args, False, str(e)
+                            )
+                            # MCP 파이프 끊김 — 세션 리셋 후 부분 결과 반환
+                            if "BrokenResourceError" in err_type or "BrokenPipeError" in err_type:
+                                print("   🔴 MCP pipe broken — resetting session")
+                                await self._reset_mcp_session()
+                                if all_findings:
+                                    saved_result = await self._call_summarizer(user_task, all_findings)
+                                return saved_result or "MCP 서버 연결이 끊어졌습니다. 다시 시도해주세요."
+
+                # SUMMARIZER
+                final_result = await self._call_summarizer(user_task, all_findings)
+
+                # REFLECTOR
+                final_result, feedback, verdict = await self._call_reflector(
+                    user_task, final_result, plan_text, peer_context, tech_data,
+                    available_tools=tool_descriptions
+                )
+
+                if verdict.get("approved"):
+                    print(f"   ✅ Reflector approved on iteration {iteration + 1}")
+                    break
+
+                if iteration < MAX_ITER - 1:
+                    critique = verdict
+                    print(f"   🔁 Rejected — scheduling refinement iteration {iteration + 2}")
+                else:
+                    print("   ⚠️ Max iterations reached — using current analysis")
+
+            saved_result = final_result if final_result else "분석을 완료하지 못했습니다."
+
+            self.memory.save_trajectory(
+                user_task, plan_text, final_result,
+                feedback["score"], feedback["lessons"]
+            )
+
+            for lesson in feedback.get("lessons", []):
+                self.semantic_memory.save_knowledge(lesson, user_task)
                     
         except asyncio.CancelledError:
             # wait_for 타임아웃이나 외부 취소 — 부분 결과가 있으면 반환, 없으면 재raise
