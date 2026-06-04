@@ -35,7 +35,7 @@ When multiple salient terms appear, combine them in `query` (e.g., user: "넷플
 **Vague intent** — phrases like "어때?", "괜찮아?", "분석해줘", "어떻게 될까?", "요새 어떤지".
 - Override the "fewer steps" guideline — produce a comprehensive plan (5–7 steps).
 - By default include: `stock_price`, `stock_technical`, `stock_news`, `calculate_risk`. Skip or replace any of these if you can explain why in `reason` (e.g., user already received `stock_price` this iteration).
-- Strongly consider as independent signals: `stock_chronos_forecast` (price-only), `stock_news_sentiment` (news-only), `analyze_drivers`.
+- Strongly consider as independent signals: `stock_moirai_forecast` (price-only), `stock_news_sentiment` (news-only), `analyze_drivers`.
 
 **Discovery vs Lookup**
 - LOOKUP — user names a specific event/term: use the salient term as `query` per the core principle.
