@@ -750,9 +750,16 @@ Return the JSON verdict object now:"""}
                                                 llm_response = await self._call_llm(fallback_prompt)
 
                                                 try:
-                                                    ticker_match = re.search(r'\[.*?\]', llm_response)
-                                                    if ticker_match:
-                                                        competitor_tickers = json.loads(ticker_match.group(0))
+                                                    obj_match = re.search(r'\{[\s\S]*?\}', llm_response)
+                                                    if obj_match:
+                                                        fallback_data = json.loads(obj_match.group(0))
+                                                        competitor_tickers = fallback_data.get("tickers", [])
+                                                        rationale = fallback_data.get("rationale", "")
+                                                        if rationale:
+                                                            print(f"   🤖 Peer rationale: {rationale}")
+                                                    else:
+                                                        competitor_tickers = []
+                                                    if competitor_tickers:
                                                         print(f"   🤖 LLM identified competitors: {competitor_tickers}")
 
                                                         retry_result = await session.call_tool(
