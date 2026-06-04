@@ -1,73 +1,148 @@
 # Memento AI Agent: Stock Expert Edition 🧠
 
-실시간 뉴스 감성 분석(FinBERT)과 시계열 예측(Chronos-2 / Moirai 2.0)을 결합한 하이브리드 주식 분석 에이전트입니다.
+실시간 뉴스 감성 분석과 시계열 예측(Moirai 2.0)을 결합한 멀티-에이전트 주식 분석 시스템입니다.  
+사용자의 자연어 질문을 받아 Intent Extraction → Planning → Execution → Reflection 파이프라인으로 전문가 수준의 한국어 투자 리포트를 생성합니다.
 
 ## 🚀 Key Features
-- **🤖 Dual Forecasting**: Amazon Chronos-2(다변량 시계열)와 Salesforce Moirai 2.0을 독립 신호로 병행 운용, 에이전트가 두 예측의 합의/불일치를 판단.
-- **📈 Multivariate Context**: Chronos-2는 종가(Close) + 정규화 거래량(volume_norm) + 일중 변동성((H-L)/C) 3개 변수를 동시에 입력해 단변량 대비 풍부한 컨텍스트 제공.
-- **📊 Peer Analysis**: STL 분해(Seasonal-Trend-Loess)를 통한 경쟁사 간 트렌드 상관관계 분석.
-- **🔎 Real-time Search**: DuckDuckGo를 활용한 최신 시장 이슈 추적.
-- **💻 Interactive Dashboard**: Streamlit 기반의 실시간 모니터링 및 메모리 뷰어.
-- **🐳 Docker Ready**: 복잡한 환경 설정 없이 컨테이너로 즉시 실행 가능.
-- **📢 Telegram Alert**: 일일 분석 리포트 자동 전송 기능.
+
+- **🤖 Multi-Agent Pipeline**: Intent Extractor → Planner → Executor (뉴스/기술/예측 전문 Agent) → Summarizer → Reflector
+- **📈 Moirai 2.0 Primary Forecaster**: Salesforce Moirai 2.0으로 가격 예측, Chronos-2는 보조 신호 (선택)
+- **🔄 Prediction Feedback Loop**: 5~9일 예측을 DB에 저장하고, 목표일 이후 yfinance로 자동 채점 → Planner가 적중률 기반으로 context_period 선택
+- **🏭 Sector Top-Down Analysis**: "바이오주 어때?" 같은 섹터 쿼리 시 stock_sector → stock_compare → winner 집중 분석
+- **📊 Peer Analysis**: 경쟁사 상관관계 분석으로 Reflector 신호 교차 검증
+- **⚡ MCP Session Singleton**: subprocess를 앱 수명 동안 유지, Moirai 콜드 스타트 최초 1회로 제한
+- **🐳 Docker Ready**: 컨테이너 즉시 실행 가능
+- **📢 Telegram Digest**: 워치리스트 종목 일일 리포트 자동 전송
+
+## 🏗️ Architecture
+
+```
+사용자 쿼리 (자연어)
+    ↓
+Intent Extractor  — subject, intent_class, forecast_horizon, search_keywords 추출
+    ↓
+Planner          — MCP 툴 호출 플랜 생성 (섹터 쿼리 시 Top-down 고정 플랜)
+    ↓
+Executor Loop (MAX_ITER=2, MAX_STEPS_PER_ITER=8)
+  ├─ stock_news / stock_news_sentiment  →  News Analyst
+  ├─ stock_technical                    →  Technical Analyst
+  ├─ stock_moirai_forecast              →  Forecast Interpreter
+  └─ 그 외                              →  Generic Executor
+    ↓
+Summarizer  →  Reflector  →  최종 한국어 리포트
+    ↓
+Episodic/Semantic Memory 저장 (다음 쿼리에 활용)
+```
 
 ## 🛠️ Quick Start
 
 ### 1. 환경 설정 (.env)
-`.env` 파일에 필요한 API 키를 설정합니다. (Gemini, Groq, OpenAI 등 선택 가능)
+
+`.env.example`을 복사해서 API 키를 설정합니다.
+
+```bash
+cp .env.example .env
+```
+
+주요 설정:
+
 ```env
-LLM_PROVIDER=gemini
-GEMINI_API_KEY=your_api_key_here
+# LLM Provider (anthropic 권장)
+LLM_PROVIDER=anthropic
+ANTHROPIC_API_KEY=your_api_key_here
+
+# 에이전트별 모델 개별 지정 (미설정 시 LLM_MODEL 사용)
+# PLANNER_MODEL=claude-sonnet-4-6
+# REFLECTOR_MODEL=claude-sonnet-4-6
+# EXECUTOR_MODEL=claude-haiku-4-5-20251001
+
+# Moirai 2.0 (기본 활성, 비상업적 용도 — CC-BY-NC-4.0)
+MOIRAI_ENABLED=true
+MOIRAI_MODEL=Salesforce/moirai-2.0-R-small
+
+# Chronos-2 (보조 신호, 기본 비활성 — Apache 2.0)
+CHRONOS_ENABLED=false
+
+# 텔레그램 다이제스트
 TELEGRAM_BOT_TOKEN=your_bot_token
 TELEGRAM_CHAT_ID=your_chat_id
-SCHEDULER_WATCHLIST=005930.KS,NVDA
-
-# 예측 모델 선택 (기본값 그대로 사용 가능)
-CHRONOS_MODEL=amazon/chronos-2          # v2 다변량 (기본값)
-MOIRAI_ENABLED=false                    # true로 설정 시 Moirai 2.0 활성화 (비상업적 용도)
-MOIRAI_MODEL=Salesforce/moirai-2.0-R-small
+SCHEDULER_WATCHLIST=005930.KS,000660.KS,NVDA
 ```
 
-### 2. Docker로 실행 (추천)
+### 2. Docker로 실행 (권장)
+
 ```bash
-# 스케줄러(텔레그램 리포트)만 실행 — 디폴트
-docker compose up -d --build
+# 이미지 빌드
+docker compose build
 
-# WebUI까지 함께 실행 (포트 8000)
-docker compose --profile web up -d --build
+# 스케줄러만 실행 (텔레그램 리포트)
+docker compose up -d
+
+# Web UI 포함 실행 (http://localhost:8000)
+docker compose --profile web up -d
 ```
-WebUI(`app` 서비스)는 `web` 프로파일에 묶여 있어 명시적으로 켜야 뜹니다.
-스케줄러는 단독 실행되며 web 서비스에 의존하지 않습니다.
+
+> **주의**: 코드 변경 후 반드시 컨테이너 재생성 필요  
+> `docker restart`는 이미지를 교체하지 않습니다.
+> ```bash
+> docker compose --profile web up -d --build
+> ```
 
 ### 3. 로컬 실행
+
 ```bash
-# 의존성 설치
 pip install -r requirements.txt
-playwright install chromium
 
-# 대시보드 실행
-streamlit run src/dashboard/app.py
+# Web UI
+python -m web.app
 
-# 텔레그램 리포트 즉시 전송 테스트
-python3 src/scheduler/main.py --once
+# 스케줄러 즉시 실행 (텔레그램 전송)
+python -m scheduler.main --once
 ```
 
 ## 📁 Project Structure
-- `src/dashboard/`: Streamlit 대시보드 앱
-- `src/web/`: Flask 기반 웹 서비스
-- `src/scheduler/`: 일일 리포트 스케줄러 (Telegram 전송)
-- `src/stock-price-predictor/`: Chronos-2 / Moirai 2.0 + FinBERT AI 모델 로직
-- `src/tools/`: 주가 조회, 뉴스 검색, 기술적 분석 등 핵심 툴셋
+
+```
+src/
+├── agent_client.py       # 멀티-에이전트 파이프라인 (핵심)
+├── mcp_server.py         # MCP 툴 서버 (주가/뉴스/예측/리스크 등)
+├── config.py             # 환경변수 및 per-agent 모델 설정
+├── database.py           # SQLite (예측 로그, 메모리, 설정)
+├── memory_store.py       # Episodic / Semantic / Procedural Memory
+├── prompts/              # 에이전트별 시스템 프롬프트
+│   ├── intent_extractor/ # 쿼리 구조화 (forecast_horizon 포함)
+│   ├── planner/          # 툴 호출 플랜 생성
+│   ├── executor/         # 툴 결과 해석
+│   ├── news_analyst/     # 뉴스/감성 신호 전문 해석
+│   ├── technical_analyst/# 기술적 지표 전문 해석
+│   ├── forecast_interpreter/ # 예측 결과 근거 해설
+│   ├── summarizer/       # 최종 한국어 리포트 생성
+│   └── reflector/        # 품질 검토 및 재실행 판단
+├── tools/stock/          # 주가/기술분석/뉴스/예측 툴
+├── web/                  # FastAPI 웹 서버 (port 8000)
+└── scheduler/            # 텔레그램 일일 다이제스트
+```
 
 ## 🤖 Forecasting Models
 
-| 모델 | 버전 | 입력 | 라이선스 | 기본값 |
-|------|------|------|---------|--------|
-| [Chronos-2](https://huggingface.co/amazon/chronos-2) | v2 | 다변량 (Close + Volume + H-L range) | Apache 2.0 | ✅ |
-| [Chronos-Bolt](https://huggingface.co/amazon/chronos-bolt-small) | v1.x | 단변량 (Close) | Apache 2.0 | - |
-| [Moirai 2.0](https://huggingface.co/Salesforce/moirai-2.0-R-small) | 2.0 | 단변량 (Close) | CC-BY-NC-4.0 | 비활성 |
+| 모델 | 역할 | 라이선스 | 기본값 |
+|------|------|---------|--------|
+| [Moirai 2.0-R-small](https://huggingface.co/Salesforce/moirai-2.0-R-small) | Primary — 가격 예측, 예측 피드백 루프 | CC-BY-NC-4.0 | ✅ 활성 |
+| [Chronos-2](https://huggingface.co/amazon/chronos-2) | Secondary — 보조 신호 | Apache 2.0 | 비활성 |
 
-> **Moirai 2.0**은 비상업적 연구 목적으로만 사용 가능합니다. `.env`에서 `MOIRAI_ENABLED=true`로 활성화하세요.
+> **Moirai 2.0**은 비상업적 연구 목적으로만 사용 가능합니다.
+
+## 🔮 Prediction Feedback Loop
+
+에이전트가 `forecast_steps < 10`인 단기 예측을 수행할 때마다 `prediction_log` 테이블에 자동 저장됩니다.  
+스케줄러 실행 시 목표일이 지난 예측을 yfinance로 채점하여 방향 적중률을 누적합니다.  
+Planner는 `get_forecast_accuracy` 툴로 ticker별 적중률을 조회하여 최적 `context_period`를 선택합니다.
+
+```bash
+# 수동 채점 실행
+python -m scheduler.main --once
+```
 
 ## ⚖️ License
+
 MIT License
