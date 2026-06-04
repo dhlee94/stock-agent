@@ -754,6 +754,12 @@ Return the JSON verdict object now:"""}
                             # Skip the executor and let the Summarizer/Reflector re-reason over existing findings.
                             print("   ℹ️ No new plan steps — re-summarizing with existing findings")
                         else:
+                            # Step 수 상한: iteration마다 최대 8 step
+                            MAX_STEPS_PER_ITER = 8
+                            if len(plan) > MAX_STEPS_PER_ITER:
+                                print(f"   ⚠️ Plan has {len(plan)} steps — capping at {MAX_STEPS_PER_ITER}")
+                                plan = plan[:MAX_STEPS_PER_ITER]
+
                             plan_text += f"\n--- Iteration {iteration + 1} ---\n" + json.dumps(plan, ensure_ascii=False, indent=2)
 
                             # EXECUTOR: run each step in this iteration's plan
@@ -857,12 +863,18 @@ Return the JSON verdict object now:"""}
                                     )
 
                                 except Exception as e:
-                                    print(f"   ⚠️ Step failed: {e}")
+                                    err_type = type(e).__name__
+                                    print(f"   ⚠️ Step failed: {err_type}: {e}")
                                     all_findings += f"\n### [iter {iteration + 1}] Step {step.get('step')}: Failed - {str(e)}\n"
-                                    # Save failure to procedural memory
                                     self.procedural_memory.save_tool_execution(
                                         tool_name, args, False, str(e)
                                     )
+                                    # MCP 파이프 끊김 — 더 이상 툴 호출 불가, 즉시 요약으로
+                                    if "BrokenResourceError" in err_type or "BrokenPipeError" in err_type:
+                                        print("   🔴 MCP pipe broken — summarizing with collected findings")
+                                        if all_findings:
+                                            saved_result = await self._call_summarizer(user_task, all_findings)
+                                        return saved_result or "MCP 서버 연결이 끊어졌습니다. 다시 시도해주세요."
 
                         # SUMMARIZER: regenerate the analysis from the latest cumulative findings
                         final_result = await self._call_summarizer(user_task, all_findings)
