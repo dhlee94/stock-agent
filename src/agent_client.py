@@ -10,7 +10,10 @@ from typing import List, Dict, Any, Optional, Tuple
 from config import (
     LLM_PROVIDER, LLM_MODEL,
     GEMINI_API_KEY, OPENAI_API_KEY, GROQ_API_KEY, ANTHROPIC_API_KEY,
-    DEFAULT_MARKET, RISK_TOLERANCE, SRC_DIR
+    DEFAULT_MARKET, RISK_TOLERANCE, SRC_DIR,
+    PLANNER_MODEL, EXECUTOR_MODEL, REFLECTOR_MODEL, SUMMARIZER_MODEL,
+    INTENT_EXTRACTOR_MODEL, NEWS_ANALYST_MODEL, TECHNICAL_ANALYST_MODEL,
+    FORECAST_INTERPRETER_MODEL,
 )
 from database import get_setting
 from tools.stock.kr_listing import lookup_kr_ticker
@@ -153,33 +156,34 @@ class MementoAgent:
             print(f"[Agent] Using Gemini ({LLM_MODEL}).")
             self.model = genai.GenerativeModel(LLM_MODEL)
 
-    async def _call_llm(self, messages):
+    async def _call_llm(self, messages, model: str = None):
         global LAST_API_CALL
         if MOCK_MODE:
             return self.llm.chat(messages)
-        
-        # Rate limiting: Groq is fast, less limiting needed
+
+        effective_model = model or LLM_MODEL
+
+        # Rate limiting
         if LLM_PROVIDER == "groq":
-            min_wait = 0.5  # Reduced from 1
+            min_wait = 0.5
         elif LLM_PROVIDER == "anthropic":
             min_wait = 0.5
         else:
-            min_wait = 2.0  # Reduced from 7 (Gemini Flash has decent rate limits)
-        
+            min_wait = 2.0
+
         elapsed = time.time() - LAST_API_CALL
         if elapsed < min_wait:
             wait_time = min_wait - elapsed
             print(f"   ⏳ Rate limiting: waiting {wait_time:.1f}s...")
             await asyncio.sleep(wait_time)
         LAST_API_CALL = time.time()
-        
+
         if LLM_PROVIDER == "openai":
-            # Using asyncio wrapper for OpenAI if available, or just run in executor
             loop = asyncio.get_event_loop()
             response = await loop.run_in_executor(
                 None,
                 lambda: self.client.chat.completions.create(
-                    model=LLM_MODEL,
+                    model=effective_model,
                     messages=messages,
                     temperature=0.3
                 )
@@ -190,7 +194,7 @@ class MementoAgent:
             response = await loop.run_in_executor(
                 None,
                 lambda: self.client.chat.completions.create(
-                    model=LLM_MODEL,
+                    model=effective_model,
                     messages=messages,
                     temperature=0.3,
                     max_tokens=4096
@@ -198,22 +202,19 @@ class MementoAgent:
             )
             return response.choices[0].message.content
         elif LLM_PROVIDER == "anthropic":
-            # Anthropic requires `system` as a separate top-level param;
-            # only user/assistant turns belong in `messages`.
             system_parts = [m["content"] for m in messages if m["role"] == "system"]
             chat_messages = [
                 {"role": m["role"], "content": m["content"]}
                 for m in messages if m["role"] in ("user", "assistant")
             ]
             kwargs = {
-                "model": LLM_MODEL,
+                "model": effective_model,
                 "max_tokens": 4096,
                 "temperature": 0.3,
                 "messages": chat_messages,
             }
             if system_parts:
                 kwargs["system"] = "\n\n".join(system_parts)
-
             loop = asyncio.get_event_loop()
             response = await loop.run_in_executor(
                 None,
@@ -221,7 +222,13 @@ class MementoAgent:
             )
             return response.content[0].text
         else:
-            # Gemini format
+            # Gemini: create a new GenerativeModel if model override differs
+            import google.generativeai as genai
+            gem_model = (
+                genai.GenerativeModel(effective_model)
+                if effective_model != LLM_MODEL
+                else self.model
+            )
             prompt = ""
             for msg in messages:
                 role = msg["role"]
@@ -232,9 +239,7 @@ class MementoAgent:
                     prompt += f"User: {content}\n\n"
                 elif role == "assistant":
                     prompt += f"Assistant: {content}\n\n"
-            
-            # Gemini SDK has async methods
-            response = await self.model.generate_content_async(prompt)
+            response = await gem_model.generate_content_async(prompt)
             return response.text
 
     async def _call_intent_extractor(self, user_task: str) -> Dict[str, Any]:
@@ -249,7 +254,7 @@ class MementoAgent:
             {"role": "system", "content": load_prompt("intent_extractor/system")},
             {"role": "user", "content": user_task},
         ]
-        response = await self._call_llm(extractor_prompt)
+        response = await self._call_llm(extractor_prompt, model=INTENT_EXTRACTOR_MODEL)
 
         try:
             json_match = re.search(r"\{[\s\S]*\}", response)
@@ -338,7 +343,7 @@ class MementoAgent:
             {"role": "user", "content": f"Create an execution plan for: {user_task}"}
         ]
 
-        response = await self._call_llm(planner_prompt)
+        response = await self._call_llm(planner_prompt, model=PLANNER_MODEL)
 
         # Parse the plan
         try:
@@ -385,8 +390,35 @@ Previous context:
 Summarize the key findings from this tool output:"""}
         ]
 
-        response = await self._call_llm(executor_prompt)
+        response = await self._call_llm(executor_prompt, model=EXECUTOR_MODEL)
         return response
+
+    async def _call_news_analyst(self, tool_result: str) -> str:
+        """Specialist: interprets news/sentiment tool output into a structured signal."""
+        print("\n📰 [News Analyst] Interpreting news signal...")
+        prompt = [
+            {"role": "system", "content": load_prompt("news_analyst/system")},
+            {"role": "user", "content": f"다음 뉴스/감성 데이터를 분석하세요:\n\n{tool_result[:3000]}"},
+        ]
+        return await self._call_llm(prompt, model=NEWS_ANALYST_MODEL)
+
+    async def _call_technical_analyst(self, tool_result: str) -> str:
+        """Specialist: interprets technical indicator tool output into a structured signal."""
+        print("\n📈 [Technical Analyst] Interpreting technical signal...")
+        prompt = [
+            {"role": "system", "content": load_prompt("technical_analyst/system")},
+            {"role": "user", "content": f"다음 기술적 지표 데이터를 분석하세요:\n\n{tool_result[:3000]}"},
+        ]
+        return await self._call_llm(prompt, model=TECHNICAL_ANALYST_MODEL)
+
+    async def _call_forecast_interpreter(self, tool_result: str) -> str:
+        """Specialist: explains why the forecast model produced this result."""
+        print("\n🔮 [Forecast Interpreter] Explaining forecast reasoning...")
+        prompt = [
+            {"role": "system", "content": load_prompt("forecast_interpreter/system")},
+            {"role": "user", "content": f"다음 시계열 예측 결과를 해석하세요:\n\n{tool_result[:3000]}"},
+        ]
+        return await self._call_llm(prompt, model=FORECAST_INTERPRETER_MODEL)
 
     async def _call_summarizer(self, user_task: str, all_findings: str) -> str:
         """
@@ -404,7 +436,7 @@ Gathered Information:
 Provide your final analysis and recommendation (include Target Price, Stop-loss, and Risk/Reward):"""}
         ]
         
-        response = await self._call_llm(summary_prompt)
+        response = await self._call_llm(summary_prompt, model=SUMMARIZER_MODEL)
         return response
 
     async def _extract_reflection_feedback(self, user_task: str, plan_text: str, final_analysis: str) -> dict:
@@ -428,7 +460,7 @@ Extract score and lessons:"""}
         ]
 
         try:
-            response = await self._call_llm(feedback_prompt)
+            response = await self._call_llm(feedback_prompt, model=REFLECTOR_MODEL)
             json_match = re.search(r'\{[\s\S]*\}', response)
             if json_match:
                 feedback = json.loads(json_match.group(0))
@@ -504,7 +536,7 @@ Analysis to review:
 Return the JSON verdict object now:"""}
         ]
 
-        response = await self._call_llm(reflection_prompt)
+        response = await self._call_llm(reflection_prompt, model=REFLECTOR_MODEL)
 
         verdict = self._parse_verdict(response)
         revised = verdict.get("revised_analysis")
@@ -792,8 +824,15 @@ Return the JSON verdict object now:"""}
                                         except:
                                             pass
 
-                                    # Executor interprets the result (with procedural memory tips)
-                                    interpretation = await self._call_executor(step, tool_output, all_findings, tips)
+                                    # Specialist agents for key signal tools; generic Executor otherwise
+                                    if tool_name in ("stock_news", "stock_news_sentiment"):
+                                        interpretation = await self._call_news_analyst(tool_output)
+                                    elif tool_name == "stock_technical":
+                                        interpretation = await self._call_technical_analyst(tool_output)
+                                    elif tool_name in ("stock_moirai_forecast", "stock_chronos_forecast"):
+                                        interpretation = await self._call_forecast_interpreter(tool_output)
+                                    else:
+                                        interpretation = await self._call_executor(step, tool_output, all_findings, tips)
                                     all_findings += f"\n### [iter {iteration + 1}] Step {step.get('step')}: {step.get('reason', tool_name)}\n{interpretation}\n"
 
                                     # Save to procedural memory
