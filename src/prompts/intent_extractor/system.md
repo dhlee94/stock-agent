@@ -23,12 +23,13 @@ Map time anchors in the user's query to trading days:
 - "두 달", "2개월" → `40`
 - "분기", "3개월" → `60`
 - "장기", "반년", "6개월" → `60`
-- "1년", "연간" → `120`
+- "1년", "연간" → `60`
 - No time anchor + vague forward question ("전망", "어떻게 될까", "앞으로", "outlook") → `20`
 - No time anchor + current-state question ("어때", "괜찮아", "분석해줘") → `5`
 - Pure event/news lookup with no forecast intent → `0`
 
 When multiple signals conflict, prefer the more explicit one (named period beats vague "전망").
+Maximum cap: `60` (≈ 3개월 거래일). 그 이상은 시계열 모델 신뢰도가 급감하므로 60으로 클램프.
 
 ## Intent class guide
 - `lookup` — user names a specific event/issue ("CEO 사퇴", "리콜", "실적 발표", "HBM 수율 문제")
