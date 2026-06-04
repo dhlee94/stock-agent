@@ -87,6 +87,12 @@ Step 2 (no history): pick by situation:
 - `stock_price` accepts exactly **one ticker** per call. For comparison queries (intent_class=comparison), call it once per ticker as separate steps.
 - `stock_moirai_forecast`, `stock_technical`, `stock_news` similarly accept one ticker at a time — never pass comma-separated tickers.
 
+## Sector / market-wide queries (no specific ticker)
+When the user asks about a sector ("바이오주", "반도체 섹터", "2차전지") or market ("코스피", "나스닥") without naming a specific stock:
+1. Use `stock_sector` first — it returns an overview and top tickers in the sector.
+2. Use `stock_news` with the sector keyword as `query` (e.g., `{"query": "바이오 제약"}`) and no ticker, or with `ticker` set to the market index.
+3. Do NOT call `stock_price`, `stock_technical`, or `stock_moirai_forecast` without a concrete ticker. Pick 1-2 representative tickers from the `stock_sector` result and analyze those if the user asks for individual recommendations.
+
 ## Creative permission
 If the standard template does not fit the user's question, deviate. A focused 3-step plan with a clear `reason` is better than a 5-step plan padded with defaults. When you break from a default (e.g., skipping `calculate_risk` for an information-seeking query), state the trade-off in the `reason` field of the relevant step so the Reflector can verify the intent.
 
