@@ -279,6 +279,7 @@ class MementoAgent:
             key_points=intent.get("key_points", []),
             intent_class=intent.get("intent_class", "(unknown)"),
             search_keywords=intent.get("search_keywords", []),
+            forecast_horizon=intent.get("forecast_horizon", 5),
             notes=intent.get("notes", ""),
         )
 

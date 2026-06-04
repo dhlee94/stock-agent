@@ -9,8 +9,26 @@ Given the user's natural-language request, extract the salient information so th
   "key_points": ["<every specific term the user mentioned that could shape the analysis: time anchors, events, products, people, places, sentiments, comparisons, regulations, technologies, etc. Use the user's original wording.>"],
   "intent_class": "<one of: lookup, discovery, vague_status, concern, comparison>",
   "search_keywords": ["<subset of key_points that should be passed as `query` to the news tool, translated to the target market's language — English for US tickers, Korean for KR tickers. Empty list if no specific term should be searched.>"],
+  "forecast_horizon": "<integer: number of trading days to forecast. Infer from time anchors in the query — see rules below. Use 0 if forecasting is clearly not needed (e.g., pure news/event lookup).>",
   "notes": "<one or two sentences in plain language: what the user emphasized, the dominant tone, and any nuance the structured fields above do not capture (e.g., '약한 우려 신호', 'historical context implied').>"
 }
+
+## forecast_horizon rules
+
+Map time anchors in the user's query to trading days:
+- "오늘", "지금", "현재" (no forward-looking tone) → `0` (no forecast needed)
+- "이번 주", "단기", "곧", "내일" → `5`
+- "2주", "보름" → `10`
+- "한 달", "이번 달", "월간", "30일" → `20`
+- "두 달", "2개월" → `40`
+- "분기", "3개월" → `60`
+- "장기", "반년", "6개월" → `60`
+- "1년", "연간" → `120`
+- No time anchor + vague forward question ("전망", "어떻게 될까", "앞으로", "outlook") → `20`
+- No time anchor + current-state question ("어때", "괜찮아", "분석해줘") → `5`
+- Pure event/news lookup with no forecast intent → `0`
+
+When multiple signals conflict, prefer the more explicit one (named period beats vague "전망").
 
 ## Intent class guide
 - `lookup` — user names a specific event/issue ("CEO 사퇴", "리콜", "실적 발표", "HBM 수율 문제")
@@ -43,6 +61,7 @@ User: "오늘의 넷플릭스는 어때?"
   "key_points": ["오늘", "어때"],
   "intent_class": "vague_status",
   "search_keywords": [],
+  "forecast_horizon": 5,
   "notes": "Today's overall snapshot of NFLX. No specific event named — recommend comprehensive analysis."
 }
 
@@ -52,6 +71,7 @@ User: "넷플릭스가 2월에 무슨일이 생겼는데 괜찮아?"
   "key_points": ["2월", "무슨일", "괜찮아"],
   "intent_class": "discovery",
   "search_keywords": ["February"],
+  "forecast_horizon": 5,
   "notes": "User does not know what event happened in Feb but wants to find out and assess current safety. Two-stage reasoning: discover events first, then risk-evaluate. '괜찮아' carries a mild concern tone."
 }
 
@@ -61,6 +81,7 @@ User: "삼성전자 HBM 수율 문제 어떻게 됐어?"
   "key_points": ["HBM", "수율", "문제"],
   "intent_class": "lookup",
   "search_keywords": ["HBM 수율"],
+  "forecast_horizon": 0,
   "notes": "User specifically asks about the HBM yield issue — pass '수율' as the news query to surface targeted articles."
 }
 
@@ -70,6 +91,7 @@ User: "테슬라 vs 엔비디아 어느 쪽이 나아?"
   "key_points": ["테슬라", "엔비디아", "비교"],
   "intent_class": "comparison",
   "search_keywords": [],
+  "forecast_horizon": 5,
   "notes": "Head-to-head investment comparison. Use stock_compare and analyze_peers; news on each side."
 }
 
@@ -79,7 +101,18 @@ User: "지금 SK하이닉스 팔아야 할까?"
   "key_points": ["지금", "팔아야"],
   "intent_class": "concern",
   "search_keywords": [],
+  "forecast_horizon": 5,
   "notes": "Decision-pressure question. MUST include calculate_risk and stop-loss; emphasize risk/reward over status."
+}
+
+User: "삼성전자 앞으로의 전망이 어때보여?"
+{
+  "subject": "삼성전자 (005930.KS)",
+  "key_points": ["앞으로", "전망"],
+  "intent_class": "vague_status",
+  "search_keywords": [],
+  "forecast_horizon": 20,
+  "notes": "Forward-looking outlook with no explicit time anchor — default to medium-term (20 trading days ≈ 1 month)."
 }
 
 Output ONLY the JSON object, no other text, no markdown fences.

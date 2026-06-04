@@ -206,8 +206,8 @@ def get_price_forecast_moirai(ticker: str, name: str, market: str = "KR",
             for i in range(forecast_steps)
         ]
 
-        # 5-step 예측은 피드백 루프용으로 DB에 저장 (target_date = 5 영업일 후)
-        if forecast_steps == 5 and forecast.get("direction") and cur_price:
+        # 단기 예측(< 10 step)만 피드백 루프용으로 DB에 저장
+        if forecast_steps < 10 and forecast.get("direction") and cur_price:
             try:
                 init_db()
                 target_date = forecast_dates[-1]  # 5번째 영업일

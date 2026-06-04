@@ -88,7 +88,7 @@ async def api_financials(ticker: str):
 
 @app.post("/api/analyze")
 async def api_analyze(ticker: str = Form(...), name: str = Form(...),
-                      market: str = Form("KR"), forecast_steps: int = Form(30),
+                      market: str = Form("KR"), forecast_steps: int = Form(5),
                       context_period: str = Form(None)):
     """Full AI analysis"""
     try:

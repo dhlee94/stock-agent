@@ -65,19 +65,16 @@ These two tools intentionally produce INDEPENDENT signals.
   - Only one is needed: pure technical questions ("RSI 어때?") → forecast only; pure event questions ("실적 후 분위기?") → sentiment only.
 - **Failure handling**: if a tool returns `{"status": "error", ...}` (e.g. model load failure, network), do NOT silently fabricate the signal. Continue with the remaining tools and let the Summarizer mark the missing signal as "unavailable" in the final report.
 
-## `stock_moirai_forecast` — context_period selection
-`stock_moirai_forecast` accepts `forecast_steps` and `context_period` (optional).
+## `stock_moirai_forecast` — forecast_steps and context_period
 
-**Step 1 — check history first**: Call `get_forecast_accuracy(ticker)` before forecasting.
-If ticker-specific history exists, use the `context_period` with the highest `accuracy_pct`.
-If no history yet, use the situation-based defaults below.
+**forecast_steps** — use the `forecast_horizon` value from Extracted Intent above. If no intent context is available, default to `5`.
+Predictions with `forecast_steps < 10` are automatically saved to DB for accuracy learning.
 
-**Step 2 — situation-based defaults (when no history)**:
-- Recent sharp move / event (급등락, 실적, 이벤트 직후) → `context_period="1mo"` (recent trend only)
-- Normal analysis / medium-term outlook → `context_period="1mo"` (default for 5-step learning)
-- Long-term trend / sector cycle question → `context_period="6mo"` or `"1y"`
-
-**forecast_steps for Planner learning**: Use `forecast_steps=5` when you want the prediction recorded for accuracy tracking (5 trading days = 1 week). Use `forecast_steps=30` for user-facing 30-day outlook.
+**context_period** — Step 1: Call `get_forecast_accuracy(ticker)` first. Use the `context_period` with the highest `accuracy_pct` if history exists.
+Step 2 (no history): pick by situation:
+- 급등락·이벤트 직후 → `"1mo"`
+- 일반 분석, 단기 outlook → `"1mo"`
+- 장기 추세·섹터 사이클 → `"6mo"` or `"1y"`
 
 ## Other guidelines
 - Understand the user's intent first, then choose the most relevant tools.
