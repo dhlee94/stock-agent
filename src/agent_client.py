@@ -963,6 +963,12 @@ Return the JSON verdict object now:"""}
                     for lesson in feedback.get("lessons", []):
                         self.semantic_memory.save_knowledge(lesson, user_task)
                     
+        except asyncio.CancelledError:
+            # wait_for 타임아웃이나 외부 취소 — 부분 결과가 있으면 반환, 없으면 재raise
+            print("\n⚠️ [run_for_web] Task cancelled")
+            if saved_result:
+                return saved_result
+            raise
         except BaseException as e:
             # Unwrap ExceptionGroup (anyio/MCP TaskGroups wrap inner errors) so the
             # real cause shows up instead of the generic "unhandled errors in a TaskGroup".

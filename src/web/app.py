@@ -150,10 +150,15 @@ async def api_chat(message: str = Form(...)):
             "status": "success",
             "response": result
         })
-    except asyncio.TimeoutError:
+    except (asyncio.TimeoutError, TimeoutError):
         return JSONResponse(content={
             "status": "error",
             "error": "분석 시간이 초과되었습니다 (5분). 더 구체적인 종목명을 입력하시거나 다시 시도해주세요."
+        })
+    except asyncio.CancelledError:
+        return JSONResponse(content={
+            "status": "error",
+            "error": "요청이 취소되었습니다. 다시 시도해주세요."
         })
     except Exception as e:
         return JSONResponse(content={
