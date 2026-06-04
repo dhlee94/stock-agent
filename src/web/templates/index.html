@@ -48,7 +48,7 @@
             </form>
             <div id="chatLoading" class="chat-loading hidden">
                 <div class="spinner"></div>
-                <p>AI가 분석 중입니다... (최대 1분 소요)</p>
+                <p id="chatLoadingMsg">AI가 분석 중입니다... (복잡한 쿼리는 3~5분 소요될 수 있습니다)</p>
             </div>
             <div id="chatResponse" class="chat-response hidden"></div>
         </div>
@@ -221,10 +221,32 @@
                 const formData = new FormData();
                 formData.append('message', message);
 
+                // 서버 타임아웃(300s)보다 조금 긴 310초 설정
+                const controller = new AbortController();
+                const timeoutId = setTimeout(() => controller.abort(), 310000);
+
+                // 로딩 메시지 주기적 업데이트
+                const loadingMsgs = [
+                    'AI가 분석 중입니다...',
+                    '데이터를 수집하고 있습니다...',
+                    '섹터 및 종목을 분석 중입니다...',
+                    '예측 모델을 실행 중입니다...',
+                    '최종 리포트를 작성 중입니다...'
+                ];
+                let msgIdx = 0;
+                const msgTimer = setInterval(() => {
+                    msgIdx = (msgIdx + 1) % loadingMsgs.length;
+                    const el = document.getElementById('chatLoadingMsg');
+                    if (el) el.textContent = loadingMsgs[msgIdx];
+                }, 15000);
+
                 const response = await fetch('/api/chat', {
                     method: 'POST',
-                    body: formData
+                    body: formData,
+                    signal: controller.signal
                 });
+                clearTimeout(timeoutId);
+                clearInterval(msgTimer);
                 const data = await response.json();
 
                 const responseEl = document.getElementById('chatResponse');
@@ -235,7 +257,12 @@
                 }
                 responseEl.classList.remove('hidden');
             } catch (error) {
-                document.getElementById('chatResponse').innerHTML = `<div class="chat-error">오류: ${error.message}</div>`;
+                clearTimeout(timeoutId);
+                clearInterval(msgTimer);
+                const msg = error.name === 'AbortError'
+                    ? '분석 시간이 초과되었습니다 (5분). 더 구체적인 종목명을 입력하거나 다시 시도해주세요.'
+                    : `오류: ${error.message}`;
+                document.getElementById('chatResponse').innerHTML = `<div class="chat-error">${msg}</div>`;
                 document.getElementById('chatResponse').classList.remove('hidden');
             } finally {
                 document.getElementById('chatLoading').classList.add('hidden');
