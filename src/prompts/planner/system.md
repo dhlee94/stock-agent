@@ -83,6 +83,10 @@ Step 2 (no history): pick by situation:
 - When past examples exist in memory, learn from their structure but adapt to the current request.
 - **Event extraction (LOOKUP)** — If the user names a specific event (CEO change/resignation, earnings release, lawsuit, regulatory issue, product launch, M&A, layoffs, supply deal, etc.), pass that event keyword as the `query` argument to `stock_news` in addition to `ticker`. Use the target market's language: English for US, Korean for KR. Example: "요즘 대표가 사퇴했다는데" → `stock_news` with `{"ticker": "NFLX", "query": "CEO resignation"}`. Without `query`, only a generic news feed is returned and the specific event may be missed.
 
+## Tool constraints
+- `stock_price` accepts exactly **one ticker** per call. For comparison queries (intent_class=comparison), call it once per ticker as separate steps.
+- `stock_moirai_forecast`, `stock_technical`, `stock_news` similarly accept one ticker at a time — never pass comma-separated tickers.
+
 ## Creative permission
 If the standard template does not fit the user's question, deviate. A focused 3-step plan with a clear `reason` is better than a 5-step plan padded with defaults. When you break from a default (e.g., skipping `calculate_risk` for an information-seeking query), state the trade-off in the `reason` field of the relevant step so the Reflector can verify the intent.
 

@@ -156,7 +156,7 @@ class MementoAgent:
             print(f"[Agent] Using Gemini ({LLM_MODEL}).")
             self.model = genai.GenerativeModel(LLM_MODEL)
 
-    async def _call_llm(self, messages, model: str = None):
+    async def _call_llm(self, messages, model: str = None, max_tokens: int = 4096):
         global LAST_API_CALL
         if MOCK_MODE:
             return self.llm.chat(messages)
@@ -185,7 +185,8 @@ class MementoAgent:
                 lambda: self.client.chat.completions.create(
                     model=effective_model,
                     messages=messages,
-                    temperature=0.3
+                    temperature=0.3,
+                    max_tokens=max_tokens,
                 )
             )
             return response.choices[0].message.content
@@ -197,7 +198,7 @@ class MementoAgent:
                     model=effective_model,
                     messages=messages,
                     temperature=0.3,
-                    max_tokens=4096
+                    max_tokens=max_tokens,
                 )
             )
             return response.choices[0].message.content
@@ -209,7 +210,7 @@ class MementoAgent:
             ]
             kwargs = {
                 "model": effective_model,
-                "max_tokens": 4096,
+                "max_tokens": max_tokens,
                 "temperature": 0.3,
                 "messages": chat_messages,
             }
@@ -536,7 +537,7 @@ Analysis to review:
 Return the JSON verdict object now:"""}
         ]
 
-        response = await self._call_llm(reflection_prompt, model=REFLECTOR_MODEL)
+        response = await self._call_llm(reflection_prompt, model=REFLECTOR_MODEL, max_tokens=8192)
 
         verdict = self._parse_verdict(response)
         revised = verdict.get("revised_analysis")
@@ -572,11 +573,25 @@ Return the JSON verdict object now:"""}
         if not response:
             return default_approved
         try:
+            # 가장 바깥쪽 { } 블록을 찾아 파싱 — revised_analysis가 길어도 대응
             match = re.search(r'\{[\s\S]*\}', response)
             if not match:
                 print("   ⚠️ Reflector output had no JSON object — defaulting to approved")
                 return default_approved
-            verdict = json.loads(match.group(0))
+            raw = match.group(0)
+            try:
+                verdict = json.loads(raw)
+            except json.JSONDecodeError:
+                # revised_analysis 안의 줄바꿈·특수문자로 JSON이 깨진 경우
+                # approved / confidence 만 greedy 추출해서 최소 verdict 반환
+                approved_m = re.search(r'"approved"\s*:\s*(true|false)', raw, re.I)
+                conf_m = re.search(r'"confidence"\s*:\s*"(\w+)"', raw)
+                print("   ⚠️ Reflector JSON partially broken — extracting approved/confidence only")
+                return {
+                    **default_approved,
+                    "approved": approved_m.group(1).lower() == "true" if approved_m else True,
+                    "confidence": conf_m.group(1) if conf_m else "Medium",
+                }
             verdict.setdefault("approved", True)
             verdict.setdefault("confidence", "Medium")
             verdict.setdefault("logical_issues", [])
@@ -584,8 +599,8 @@ Return the JSON verdict object now:"""}
             verdict.setdefault("suggested_tools", [])
             verdict.setdefault("revised_analysis", None)
             return verdict
-        except json.JSONDecodeError as e:
-            print(f"   ⚠️ Reflector JSON parse failed ({e}) — defaulting to approved")
+        except Exception as e:
+            print(f"   ⚠️ Reflector parse failed ({e}) — defaulting to approved")
             return default_approved
 
     async def run(self, user_task: str):
