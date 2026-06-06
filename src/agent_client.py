@@ -15,8 +15,11 @@ from config import (
     INTENT_EXTRACTOR_MODEL, NEWS_ANALYST_MODEL, TECHNICAL_ANALYST_MODEL,
     FORECAST_INTERPRETER_MODEL,
 )
-from database import get_setting
+from database import get_setting, reembed_if_model_changed
 from tools.stock.kr_listing import lookup_kr_ticker
+
+# Re-embed stored memories if the embedding model was changed
+reembed_if_model_changed()
 from tools.stock.us_listing import lookup_us_ticker, is_valid_us_ticker
 from tools.stock.market_utils import NAME_TO_TICKER
 

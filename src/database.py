@@ -577,3 +577,60 @@ def migrate_from_json():
 # Always run init_db on import — CREATE TABLE IF NOT EXISTS is idempotent,
 # so existing DBs are safe; new tables added in upgrades get created too.
 init_db()
+
+
+def reembed_if_model_changed(new_model_name: str = "sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2") -> int:
+    """Re-embed episodic/semantic memory rows when the embedding model changes.
+
+    Stores the active model name in a settings row. If it differs from
+    new_model_name, all embedding_json fields are regenerated. Returns the
+    number of rows re-embedded (0 when nothing changed).
+    """
+    current = get_setting("embedding_model", "")
+    if current == new_model_name:
+        return 0
+
+    print(f"🔄 [DB] Embedding model changed ({current or 'none'} → {new_model_name}). Re-embedding memory...")
+
+    try:
+        from transformers import AutoTokenizer, AutoModel
+        import torch, numpy as np
+
+        tok = AutoTokenizer.from_pretrained(new_model_name)
+        model = AutoModel.from_pretrained(new_model_name)
+        model.eval()
+
+        def embed(text: str) -> list:
+            inp = tok(text.replace("\n", " "), return_tensors="pt",
+                      padding=True, truncation=True, max_length=512)
+            with torch.no_grad():
+                out = model(**inp)
+            return out.last_hidden_state.mean(dim=1)[0].tolist()
+
+        count = 0
+        with get_connection() as conn:
+            cursor = conn.cursor()
+
+            # Re-embed episodic_memory (task field)
+            cursor.execute("SELECT id, task FROM episodic_memory")
+            for row_id, task in cursor.fetchall():
+                new_emb = json.dumps(embed(task))
+                cursor.execute("UPDATE episodic_memory SET embedding_json=? WHERE id=?",
+                               (new_emb, row_id))
+                count += 1
+
+            # Re-embed semantic_memory (lesson field)
+            cursor.execute("SELECT id, lesson FROM semantic_memory")
+            for row_id, lesson in cursor.fetchall():
+                new_emb = json.dumps(embed(lesson))
+                cursor.execute("UPDATE semantic_memory SET embedding_json=? WHERE id=?",
+                               (new_emb, row_id))
+                count += 1
+
+        set_setting("embedding_model", new_model_name)
+        print(f"   ✅ Re-embedded {count} rows with {new_model_name}")
+        return count
+
+    except Exception as e:
+        print(f"   ❌ Re-embedding failed: {e}")
+        return 0

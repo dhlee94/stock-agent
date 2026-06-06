@@ -44,15 +44,18 @@ class MemoryStore:
                 )
                 return result.embeddings[0].values
             except Exception as e:
-                pass  # Silent fallback to local
+                print(f"⚠️ Gemini embedding failed ({type(e).__name__}) — falling back to local model")
 
-        # 3. 🚀 Local Embedding Fallback (Singleton Pattern)
+        # 3. Local Embedding Fallback — multilingual model (Korean-aware)
         try:
             from transformers import AutoTokenizer, AutoModel
             import torch
-            
-            model_name = "sentence-transformers/all-distilroberta-v1"
-            
+
+            # paraphrase-multilingual-MiniLM-L12-v2: 50+ languages including Korean
+            # Replaced all-distilroberta-v1 (English-only, caused Korean queries to
+            # all score ~0.93 similarity regardless of content)
+            model_name = "sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2"
+
             # Load only once per process
             if MemoryStore._local_tokenizer is None:
                 print(f"📡 Loading local embedding model ({model_name})...")
