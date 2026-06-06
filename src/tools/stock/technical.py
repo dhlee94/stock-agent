@@ -5,26 +5,32 @@ import json
 import yfinance as yf
 import numpy as np
 from typing import List
+from utils.response import ToolResponse
 
 
 def _calculate_rsi(prices: List[float], period: int = 14) -> float:
-    """Calculate Relative Strength Index"""
+    """Calculate RSI using Wilder's smoothing (standard definition)."""
     if len(prices) < period + 1:
         return None
-    
+
     deltas = np.diff(prices)
-    gains = np.where(deltas > 0, deltas, 0)
-    losses = np.where(deltas < 0, -deltas, 0)
-    
-    avg_gain = np.mean(gains[-period:])
-    avg_loss = np.mean(losses[-period:])
-    
+    gains = np.where(deltas > 0, deltas, 0.0)
+    losses = np.where(deltas < 0, -deltas, 0.0)
+
+    # Seed with simple average of the first `period` values
+    avg_gain = float(np.mean(gains[:period]))
+    avg_loss = float(np.mean(losses[:period]))
+
+    # Wilder's EMA for the remaining values (smoothing factor = 1/period)
+    for g, l in zip(gains[period:], losses[period:]):
+        avg_gain = (avg_gain * (period - 1) + g) / period
+        avg_loss = (avg_loss * (period - 1) + l) / period
+
     if avg_loss == 0:
         return 100.0
-    
+
     rs = avg_gain / avg_loss
-    rsi = 100 - (100 / (1 + rs))
-    return round(rsi, 2)
+    return round(100 - (100 / (1 + rs)), 2)
 
 
 def _calculate_macd(prices: List[float]) -> dict:
@@ -51,12 +57,12 @@ def _calculate_macd(prices: List[float]) -> dict:
 
 
 def _ema(data: np.ndarray, period: int) -> np.ndarray:
-    """Calculate Exponential Moving Average"""
+    """EMA seeded with SMA of the first `period` values (standard definition)."""
     alpha = 2 / (period + 1)
-    ema = np.zeros_like(data)
-    ema[0] = data[0]
-    for i in range(1, len(data)):
-        ema[i] = alpha * data[i] + (1 - alpha) * ema[i-1]
+    ema = np.zeros_like(data, dtype=float)
+    ema[period - 1] = np.mean(data[:period])
+    for i in range(period, len(data)):
+        ema[i] = alpha * data[i] + (1 - alpha) * ema[i - 1]
     return ema
 
 
@@ -67,7 +73,7 @@ def _calculate_bollinger_bands(prices: List[float], period: int = 20, std_dev: i
     
     prices = np.array(prices)
     sma = np.mean(prices[-period:])
-    std = np.std(prices[-period:])
+    std = np.std(prices[-period:], ddof=1)  # sample std (Bollinger standard definition)
     
     upper = sma + (std_dev * std)
     lower = sma - (std_dev * std)
@@ -114,8 +120,6 @@ def _calculate_moving_averages(prices: List[float]) -> dict:
     }
 
 
-from utils.response import ToolResponse
-
 def technical_analysis(ticker: str, period: str = "6mo") -> str:
     """
     Perform comprehensive technical analysis on a stock.
@@ -130,8 +134,18 @@ def technical_analysis(ticker: str, period: str = "6mo") -> str:
     try:
         stock = yf.Ticker(ticker)
         hist = stock.history(period=period)
-        
-        if hist.empty or len(hist) < 30:
+
+        # Fallback to progressively longer periods when data is sparse
+        if hist.empty or len(hist) < 20:
+            for fallback in ["3mo", "6mo", "1y"]:
+                if fallback == period:
+                    continue
+                hist = stock.history(period=fallback)
+                if not hist.empty and len(hist) >= 20:
+                    period = fallback
+                    break
+
+        if hist.empty or len(hist) < 20:
             return ToolResponse.error("Insufficient data for analysis")
         
         prices = hist['Close'].tolist()

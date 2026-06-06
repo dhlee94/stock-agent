@@ -435,11 +435,11 @@ def get_forecast_accuracy(ticker: str, min_samples: int = 3) -> List[Dict[str, A
         cursor = conn.cursor()
         cursor.execute('''
             SELECT context_period,
-                   COUNT(*) AS total,
+                   COUNT(correct) AS total,
                    SUM(correct) AS hits,
                    ROUND(AVG(correct) * 100, 1) AS accuracy_pct
             FROM prediction_log
-            WHERE ticker = ? AND evaluated_at IS NOT NULL
+            WHERE ticker = ? AND evaluated_at IS NOT NULL AND correct IS NOT NULL
             GROUP BY context_period
             HAVING total >= ?
             ORDER BY accuracy_pct DESC
@@ -453,10 +453,10 @@ def get_global_accuracy_summary(min_samples: int = 5) -> List[Dict[str, Any]]:
         cursor = conn.cursor()
         cursor.execute('''
             SELECT market, context_period,
-                   COUNT(*) AS total,
+                   COUNT(correct) AS total,
                    ROUND(AVG(correct) * 100, 1) AS accuracy_pct
             FROM prediction_log
-            WHERE evaluated_at IS NOT NULL
+            WHERE evaluated_at IS NOT NULL AND correct IS NOT NULL
             GROUP BY market, context_period
             HAVING total >= ?
             ORDER BY market, accuracy_pct DESC
@@ -574,6 +574,6 @@ def migrate_from_json():
     print("\n✅ Migration complete!")
 
 
-# Initialize DB on import (create tables if they don't exist)
-if not os.path.exists(DB_PATH):
-    init_db()
+# Always run init_db on import — CREATE TABLE IF NOT EXISTS is idempotent,
+# so existing DBs are safe; new tables added in upgrades get created too.
+init_db()

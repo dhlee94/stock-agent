@@ -35,7 +35,7 @@ class StockDataLoader:
         else:
           search = self.gn.search(f'{self.name} stock')
         titles = [entry.title for entry in search['entries'][:limit]]
-        return titles if titles else ["특이 사항 없음"]
+        return titles  # empty list handled by get_news_sentiment
 
     def get_stl_features(self, df, period=12):
         """
@@ -83,10 +83,9 @@ class StockDataLoader:
         if period is None:
             period = self.auto_period(forecast_steps)
         elif period not in self.VALID_PERIODS:
-            raise ValueError(
-                f"Invalid context_period '{period}'. "
-                f"Allowed: {sorted(self.VALID_PERIODS)}"
-            )
+            # LLM may pass values like "5d" — silently fall back rather than crashing
+            print(f"⚠️  [Loader] Invalid context_period '{period}' → using auto_period({forecast_steps})")
+            period = self.auto_period(forecast_steps)
         df = self.fetch_daily(period=period)
         if len(df) < 20:
             raise ValueError(
@@ -111,6 +110,7 @@ class StockDataLoader:
             'context_df': context_df,
             'current_price': float(df['Close'].iloc[-1]),
             'news': news,
+            'last_data_date': str(idx[-1].date()),  # ISO string, tz-naive
         }
 
     def prepare_all(self):

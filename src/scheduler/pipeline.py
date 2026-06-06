@@ -50,11 +50,18 @@ def _evaluate_pending_predictions(tz_name: str) -> int:
         target_date = pred["target_date"]
         base_price = pred["current_price"]
         try:
-            hist = yf.Ticker(ticker).history(period="5d", interval="1d")
+            from datetime import timedelta
+            target_dt = datetime.strptime(target_date, "%Y-%m-%d")
+            end_dt = target_dt + timedelta(days=7)  # buffer for holidays
+            hist = yf.Ticker(ticker).history(
+                start=target_date,
+                end=end_dt.strftime("%Y-%m-%d"),
+                interval="1d",
+            )
             if hist.empty:
                 continue
-            # 가장 최근 종가 사용 (target_date 이후 첫 거래일)
-            actual_price = float(hist["Close"].iloc[-1])
+            # target_date 당일 또는 그 이후 첫 거래일 종가 사용
+            actual_price = float(hist["Close"].iloc[0])
             actual_dir = "up" if actual_price >= base_price else "down"
             evaluate_prediction(
                 pred_id=pred["id"],

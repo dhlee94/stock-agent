@@ -68,7 +68,9 @@ class MemoryStore:
             return embeddings[0].tolist()
             
         except Exception as e:
-            print(f"⚠️ Local Embedding failed: {e}. Using deterministic fallback.")
+            # Random vectors make similarity search meaningless — log loudly.
+            print(f"❌ [MemoryStore] All embedding methods failed: {e}. "
+                  "Memory retrieval will return random results until an embedding provider is configured.")
             np.random.seed(hash(text) % (2**32))
             return np.random.rand(768).tolist()
 

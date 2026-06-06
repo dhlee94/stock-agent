@@ -2,11 +2,7 @@ import torch
 import torch.nn.functional as F
 import sys
 import os
-import base64
 
-# Monkey patch for libraries using deprecated base64.decodestring
-if not hasattr(base64, "decodestring"):
-    base64.decodestring = base64.decodebytes
 sys.path.append(os.getcwd())
 os.environ["USE_TORCH"] = "1"
 os.environ["TF_CPP_MIN_LOG_LEVEL"] = "3"
@@ -182,10 +178,16 @@ class StockBrain:
         Input tensor: (1, n_variates=3, history_length)
         Output:       (n_variates, num_samples, forecast_steps) — variate 0 is target.
         """
+        last_data_date = None
         if context_df is None:
             prep = self.loader.prepare_multivariate_df(period=context_period, forecast_steps=forecast_steps)
             context_df = prep["context_df"]
             current_price = prep["current_price"]
+            last_data_date = prep.get("last_data_date")
+
+        if last_data_date is None and 'timestamp' in context_df.columns:
+            import pandas as pd
+            last_data_date = str(pd.Timestamp(context_df['timestamp'].iloc[-1]).date())
 
         # shape: (1, 3, history_length)
         mv_tensor = torch.tensor(
@@ -201,7 +203,9 @@ class StockBrain:
         med = target_samples.quantile(0.5, dim=0).tolist()
         high = target_samples.quantile(0.9, dim=0).tolist()
 
-        return self._build_result(med, low, high, current_price, forecast_steps)
+        result = self._build_result(med, low, high, current_price, forecast_steps)
+        result["last_data_date"] = last_data_date
+        return result
 
     def _build_result(self, med, low, high, current_price, forecast_steps):
         final_med = med[-1]
@@ -231,10 +235,12 @@ class StockBrain:
 
         from uni2ts.model.moirai2.forecast import Moirai2Forecast
 
+        last_data_date = None
         if price_context is None or current_price is None:
             prep = self.loader.prepare_multivariate_df(period=context_period, forecast_steps=forecast_steps)
             price_context = prep["context_df"]["target"].values
             current_price = prep["current_price"]
+            last_data_date = prep.get("last_data_date")
 
         if price_context is None or len(price_context) == 0:
             return {"status": "error", "error": "no price context available"}
@@ -263,10 +269,14 @@ class StockBrain:
 
         # Moirai2Forecast returns (n_quantiles, forecast_steps)
         # default quantile_levels: [0.1, 0.2, ..., 0.9] → idx 0=q10, 4=q50, 8=q90
-        q_levels = list(getattr(self.moirai_module, "quantile_levels", [0.1,0.2,0.3,0.4,0.5,0.6,0.7,0.8,0.9]))
-        q10_idx = q_levels.index(0.1)
-        q50_idx = q_levels.index(0.5)
-        q90_idx = q_levels.index(0.9)
+        q_levels = [float(q) for q in getattr(self.moirai_module, "quantile_levels",
+                                               [0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9])]
+        # Use nearest-value lookup to avoid float equality failure
+        def _q_idx(target: float) -> int:
+            return int(np.argmin([abs(q - target) for q in q_levels]))
+        q10_idx = _q_idx(0.1)
+        q50_idx = _q_idx(0.5)
+        q90_idx = _q_idx(0.9)
         low = forecast[0][q10_idx].tolist()
         med = forecast[0][q50_idx].tolist()
         high = forecast[0][q90_idx].tolist()
@@ -284,6 +294,7 @@ class StockBrain:
             "median": [round(float(x), 4) for x in med],
             "lower_q10": [round(float(x), 4) for x in low],
             "upper_q90": [round(float(x), 4) for x in high],
+            "last_data_date": last_data_date,
         }
 
 

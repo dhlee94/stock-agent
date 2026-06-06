@@ -165,7 +165,9 @@ def _get_price_series(ticker: str, days: int = 60) -> Optional[np.ndarray]:
     """
     try:
         stock = yf.Ticker(ticker)
-        hist = stock.history(period=f"{days + 10}d")  # Extra days for buffer
+        # 60 trading days ≈ 84 calendar days; add buffer for holidays
+        calendar_days = int(days * 1.5) + 10
+        hist = stock.history(period=f"{calendar_days}d")
         
         if hist.empty or len(hist) < days:
             return None

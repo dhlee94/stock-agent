@@ -20,32 +20,52 @@ from tools.stock.kr_listing import lookup_kr_ticker
 from tools.stock.us_listing import lookup_us_ticker, is_valid_us_ticker
 from tools.stock.market_utils import NAME_TO_TICKER
 
-# Provider setup
-MOCK_MODE = False
-LAST_API_CALL = 0  # Rate limiting
+# Provider setup — initialize every provider that has an API key so
+# per-agent model overrides can freely mix providers.
+_provider_clients: dict = {}
+_LAST_API_CALL: dict = {}   # per-provider rate limiting
+_MIN_WAIT = {"groq": 0.5, "anthropic": 0.5, "gemini": 2.0, "openai": 2.0}
 
-# Initialize providers based on config
-if LLM_PROVIDER == "gemini":
-    if not GEMINI_API_KEY:
-        MOCK_MODE = True
-    else:
-        from google import genai as _gemini_genai
-        _gemini_client = _gemini_genai.Client(api_key=GEMINI_API_KEY)
-elif LLM_PROVIDER == "openai":
-    if not OPENAI_API_KEY:
-        MOCK_MODE = True
-    else:
-        from openai import OpenAI
-elif LLM_PROVIDER == "groq":
-    if not GROQ_API_KEY:
-        MOCK_MODE = True
-    else:
-        from groq import Groq
-elif LLM_PROVIDER == "anthropic":
-    if not ANTHROPIC_API_KEY:
-        MOCK_MODE = True
-    else:
-        import anthropic
+try:
+    from google import genai as _gemini_genai
+    if GEMINI_API_KEY:
+        _provider_clients["gemini"] = _gemini_genai.Client(api_key=GEMINI_API_KEY)
+except ImportError:
+    pass
+
+try:
+    from openai import OpenAI as _OpenAI
+    if OPENAI_API_KEY:
+        _provider_clients["openai"] = _OpenAI(api_key=OPENAI_API_KEY)
+except ImportError:
+    pass
+
+try:
+    from groq import Groq as _Groq
+    if GROQ_API_KEY:
+        _provider_clients["groq"] = _Groq(api_key=GROQ_API_KEY)
+except ImportError:
+    pass
+
+try:
+    import anthropic as _anthropic_module
+    if ANTHROPIC_API_KEY:
+        _provider_clients["anthropic"] = _anthropic_module.Anthropic(api_key=ANTHROPIC_API_KEY)
+except ImportError:
+    pass
+
+MOCK_MODE = LLM_PROVIDER not in _provider_clients
+
+
+def _detect_provider(model: str) -> str:
+    """Infer the API provider from the model name prefix."""
+    if model.startswith("claude-"):
+        return "anthropic"
+    if model.startswith("gemini-"):
+        return "gemini"
+    if model.startswith(("gpt-", "o1-", "o3-", "o4-")):
+        return "openai"
+    return "groq"  # llama-*, mixtral-*, etc.
 
 from mcp import ClientSession, StdioServerParameters
 from mcp.client.stdio import stdio_client
@@ -196,18 +216,11 @@ class MementoAgent:
         if MOCK_MODE:
             print(f"[Agent] Running in MOCK mode (no API key for {LLM_PROVIDER}).")
             self.llm = MockLLM()
-        elif LLM_PROVIDER == "openai":
-            print(f"[Agent] Using OpenAI ({LLM_MODEL}).")
-            self.client = OpenAI(api_key=OPENAI_API_KEY)
-        elif LLM_PROVIDER == "groq":
-            print(f"[Agent] Using Groq ({LLM_MODEL}, fast inference).")
-            self.client = Groq(api_key=GROQ_API_KEY)
-        elif LLM_PROVIDER == "anthropic":
-            print(f"[Agent] Using Anthropic ({LLM_MODEL}).")
-            self.client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
         else:
-            print(f"[Agent] Using Gemini ({LLM_MODEL}).")
-            self.gemini_client = _gemini_client
+            available = ", ".join(
+                f"{p}({v.__class__.__name__})" for p, v in _provider_clients.items()
+            )
+            print(f"[Agent] Providers ready: {available} | default={LLM_PROVIDER}/{LLM_MODEL}")
 
     async def _ensure_mcp_session(self):
         """싱글톤 MCP 세션 반환. 죽어있으면 재생성."""
@@ -254,32 +267,34 @@ class MementoAgent:
         self._mcp_tools_desc = ""
 
     async def _call_llm(self, messages, model: str = None, max_tokens: int = 4096):
-        global LAST_API_CALL
         if MOCK_MODE:
             return self.llm.chat(messages)
 
         effective_model = model or LLM_MODEL
+        provider = _detect_provider(effective_model)
 
-        # Rate limiting
-        if LLM_PROVIDER == "groq":
-            min_wait = 0.5
-        elif LLM_PROVIDER == "anthropic":
-            min_wait = 0.5
-        else:
-            min_wait = 2.0
+        client = _provider_clients.get(provider)
+        if client is None:
+            raise RuntimeError(
+                f"No API key / client for provider '{provider}' "
+                f"(model='{effective_model}'). Add the key to .env."
+            )
 
-        elapsed = time.time() - LAST_API_CALL
+        # Per-provider rate limiting
+        min_wait = _MIN_WAIT.get(provider, 2.0)
+        elapsed = time.time() - _LAST_API_CALL.get(provider, 0)
         if elapsed < min_wait:
             wait_time = min_wait - elapsed
-            print(f"   ⏳ Rate limiting: waiting {wait_time:.1f}s...")
+            print(f"   ⏳ Rate limiting ({provider}): waiting {wait_time:.1f}s...")
             await asyncio.sleep(wait_time)
-        LAST_API_CALL = time.time()
+        _LAST_API_CALL[provider] = time.time()
 
-        if LLM_PROVIDER == "openai":
-            loop = asyncio.get_event_loop()
+        loop = asyncio.get_event_loop()
+
+        if provider in ("openai", "groq"):
             response = await loop.run_in_executor(
                 None,
-                lambda: self.client.chat.completions.create(
+                lambda: client.chat.completions.create(
                     model=effective_model,
                     messages=messages,
                     temperature=0.3,
@@ -287,19 +302,8 @@ class MementoAgent:
                 )
             )
             return response.choices[0].message.content
-        elif LLM_PROVIDER == "groq":
-            loop = asyncio.get_event_loop()
-            response = await loop.run_in_executor(
-                None,
-                lambda: self.client.chat.completions.create(
-                    model=effective_model,
-                    messages=messages,
-                    temperature=0.3,
-                    max_tokens=max_tokens,
-                )
-            )
-            return response.choices[0].message.content
-        elif LLM_PROVIDER == "anthropic":
+
+        if provider == "anthropic":
             system_parts = [m["content"] for m in messages if m["role"] == "system"]
             chat_messages = [
                 {"role": m["role"], "content": m["content"]}
@@ -313,29 +317,28 @@ class MementoAgent:
             }
             if system_parts:
                 kwargs["system"] = "\n\n".join(system_parts)
-            loop = asyncio.get_event_loop()
             response = await loop.run_in_executor(
                 None,
-                lambda: self.client.messages.create(**kwargs),
+                lambda: client.messages.create(**kwargs),
             )
             return response.content[0].text
-        else:
-            # Gemini (google-genai SDK)
-            prompt = ""
-            for msg in messages:
-                role = msg["role"]
-                content = msg["content"]
-                if role == "system":
-                    prompt += f"[System Instructions]\n{content}\n\n"
-                elif role == "user":
-                    prompt += f"User: {content}\n\n"
-                elif role == "assistant":
-                    prompt += f"Assistant: {content}\n\n"
-            response = await self.gemini_client.aio.models.generate_content(
-                model=effective_model,
-                contents=prompt,
-            )
-            return response.text
+
+        # Gemini (google-genai SDK)
+        prompt = ""
+        for msg in messages:
+            role = msg["role"]
+            content = msg["content"]
+            if role == "system":
+                prompt += f"[System Instructions]\n{content}\n\n"
+            elif role == "user":
+                prompt += f"User: {content}\n\n"
+            elif role == "assistant":
+                prompt += f"Assistant: {content}\n\n"
+        response = await client.aio.models.generate_content(
+            model=effective_model,
+            contents=prompt,
+        )
+        return response.text
 
     async def _call_intent_extractor(self, user_task: str) -> Dict[str, Any]:
         """
@@ -915,8 +918,8 @@ Return the JSON verdict object now:"""}
                                         "has_high_correlation": reference_proxy is not None
                                     }
                                     print(f"   📊 Peer context captured for Reflector verification")
-                                except:
-                                    pass
+                                except Exception as e:
+                                    print(f"   ⚠️ Peer analysis parse error: {e}")
 
                             if tool_name == "stock_technical":
                                 try:
@@ -926,8 +929,8 @@ Return the JSON verdict object now:"""}
                                         print(f"   ⚠️ Technical tool error: {tech_data.get('error', 'unknown')}")
                                     else:
                                         print(f"   📈 Technical data captured: {rec}")
-                                except:
-                                    pass
+                                except Exception as e:
+                                    print(f"   ⚠️ Technical data parse error: {e}")
 
                             if tool_name in ("stock_news", "stock_news_sentiment"):
                                 interpretation = await self._call_news_analyst(tool_output)

@@ -43,9 +43,10 @@ def get_stock_brain(ticker: str, name: str, market: str):
         print(f"🔄 [StockTool] Initializing Brain for market={market} (ticker={ticker})...")
         _stock_brain_cache[market] = StockBrain(ticker, name, market)
     brain = _stock_brain_cache[market]
-    # Update loader symbol/name so data fetching targets the requested ticker
+    # Update loader so data fetching targets the requested ticker
     brain.loader.symbol = ticker
     brain.loader.name = name
+    brain.loader.market_type = market  # defensive: keep in sync with cache key
     return brain
 
 
@@ -59,6 +60,16 @@ def _biz_dates(start: datetime, n: int) -> list:
     """Return n business days (Mon–Fri) starting after start date."""
     dates = pd.bdate_range(start=start + timedelta(days=1), periods=n)
     return [d.strftime("%Y-%m-%d") for d in dates]
+
+
+def _last_data_datetime(last_data_date: str, tz) -> datetime:
+    """Convert ISO date string from forecast result to tz-aware datetime.
+    Falls back to now() when the string is absent (e.g. Chronos v1 path).
+    """
+    if last_data_date:
+        naive = datetime.strptime(last_data_date, "%Y-%m-%d")
+        return tz.localize(naive)
+    return datetime.now(tz)
 
 
 def _trajectory_shape(medians: list, cur_price: float) -> dict:
@@ -90,9 +101,9 @@ def _trajectory_shape(medians: list, cur_price: float) -> dict:
 
     # 전환점 위치 (최고점 or 최저점 인덱스)
     if shape == "up_then_down":
-        result["turning_day"] = int(medians.index(max(medians))) + 1
+        result["turning_day"] = int(np.argmax(medians)) + 1
     elif shape == "down_then_up":
-        result["turning_day"] = int(medians.index(min(medians))) + 1
+        result["turning_day"] = int(np.argmin(medians)) + 1
 
     return result
 
@@ -140,7 +151,7 @@ def get_price_forecast(ticker: str, name: str, market: str = "KR",
         forecast = brain.get_price_forecast(forecast_steps=forecast_steps, context_period=context_period)
         cur_price = forecast.get("current_price", 0)
 
-        last_date = datetime.now(tz)
+        last_date = _last_data_datetime(forecast.get("last_data_date"), tz)
         forecast_dates = _biz_dates(last_date, forecast_steps)
         forecast_data = [
             {
@@ -194,7 +205,7 @@ def get_price_forecast_moirai(ticker: str, name: str, market: str = "KR",
             return forecast
 
         cur_price = forecast.get("current_price", 0)
-        last_date = datetime.now(tz)
+        last_date = _last_data_datetime(forecast.get("last_data_date"), tz)
         forecast_dates = _biz_dates(last_date, forecast_steps)
         forecast_data = [
             {
@@ -206,8 +217,8 @@ def get_price_forecast_moirai(ticker: str, name: str, market: str = "KR",
             for i in range(forecast_steps)
         ]
 
-        # 단기 예측(< 10 step)만 피드백 루프용으로 DB에 저장
-        if forecast_steps < 10 and forecast.get("direction") and cur_price:
+        # 단기 예측(<= 10 step)만 피드백 루프용으로 DB에 저장
+        if forecast_steps <= 10 and forecast.get("direction") and cur_price:
             try:
                 init_db()
                 target_date = forecast_dates[-1]  # 5번째 영업일

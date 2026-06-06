@@ -7,7 +7,7 @@ import yfinance as yf
 
 # Major Korean stock indices and ETFs by sector
 KOREAN_SECTORS = {
-    "반도체": ["005930.KS", "000660.KS", "066570.KS"],  # Samsung, SK Hynix, LG Electronics
+    "반도체": ["005930.KS", "000660.KS", "042700.KS"],  # Samsung, SK Hynix, 한미반도체
     "2차전지": ["373220.KS", "006400.KS", "051910.KS"],  # LG Energy, Samsung SDI, LG Chem
     "바이오": ["207940.KS", "068270.KS", "326030.KS"],   # Samsung Biologics, Celltrion, SK Biopharmaceuticals
     "자동차": ["005380.KS", "000270.KS", "012330.KS"],   # Hyundai Motor, Kia, Hyundai Mobis

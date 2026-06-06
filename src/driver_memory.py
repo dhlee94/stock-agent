@@ -82,19 +82,10 @@ class DriverMemory:
     Enables targeted news searches based on what historically moves the stock.
     """
     
-    def __init__(self, storage_file: str = "driver_memory.json"):
-        # Storage file is no longer used, kept for compatibility
-        self.storage_file = storage_file
+    def __init__(self):
         print("[DriverMemory] Initialized with SQLite database.")
-    
-    def _load_memory(self):
-        """Deprecated: Logic moved to database.py"""
-        pass
-    
-    def _save_memory(self):
-        """Deprecated: Logic moved to database.py"""
-        pass
-    
+
+
     def get_drivers(self, ticker: str) -> Optional[Dict[str, Any]]:
         """
         Retrieve cached drivers for a ticker from database.
