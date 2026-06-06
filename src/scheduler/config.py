@@ -36,11 +36,20 @@ class SchedulerConfig:
                 "list of tickers, e.g. SCHEDULER_WATCHLIST=005930.KS,000660.KS"
             )
 
+        def int_env(key: str, default: int) -> int:
+            raw = os.getenv(key, str(default))
+            try:
+                return int(raw)
+            except ValueError:
+                raise RuntimeError(
+                    f"Environment variable {key}={raw!r} must be an integer"
+                )
+
         return cls(
             telegram_bot_token=required("TELEGRAM_BOT_TOKEN").strip(),
             telegram_chat_id=required("TELEGRAM_CHAT_ID").strip(),
             watchlist=watchlist,
-            run_hour=int(os.getenv("SCHEDULER_RUN_HOUR", "12")),
-            run_minute=int(os.getenv("SCHEDULER_RUN_MINUTE", "0")),
+            run_hour=int_env("SCHEDULER_RUN_HOUR", 12),
+            run_minute=int_env("SCHEDULER_RUN_MINUTE", 0),
             timezone=os.getenv("SCHEDULER_TIMEZONE", "Asia/Seoul").strip(),
         )

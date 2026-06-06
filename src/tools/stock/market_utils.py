@@ -129,6 +129,27 @@ TICKER_TO_NAME = {
     'QCOM': 'Qualcomm',
     'TSM': 'TSMC',
     'MU': 'Micron',
+    # Additional US stocks referenced in NAME_TO_TICKER aliases
+    'ADBE': 'Adobe',
+    'DIS': 'Disney',
+    'V': 'Visa',
+    'MA': 'Mastercard',
+    'PYPL': 'PayPal',
+    'KO': 'Coca-Cola',
+    'PEP': 'PepsiCo',
+    'WMT': 'Walmart',
+    'COST': 'Costco',
+    'BA': 'Boeing',
+    'LMT': 'Lockheed Martin',
+    'CVX': 'Chevron',
+    'XOM': 'ExxonMobil',
+    'JPM': 'JPMorgan Chase',
+    'GS': 'Goldman Sachs',
+    'BRK.B': 'Berkshire Hathaway',
+    'SBUX': 'Starbucks',
+    'MCD': "McDonald's",
+    'NKE': 'Nike',
+    'PLTR': 'Palantir',
 }
 
 # Reverse mapping for entity mining fallback

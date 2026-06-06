@@ -39,10 +39,19 @@ def load_kr_listing(force_refresh: bool = False) -> pd.DataFrame:
         stale = age > _CACHE_TTL
 
     if stale:
+        import tempfile
         import FinanceDataReader as fdr
         df = fdr.StockListing("KRX")[["Code", "Name", "Market"]]
         os.makedirs(_DATA_DIR, exist_ok=True)
-        df.to_csv(_CACHE_PATH, index=False)
+        # Atomic write: write to temp file then rename to avoid partial reads
+        tmp_fd, tmp_path = tempfile.mkstemp(dir=_DATA_DIR, suffix=".csv")
+        try:
+            os.close(tmp_fd)
+            df.to_csv(tmp_path, index=False)
+            os.replace(tmp_path, _CACHE_PATH)
+        except Exception:
+            os.unlink(tmp_path)
+            raise
 
     _MEM_CACHE = pd.read_csv(_CACHE_PATH, dtype={"Code": str})
     return _MEM_CACHE

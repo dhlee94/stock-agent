@@ -35,7 +35,18 @@ def get_stock_chart(ticker: str, period: str = "1mo", interval: str = "1d") -> s
         high_price = max(prices)
         low_price = min(prices)
         avg_price = sum(prices) / len(prices)
-        volatility = (max(prices) - min(prices)) / avg_price * 100
+        # price_range_percent: (high - low) / avg — 단순 가격 범위 비율
+        price_range_percent = (high_price - low_price) / avg_price * 100 if avg_price else 0.0
+        # volatility_percent: 일간 수익률의 표준편차 (표준 금융 변동성)
+        returns = [
+            (prices[i] - prices[i - 1]) / prices[i - 1]
+            for i in range(1, len(prices)) if prices[i - 1] != 0
+        ]
+        if len(returns) > 1:
+            mean_r = sum(returns) / len(returns)
+            volatility = (sum((r - mean_r) ** 2 for r in returns) / (len(returns) - 1)) ** 0.5 * 100
+        else:
+            volatility = 0.0
         
         # Convert to list of OHLCV records (last 30 points max for API response)
         data_points = []
@@ -63,7 +74,8 @@ def get_stock_chart(ticker: str, period: str = "1mo", interval: str = "1d") -> s
                 "high": round(high_price, 2),
                 "low": round(low_price, 2),
                 "average": round(avg_price, 2),
-                "volatility_percent": round(volatility, 2)
+                "price_range_percent": round(price_range_percent, 2),
+                "volatility_percent": round(volatility, 4)
             },
             "chart_data": data_points
         }, ensure_ascii=False)

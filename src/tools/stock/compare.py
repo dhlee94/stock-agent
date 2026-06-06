@@ -34,9 +34,16 @@ def compare_stocks(tickers: List[str], period: str = "1y") -> str:
                 end_price = prices[-1]
                 total_return = ((end_price - start_price) / start_price) * 100 if start_price != 0 else 0.0
                 
-                # Volatility (standard deviation of daily returns)
-                returns = [(prices[i] - prices[i-1]) / prices[i-1] for i in range(1, len(prices))]
-                volatility = (sum(r**2 for r in returns) / len(returns)) ** 0.5 * 100 if returns else 0
+                # Volatility: sample std dev of daily returns (annualised basis omitted intentionally)
+                returns = [
+                    (prices[i] - prices[i - 1]) / prices[i - 1]
+                    for i in range(1, len(prices)) if prices[i - 1] != 0
+                ]
+                if len(returns) > 1:
+                    mean_r = sum(returns) / len(returns)
+                    volatility = (sum((r - mean_r) ** 2 for r in returns) / (len(returns) - 1)) ** 0.5 * 100
+                else:
+                    volatility = 0.0
                 
                 comparisons.append({
                     "ticker": ticker,
