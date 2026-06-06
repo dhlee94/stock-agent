@@ -44,7 +44,7 @@ class TelegramBot:
         await self._send(text)
 
     async def send_text(self, text: str) -> None:
-        await self._send(text)
+        await self._send(html.escape(text))
 
     async def _send(self, text: str) -> None:
         try:

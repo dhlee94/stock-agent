@@ -75,8 +75,8 @@ def get_stock_price(ticker: str, market: str = "KR") -> str:
         current_price = hist['Close'].iloc[-1]
         prev_close = hist['Close'].iloc[-2] if len(hist) > 1 else current_price
         change = current_price - prev_close
-        change_pct = (change / prev_close) * 100
-        
+        change_pct = (change / prev_close) * 100 if prev_close != 0 else 0.0
+
         tz = pytz.timezone('US/Eastern') if market == "US" else pytz.timezone('Asia/Seoul')
         currency = "USD" if market == "US" else "KRW"
         

@@ -55,7 +55,7 @@ def get_stock_chart(ticker: str, period: str = "1mo", interval: str = "1d") -> s
             "ticker": ticker,
             "period": period,
             "interval": interval,
-            "data_points": len(hist),
+            "data_points": len(data_points),
             "summary": {
                 "start_price": round(start_price, 2),
                 "end_price": round(end_price, 2),

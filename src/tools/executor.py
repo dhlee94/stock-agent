@@ -17,31 +17,40 @@ def execute_python(code: str) -> str:
     """
     print(f"💻 [Code] Executing:\n{code[:100]}...")
     try:
-        # Prevent common dangerous patterns
-        forbidden = ["os.", "subprocess.", "sys.", "eval(", "exec(", "open(", "import "]
-        for word in forbidden:
-            if word in code:
-                return ToolResponse.error(f"Forbidden keyword detected: {word}")
+        # Block module-access patterns and Python object-model escape chains.
+        # String-matching cannot prevent all sandbox escapes — for production use
+        # RestrictedPython or subprocess-based isolation instead.
+        _FORBIDDEN = [
+            # Module / system access
+            "os.", "subprocess.", "sys.", "pathlib", "socket", "shutil",
+            "eval(", "exec(", "open(", "__import__", "importlib",
+            # Object-model escape: ().__class__.__bases__[0].__subclasses__() etc.
+            "__class__", "__bases__", "__subclasses__", "__globals__",
+            "__builtins__", "__spec__", "__loader__", "__init__",
+            "__dict__", "__module__", "mro(", "getattr(", "setattr(",
+            "delattr(", "vars(", "dir(",
+        ]
+        for pattern in _FORBIDDEN:
+            if pattern in code:
+                return ToolResponse.error(f"Forbidden pattern detected: {pattern!r}")
 
         local_scope = {}
-        # Heavily restricted builtins
         safe_builtins = {
-            "print": print, "len": len, "range": range, "str": str, 
+            "print": print, "len": len, "range": range, "str": str,
             "int": int, "float": float, "list": list, "dict": dict,
             "sum": sum, "max": max, "min": min, "abs": abs, "round": round,
-            "enumerate": enumerate, "zip": zip
+            "enumerate": enumerate, "zip": zip, "sorted": sorted,
+            "isinstance": isinstance, "bool": bool, "tuple": tuple,
         }
-        
-        # Add math and data libraries to scope
         globals_scope = {
             "__builtins__": safe_builtins,
             "math": math,
             "np": np,
             "pd": pd,
             "numpy": np,
-            "pandas": pd
+            "pandas": pd,
         }
-        
+
         exec(code, globals_scope, local_scope)
         
         # Filter local_scope to only include JSON serializable types for the response

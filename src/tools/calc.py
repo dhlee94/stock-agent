@@ -1,11 +1,26 @@
 """
 Math Tool - Mathematical calculations using SymPy for safety
 """
-import json
 import sympy
-
+from sympy import (
+    sqrt, sin, cos, tan, asin, acos, atan, log, exp,
+    pi, E, Abs, factorial, ceiling, floor,
+)
+from sympy.parsing.sympy_parser import (
+    parse_expr, standard_transformations, implicit_multiplication_application,
+)
 
 from utils.response import ToolResponse
+
+_TRANSFORMATIONS = standard_transformations + (implicit_multiplication_application,)
+_SAFE_LOCALS = {
+    "sqrt": sqrt, "sin": sin, "cos": cos, "tan": tan,
+    "asin": asin, "acos": acos, "atan": atan,
+    "log": log, "exp": exp, "pi": pi, "e": E,
+    "abs": Abs, "factorial": factorial,
+    "ceil": ceiling, "floor": floor,
+}
+
 
 def calculate_math(expression: str) -> str:
     """
@@ -15,8 +30,13 @@ def calculate_math(expression: str) -> str:
     """
     print(f"🧮 [Math] Calculating: {expression}")
     try:
-        # Use sympy to safely evaluate the expression
-        expr = sympy.sympify(expression)
+        # parse_expr with empty global_dict prevents __import__ and arbitrary eval
+        expr = parse_expr(
+            expression,
+            local_dict=_SAFE_LOCALS,
+            global_dict={},
+            transformations=_TRANSFORMATIONS,
+        )
         result = float(expr.evalf())
         return ToolResponse.success({"expression": expression, "result": result})
     except Exception as e:

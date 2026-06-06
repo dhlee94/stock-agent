@@ -32,7 +32,7 @@ def compare_stocks(tickers: List[str], period: str = "1y") -> str:
                 prices = hist['Close'].tolist()
                 start_price = prices[0]
                 end_price = prices[-1]
-                total_return = ((end_price - start_price) / start_price) * 100
+                total_return = ((end_price - start_price) / start_price) * 100 if start_price != 0 else 0.0
                 
                 # Volatility (standard deviation of daily returns)
                 returns = [(prices[i] - prices[i-1]) / prices[i-1] for i in range(1, len(prices))]
@@ -56,7 +56,8 @@ def compare_stocks(tickers: List[str], period: str = "1y") -> str:
                         "volatility_percent": round(volatility, 2),
                     }
                 })
-            except Exception:
+            except Exception as e:
+                print(f"   ⚠️ [Compare] {ticker} skipped: {e}")
                 continue
         
         if not comparisons:

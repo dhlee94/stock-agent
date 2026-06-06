@@ -1,8 +1,8 @@
 import torch
 import torch.nn as nn
 import torch.optim as optim
-from src.models.fusion import MultimodalFusion
-from src.models.losses import VolatilityLoss
+from predictor_src.models.fusion import MultimodalFusion
+from predictor_src.models.losses import VolatilityLoss
 
 class MultimodalTrainer:
     def __init__(self, price_dim=50, text_dim=768, learning_rate=1e-4):

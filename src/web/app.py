@@ -61,29 +61,41 @@ async def home(request: Request):
 @app.get("/api/price/{ticker}")
 async def api_price(ticker: str, market: str = "KR"):
     """Get real-time stock price"""
-    result = get_stock_price(ticker, market)
-    return JSONResponse(content=json.loads(result))
+    try:
+        result = get_stock_price(ticker, market)
+        return JSONResponse(content=json.loads(result))
+    except Exception as e:
+        return JSONResponse(content={"status": "error", "error": str(e)}, status_code=500)
 
 
 @app.get("/api/technical/{ticker}")
 async def api_technical(ticker: str, period: str = "6mo"):
     """Get technical analysis"""
-    result = technical_analysis(ticker, period)
-    return JSONResponse(content=json.loads(result))
+    try:
+        result = technical_analysis(ticker, period)
+        return JSONResponse(content=json.loads(result))
+    except Exception as e:
+        return JSONResponse(content={"status": "error", "error": str(e)}, status_code=500)
 
 
 @app.get("/api/news/{ticker}")
 async def api_news(ticker: str):
     """Get stock news"""
-    result = get_market_news(ticker=ticker, limit=5)
-    return JSONResponse(content=json.loads(result))
+    try:
+        result = get_market_news(ticker=ticker, limit=5)
+        return JSONResponse(content=json.loads(result))
+    except Exception as e:
+        return JSONResponse(content={"status": "error", "error": str(e)}, status_code=500)
 
 
 @app.get("/api/financials/{ticker}")
 async def api_financials(ticker: str):
     """Get financial data"""
-    result = get_financials(ticker)
-    return JSONResponse(content=json.loads(result))
+    try:
+        result = get_financials(ticker)
+        return JSONResponse(content=json.loads(result))
+    except Exception as e:
+        return JSONResponse(content={"status": "error", "error": str(e)}, status_code=500)
 
 
 @app.post("/api/analyze")

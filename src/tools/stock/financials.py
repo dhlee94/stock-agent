@@ -126,10 +126,10 @@ def get_financials(ticker: str) -> str:
                     recent = df.iloc[-1]
                     
                     # Overwrite fields with authoritative KRX data if valid
-                    if 'PER' in recent and not hasattr(recent['PER'], 'len') and recent['PER'] > 0:
+                    if 'PER' in recent and isinstance(recent['PER'], (int, float)) and recent['PER'] > 0:
                         result_data['valuation']['trailing_pe'] = float(recent['PER'])
-                    
-                    if 'PBR' in recent and not hasattr(recent['PBR'], 'len') and recent['PBR'] > 0:
+
+                    if 'PBR' in recent and isinstance(recent['PBR'], (int, float)) and recent['PBR'] > 0:
                         result_data['valuation']['price_to_book'] = float(recent['PBR'])
                         
                     if 'EPS' in recent:
