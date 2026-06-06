@@ -205,7 +205,7 @@ def technical_analysis(ticker: str, period: str = "6mo") -> str:
             "ticker": ticker,
             "period": period,
             "indicators": {
-                "rsi": {"value": rsi, "signal": "oversold" if rsi and rsi < 30 else "overbought" if rsi and rsi > 70 else "neutral"},
+                "rsi": {"value": rsi, "signal": "oversold" if rsi is not None and rsi < 30 else "overbought" if rsi is not None and rsi > 70 else "neutral"},
                 "macd": macd,
                 "bollinger_bands": bollinger,
                 "moving_averages": moving_avgs,
