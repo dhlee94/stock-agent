@@ -32,6 +32,7 @@ def save_feedback(task: str, plan: str, result: str, feedback_score: float) -> s
         result: The final output or summary of the execution.
         feedback_score: A score from 0.0 to 1.0 indicating success.
     """
+    feedback_score = max(0.0, min(1.0, float(feedback_score)))
     print(f"🧠 [Memory] Saving trajectory for task: {task[:50]}...")
     try:
         memory_store = get_memory_store()

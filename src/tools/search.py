@@ -11,6 +11,7 @@ def search_web(query: str, max_results: int = 5) -> str:
         query: The search query.
         max_results: Maximum number of results to return.
     """
+    max_results = min(max(1, int(max_results)), 20)
     print(f"🔎 [Search] Query: '{query}'")
     try:
         with DDGS() as ddgs:

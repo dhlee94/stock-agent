@@ -86,32 +86,43 @@ class DriverMemory:
         print("[DriverMemory] Initialized with SQLite database.")
 
 
+    _DRIVER_TTL_DAYS = 30
+
     def get_drivers(self, ticker: str) -> Optional[Dict[str, Any]]:
         """
-        Retrieve cached drivers for a ticker from database.
-        Returns None if not found or outdated (>30 days old).
+        Retrieve cached drivers for a ticker.
+        Returns None if not found or older than 30 days.
         """
-        from database import get_top_drivers, get_ticker_info
-        
-        # Get latest update time
-        # This is a simplification; in a real scenario we might check the latest created_at
-        # For now, we just get the drivers
+        from database import get_top_drivers, get_ticker_info, get_connection
+
         drivers = get_top_drivers(ticker)
         if not drivers:
             return None
-            
-        # Get ticker info for name
+
+        # TTL 체크: driver_memory 테이블의 최신 created_at 기준
+        with get_connection() as conn:
+            row = conn.execute(
+                "SELECT MAX(created_at) as latest FROM driver_memory WHERE ticker = ?",
+                (ticker,)
+            ).fetchone()
+        latest = row["latest"] if row and row["latest"] else None
+        if latest:
+            try:
+                last_dt = datetime.strptime(latest[:10], "%Y-%m-%d")
+                if (datetime.now() - last_dt).days > self._DRIVER_TTL_DAYS:
+                    return None
+            except ValueError:
+                pass
+
         ticker_info = get_ticker_info(ticker)
         name = ticker_info['name'] if ticker_info else ticker
-        
-        # Convert to legacy format for compatibility
         keyword_drivers = [d['description'] for d in drivers if d['driver_type'] == 'keyword']
-        
+
         return {
             "name": name,
             "drivers": keyword_drivers,
-            "last_updated": datetime.now().strftime("%Y-%m-%d"), # Live data
-            "volatility_dates": [] # Volatility dates are now derived on the fly or need new table
+            "last_updated": latest[:10] if latest else datetime.now().strftime("%Y-%m-%d"),
+            "volatility_dates": []
         }
     
     def save_drivers(self, ticker: str, name: str, keywords: List[str], 
@@ -306,7 +317,8 @@ class DriverMemory:
                         keywords = ["실적발표", "기술", "경쟁사"]
                 else:
                     keywords = ["실적발표", "기술", "경쟁사"]
-            except:
+            except Exception as e:
+                print(f"   ⚠️ [DriverMemory] Keyword parse failed: {e}")
                 keywords = ["실적발표", "기술", "경쟁사"]
         else:
             # Default keywords if no news - still use specific terms

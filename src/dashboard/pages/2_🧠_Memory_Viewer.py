@@ -38,11 +38,14 @@ with tab1:
     search_term = st.text_input("Search Ticker or Keyword", "")
     
     with get_connection() as conn:
-        query = "SELECT * FROM driver_memory ORDER BY created_at DESC"
         if search_term:
-            query = f"SELECT * FROM driver_memory WHERE ticker LIKE '%{search_term}%' OR description LIKE '%{search_term}%' ORDER BY created_at DESC"
-            
-        df = pd.read_sql(query, conn)
+            df = pd.read_sql(
+                "SELECT * FROM driver_memory WHERE ticker LIKE ? OR description LIKE ? ORDER BY created_at DESC",
+                conn,
+                params=[f"%{search_term}%", f"%{search_term}%"],
+            )
+        else:
+            df = pd.read_sql("SELECT * FROM driver_memory ORDER BY created_at DESC", conn)
         st.dataframe(df, use_container_width=True)
 
 with tab2:

@@ -14,6 +14,7 @@ import os
 import base64
 import json
 from datetime import datetime, timedelta
+import numpy as np
 import pandas as pd
 from database import save_prediction, init_db
 import pytz

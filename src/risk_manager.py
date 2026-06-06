@@ -140,27 +140,6 @@ def _generate_reasoning(
     return reasoning
 
 
-def format_risk_output(risk_data: Dict[str, Any], currency: str = "KRW") -> str:
-    """Format risk data for display."""
-    
-    if "error" in risk_data:
-        return f"Risk calculation error: {risk_data['error']}"
-    
-    if currency == "KRW":
-        price_fmt = "{:,.0f}"
-    else:
-        price_fmt = "{:,.2f}"
-    
-    return f"""
-📊 **Risk Management Analysis**
-━━━━━━━━━━━━━━━━━━━━━━━━━━━
-🎯 Target Price: {price_fmt.format(risk_data['target_price'])} ({risk_data['target_percent']:+.1f}%)
-🛑 Stop-loss: {price_fmt.format(risk_data['stop_loss'])} ({risk_data['stop_loss_percent']:.1f}%)
-⚖️ Risk/Reward: {risk_data['risk_reward_ratio']}:1
-📈 Entry Rating: {risk_data['entry_rating']}
-
-💡 {risk_data['reasoning']}
-"""
 
 
 if __name__ == "__main__":
@@ -186,4 +165,3 @@ if __name__ == "__main__":
     
     result = calculate_risk_levels(55000, test_technical, test_ai)
     print(json.dumps(result, ensure_ascii=False, indent=2))
-    print(format_risk_output(result))

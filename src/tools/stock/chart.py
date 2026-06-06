@@ -1,10 +1,10 @@
 """
 Stock Chart Tool - Historical price data and chart analysis
 """
-import json
 import yfinance as yf
 from datetime import datetime
 import pytz
+from utils.response import ToolResponse
 
 
 def get_stock_chart(ticker: str, period: str = "1mo", interval: str = "1d") -> str:
@@ -24,7 +24,7 @@ def get_stock_chart(ticker: str, period: str = "1mo", interval: str = "1d") -> s
         hist = stock.history(period=period, interval=interval)
         
         if hist.empty:
-            return json.dumps({"status": "error", "error": "No data available"})
+            return ToolResponse.error("No data available", {"ticker": ticker})
         
         # Calculate summary statistics
         prices = hist['Close'].tolist()
@@ -61,8 +61,7 @@ def get_stock_chart(ticker: str, period: str = "1mo", interval: str = "1d") -> s
                 "volume": int(row['Volume'])
             })
         
-        return json.dumps({
-            "status": "success",
+        return ToolResponse.success({
             "ticker": ticker,
             "period": period,
             "interval": interval,
@@ -78,7 +77,7 @@ def get_stock_chart(ticker: str, period: str = "1mo", interval: str = "1d") -> s
                 "volatility_percent": round(volatility, 4)
             },
             "chart_data": data_points
-        }, ensure_ascii=False)
-        
+        })
+
     except Exception as e:
-        return json.dumps({"status": "error", "ticker": ticker, "error": str(e)})
+        return ToolResponse.error(str(e), {"ticker": ticker})

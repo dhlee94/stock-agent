@@ -287,12 +287,15 @@ def calculate_risk(ticker: str, market: str = "KR") -> str:
         if tech_data.get("status") == "error":
             return json.dumps({"error": f"Failed to get technical data: {tech_data.get('error')}"})
 
-        # Optional Chronos directional prior (no news fusion here on purpose)
-        try:
-            forecast_data = json.loads(price_forecast(ticker, price_data.get("name", ticker), market))
-            ai_prediction = {"predicted_change_pct": forecast_data.get("pct_change", 0)}
-        except Exception:
-            ai_prediction = None
+        # Optional Chronos directional prior — CHRONOS_ENABLED=false면 스킵
+        ai_prediction = None
+        if CHRONOS_ENABLED:
+            try:
+                forecast_data = json.loads(price_forecast(ticker, price_data.get("name", ticker), market))
+                pct = forecast_data.get("pct_change")
+                ai_prediction = {"predicted_change_pct": pct if pct is not None else 0.0}
+            except Exception:
+                ai_prediction = None
 
         result = calculate_risk_levels(current_price, tech_data, ai_prediction)
         result["ticker"] = ticker

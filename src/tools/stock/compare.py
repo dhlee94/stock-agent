@@ -1,9 +1,9 @@
 """
 Stock Comparison Tool - Compare multiple stocks
 """
-import json
 import yfinance as yf
 from typing import List
+from utils.response import ToolResponse
 
 
 def compare_stocks(tickers: List[str], period: str = "1y") -> str:
@@ -68,23 +68,24 @@ def compare_stocks(tickers: List[str], period: str = "1y") -> str:
                 continue
         
         if not comparisons:
-            return json.dumps({"status": "error", "error": "No valid stock data found"})
-        
-        # Rank stocks
+            return ToolResponse.error("No valid stock data found")
+
+        # pe_ratio > 0 필터: None과 음수(적자기업) 모두 제외
+        pe_candidates = [c for c in comparisons if c['pe_ratio'] is not None and c['pe_ratio'] > 0]
+        div_candidates = [c for c in comparisons if c['dividend_yield'] is not None]
         rankings = {
             "best_return": sorted(comparisons, key=lambda x: x['performance']['return_percent'], reverse=True)[0]['ticker'],
             "lowest_volatility": sorted(comparisons, key=lambda x: x['performance']['volatility_percent'])[0]['ticker'],
-            "lowest_pe": sorted([c for c in comparisons if c['pe_ratio']], key=lambda x: x['pe_ratio'])[0]['ticker'] if any(c['pe_ratio'] for c in comparisons) else None,
-            "highest_dividend": sorted([c for c in comparisons if c['dividend_yield']], key=lambda x: x['dividend_yield'], reverse=True)[0]['ticker'] if any(c['dividend_yield'] for c in comparisons) else None,
+            "lowest_pe": sorted(pe_candidates, key=lambda x: x['pe_ratio'])[0]['ticker'] if pe_candidates else None,
+            "highest_dividend": sorted(div_candidates, key=lambda x: x['dividend_yield'], reverse=True)[0]['ticker'] if div_candidates else None,
         }
-        
-        return json.dumps({
-            "status": "success",
+
+        return ToolResponse.success({
             "period": period,
             "stocks": comparisons,
             "rankings": rankings,
             "summary": f"Compared {len(comparisons)} stocks over {period}"
-        }, ensure_ascii=False)
-        
+        })
+
     except Exception as e:
-        return json.dumps({"status": "error", "error": str(e)})
+        return ToolResponse.error(str(e))

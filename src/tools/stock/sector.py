@@ -3,6 +3,7 @@ Sector Analysis Tool - Analyze market sectors and industries
 """
 import json
 import yfinance as yf
+from utils.response import ToolResponse
 
 
 # Major Korean stock indices and ETFs by sector
@@ -43,7 +44,13 @@ def get_sector_analysis(sector: str = None, market: str = "KR") -> str:
         if sector and sector in sectors:
             tickers = sectors[sector]
             return _analyze_sector(sector, tickers, market)
-        
+
+        if sector:
+            return ToolResponse.error(
+                f"Unknown sector: '{sector}'",
+                {"available": list(sectors.keys()), "market": market}
+            )
+
         # Otherwise, analyze all sectors
         sector_data = []
         for sector_name, tickers in sectors.items():
@@ -62,16 +69,15 @@ def get_sector_analysis(sector: str = None, market: str = "KR") -> str:
         # Sort by performance
         sector_data.sort(key=lambda x: x.get('avg_return') or 0, reverse=True)
         
-        return json.dumps({
-            "status": "success",
+        return ToolResponse.success({
             "market": market,
             "sectors": sector_data,
             "best_performing": sector_data[0]['sector'] if sector_data else None,
             "worst_performing": sector_data[-1]['sector'] if sector_data else None,
-        }, ensure_ascii=False)
-        
+        })
+
     except Exception as e:
-        return json.dumps({"status": "error", "error": str(e)})
+        return ToolResponse.error(str(e))
 
 
 def _analyze_sector(sector_name: str, tickers: list, market: str) -> str:

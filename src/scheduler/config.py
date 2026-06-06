@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import List
 
 from dotenv import load_dotenv
@@ -20,7 +21,7 @@ class SchedulerConfig:
 
     @classmethod
     def from_env(cls) -> "SchedulerConfig":
-        load_dotenv()
+        load_dotenv(Path(__file__).parent.parent.parent / ".env")
 
         def required(key: str) -> str:
             value = os.getenv(key)

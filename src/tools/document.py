@@ -20,8 +20,8 @@ def read_document(filepath: str) -> str:
         project_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
         abs_path = os.path.abspath(filepath)
         
-        # Check if it's within project root
-        if not abs_path.startswith(project_root):
+        # Check if it's within project root (os.sep 포함으로 형제 디렉터리 우회 방지)
+        if not (abs_path == project_root or abs_path.startswith(project_root + os.sep)):
             return ToolResponse.error("Access denied: Path is outside project root", {"path": filepath})
             
         # Block sensitive files
