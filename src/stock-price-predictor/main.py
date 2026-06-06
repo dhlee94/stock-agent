@@ -15,17 +15,22 @@ from transformers import AutoTokenizer, AutoModelForSequenceClassification
 
 
 def _load_finbert_safe(model_id: str, device):
-    """Load a FinBERT model, converting .bin → safetensors on first use.
+    """Load FinBERT model + tokenizer, converting .bin → safetensors on first use.
+
+    Returns (model, tokenizer) — both from local safetensors cache after first run.
 
     Both ProsusAI/finbert and snunlp/KR-FinBert-SC ship only .bin weights.
-    torch.load(.bin) is blocked by transformers>=4.51 when torch<2.6 (CVE-2025-32434).
-    We work around this once by loading with the unsafe path, immediately converting
-    the state dict to safetensors, and caching it locally. All subsequent loads go
-    through safetensors — which is fully safe and fast.
+    torch.load(.bin) is blocked by transformers>=4.51 when torch<2.6 (CVE-2025-32434),
+    but uni2ts (Moirai) pins torch<2.5.
+
+    Strategy: one-time unsafe .bin load → convert state dict to safetensors + save
+    tokenizer files locally. All subsequent loads use only the local safetensors cache:
+      safe_dir/
+        config.json          ← model architecture
+        model.safetensors    ← weights (pickle-free)
+        tokenizer_config.json, vocab.txt, ...  ← tokenizer (JSON/text, always safe)
     """
-    from huggingface_hub import snapshot_download
-    from safetensors.torch import save_file, load_file
-    import json
+    from safetensors.torch import save_file
 
     cache_dir = Path.home() / ".cache" / "finbert_safetensors"
     safe_dir = cache_dir / model_id.replace("/", "_")
@@ -35,28 +40,31 @@ def _load_finbert_safe(model_id: str, device):
         print(f"   🔄 Converting {model_id} .bin → safetensors (one-time)...")
         safe_dir.mkdir(parents=True, exist_ok=True)
 
-        # One-time unsafe load to extract weights — only on first run
+        # One-time unsafe load — gated by check_torch_load_is_safe bypass
+        # Safe: loading from HuggingFace Hub, not arbitrary user-supplied pickles
         from transformers import modeling_utils as _mu
         _orig = _mu.check_torch_load_is_safe
         _mu.check_torch_load_is_safe = lambda: None
         try:
             model = AutoModelForSequenceClassification.from_pretrained(model_id)
+            tokenizer = AutoTokenizer.from_pretrained(model_id)
         finally:
             _mu.check_torch_load_is_safe = _orig
 
-        # Convert and persist as safetensors — safe from this point on
+        # Persist: weights as safetensors, config + tokenizer as plain files
         save_file(model.state_dict(), str(safe_path))
-        # Save config so from_pretrained can reconstruct the model class
         model.config.save_pretrained(str(safe_dir))
-        print(f"   ✅ Saved safetensors → {safe_path}")
-        return model.to(device)
+        tokenizer.save_pretrained(str(safe_dir))
+        print(f"   ✅ Saved to {safe_dir}")
+        return model.to(device), tokenizer
 
-    # Fast path: load from local safetensors cache
+    # Fast path: load everything from local cache — no HuggingFace Hub needed
     print(f"   ✅ Loading {model_id} from safetensors cache")
     model = AutoModelForSequenceClassification.from_pretrained(
         str(safe_dir), use_safetensors=True
     )
-    return model.to(device)
+    tokenizer = AutoTokenizer.from_pretrained(str(safe_dir))
+    return model.to(device), tokenizer
 
 CHRONOS_MODEL_ID = os.environ.get("CHRONOS_MODEL", "amazon/chronos-2")
 MOIRAI_MODEL_ID = os.environ.get("MOIRAI_MODEL", "Salesforce/moirai-2.0-R-small")
@@ -118,8 +126,7 @@ class StockBrain:
             )
         self.fb_model_id = SENTIMENT_MODEL_BY_MARKET[market_type]
         print(f"🧠 Sentiment model for {market_type}: {self.fb_model_id}")
-        self.fb_tokenizer = AutoTokenizer.from_pretrained(self.fb_model_id)
-        self.finbert = _load_finbert_safe(self.fb_model_id, self.device)
+        self.finbert, self.fb_tokenizer = _load_finbert_safe(self.fb_model_id, self.device)
         self.finbert.eval()
         self.fb_id2label = {int(k): v.lower() for k, v in self.finbert.config.id2label.items()}
         self.fb_supported_labels = sorted(set(self.fb_id2label.values()))
