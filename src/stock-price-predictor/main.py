@@ -119,6 +119,8 @@ class StockBrain:
                 self.moirai_module = Moirai2Module.from_pretrained(MOIRAI_MODEL_ID).to(self.device)
             except ImportError:
                 print("⚠️  uni2ts not installed — Moirai disabled. Run: pip install uni2ts")
+            except Exception as e:
+                print(f"⚠️  Moirai failed to load ({type(e).__name__}: {e}) — Moirai disabled.")
 
         if market_type not in SENTIMENT_MODEL_BY_MARKET:
             raise ValueError(
