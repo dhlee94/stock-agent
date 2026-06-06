@@ -622,18 +622,19 @@ def reembed_if_model_changed(new_model_name: str = "sentence-transformers/paraph
 
         count = 0
         with get_connection() as conn:
-            cursor = conn.cursor()
+            read_cur = conn.cursor()
+            write_cur = conn.cursor()
 
-            cursor.execute("SELECT id, task FROM episodic_memory")
-            for row_id, task in cursor.fetchall():
-                cursor.execute("UPDATE episodic_memory SET embedding_json=? WHERE id=?",
-                               (json.dumps(ms._get_embedding(task)), row_id))
+            read_cur.execute("SELECT id, task FROM episodic_memory")
+            for row_id, task in read_cur.fetchall():
+                write_cur.execute("UPDATE episodic_memory SET embedding_json=? WHERE id=?",
+                                  (json.dumps(ms._get_embedding(task)), row_id))
                 count += 1
 
-            cursor.execute("SELECT id, lesson FROM semantic_memory")
-            for row_id, lesson in cursor.fetchall():
-                cursor.execute("UPDATE semantic_memory SET embedding_json=? WHERE id=?",
-                               (json.dumps(ms._get_embedding(lesson)), row_id))
+            read_cur.execute("SELECT id, lesson FROM semantic_memory")
+            for row_id, lesson in read_cur.fetchall():
+                write_cur.execute("UPDATE semantic_memory SET embedding_json=? WHERE id=?",
+                                  (json.dumps(ms._get_embedding(lesson)), row_id))
                 count += 1
 
         set_setting("embedding_model", actual_model)

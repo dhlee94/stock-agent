@@ -99,10 +99,16 @@ def _detect_market(ticker: str) -> str:
 
 
 def _get_company_map_for_market(market: str) -> dict:
-    """Get the appropriate company map for the target market."""
-    if market == "KR":
-        return KR_COMPANY_TICKER_MAP
-    return US_COMPANY_TICKER_MAP
+    """Get the appropriate company map for the target market.
+    market_utils.NAME_TO_TICKER를 기반으로 병합하고,
+    로컬 항목(별칭 포함)을 우선 적용한다.
+    """
+    local = KR_COMPANY_TICKER_MAP if market == "KR" else US_COMPANY_TICKER_MAP
+    try:
+        from market_utils import NAME_TO_TICKER as _mu
+        return {**_mu, **local}
+    except ImportError:
+        return local
 
 
 # Combined mapping for display names

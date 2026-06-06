@@ -31,8 +31,9 @@ class MemoryStore:
             except Exception as e:
                 print(f"⚠️ OpenAI Embedding failed: {e}")
         
-        # 2. Try Gemini
-        if EMBEDDING_PROVIDER == "gemini" or GEMINI_API_KEY:
+        # 2. Try Gemini — EMBEDDING_PROVIDER가 gemini일 때만 시도
+        # (GEMINI_API_KEY 존재만으로 폴백하면 OpenAI 설정 시 차원 불일치 발생)
+        if EMBEDDING_PROVIDER == "gemini":
             try:
                 from google import genai as _genai
                 _client = _genai.Client(api_key=GEMINI_API_KEY)

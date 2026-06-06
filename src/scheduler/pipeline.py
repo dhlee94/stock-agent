@@ -59,7 +59,7 @@ def _evaluate_pending_predictions(tz_name: str) -> int:
                 continue
             # target_date 당일 또는 그 이후 첫 거래일 종가 사용
             actual_price = float(hist["Close"].iloc[0])
-            actual_dir = "up" if actual_price >= base_price else "down"
+            actual_dir = "up" if actual_price > base_price else "down"
             evaluate_prediction(
                 pred_id=pred["id"],
                 actual_price=actual_price,

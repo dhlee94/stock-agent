@@ -8,13 +8,22 @@ import os
 SRC_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, SRC_DIR)
 
-from fastapi import FastAPI, Request, Form
+from fastapi import FastAPI, Request, Form, Header, HTTPException, Depends
 from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 import uvicorn
 import json
 import asyncio
+
+# WEB_API_KEY가 .env에 설정된 경우 모든 /api/* 요청에 X-API-Key 헤더 필요.
+# 미설정 시 로컬 개발 편의를 위해 인증 없이 허용.
+_WEB_API_KEY = os.environ.get("WEB_API_KEY", "").strip()
+
+
+async def _require_api_key(x_api_key: str = Header(default="")) -> None:
+    if _WEB_API_KEY and x_api_key != _WEB_API_KEY:
+        raise HTTPException(status_code=401, detail="Invalid or missing X-API-Key header")
 
 # Import agent
 from agent_client import MementoAgent
@@ -59,7 +68,7 @@ async def home(request: Request):
 # =========================================================
 
 @app.get("/api/price/{ticker}")
-async def api_price(ticker: str, market: str = "KR"):
+async def api_price(ticker: str, market: str = "KR", _: None = Depends(_require_api_key)):
     """Get real-time stock price"""
     try:
         result = get_stock_price(ticker, market)
@@ -69,7 +78,7 @@ async def api_price(ticker: str, market: str = "KR"):
 
 
 @app.get("/api/technical/{ticker}")
-async def api_technical(ticker: str, period: str = "6mo"):
+async def api_technical(ticker: str, period: str = "6mo", _: None = Depends(_require_api_key)):
     """Get technical analysis"""
     try:
         result = technical_analysis(ticker, period)
@@ -79,7 +88,7 @@ async def api_technical(ticker: str, period: str = "6mo"):
 
 
 @app.get("/api/news/{ticker}")
-async def api_news(ticker: str):
+async def api_news(ticker: str, _: None = Depends(_require_api_key)):
     """Get stock news"""
     try:
         result = get_market_news(ticker=ticker, limit=5)
@@ -89,7 +98,7 @@ async def api_news(ticker: str):
 
 
 @app.get("/api/financials/{ticker}")
-async def api_financials(ticker: str):
+async def api_financials(ticker: str, _: None = Depends(_require_api_key)):
     """Get financial data"""
     try:
         result = get_financials(ticker)
@@ -101,7 +110,8 @@ async def api_financials(ticker: str):
 @app.post("/api/analyze")
 async def api_analyze(ticker: str = Form(...), name: str = Form(...),
                       market: str = Form("KR"), forecast_steps: int = Form(5),
-                      context_period: str = Form(None)):
+                      context_period: str = Form(None),
+                      _: None = Depends(_require_api_key)):
     """Full AI analysis"""
     try:
         # Get all data
@@ -154,7 +164,7 @@ async def api_analyze(ticker: str = Form(...), name: str = Form(...),
 
 
 @app.post("/api/chat")
-async def api_chat(message: str = Form(...)):
+async def api_chat(message: str = Form(...), _: None = Depends(_require_api_key)):
     """Natural language chat with AI agent"""
     try:
         result = await asyncio.wait_for(agent.run_for_web(message), timeout=600)
