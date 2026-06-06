@@ -28,7 +28,9 @@ sys.path.insert(0, STOCK_PREDICTOR_PATH)
 os.environ["USE_TORCH"] = "1"
 os.environ["TF_CPP_MIN_LOG_LEVEL"] = "3"
 
+import threading
 _stock_brain_cache = {}
+_stock_brain_lock = threading.Lock()  # prevents concurrent duplicate initialization
 
 
 def get_stock_brain(ticker: str, name: str, market: str):
@@ -36,12 +38,19 @@ def get_stock_brain(ticker: str, name: str, market: str):
     Lazily build (and cache) a StockBrain per market.
     FinBERT and Moirai models are market-specific but ticker-agnostic,
     so caching by market avoids reloading heavy models for every new ticker.
-    The loader is updated per call so data always reflects the requested ticker.
+
+    Uses a lock so that if initialization is already in progress (e.g., from a
+    concurrent tool call), the second caller waits and reuses the result rather
+    than starting a duplicate load.
     """
     if market not in _stock_brain_cache:
-        from main import StockBrain  # heavy imports happen here, on first use
-        print(f"🔄 [StockTool] Initializing Brain for market={market} (ticker={ticker})...")
-        _stock_brain_cache[market] = StockBrain(ticker, name, market)
+        with _stock_brain_lock:
+            # Double-checked: another caller may have initialized while we waited
+            if market not in _stock_brain_cache:
+                from main import StockBrain  # heavy imports happen here, on first use
+                print(f"🔄 [StockTool] Initializing Brain for market={market} (ticker={ticker})...")
+                _stock_brain_cache[market] = StockBrain(ticker, name, market)
+
     brain = _stock_brain_cache[market]
     # Update loader so data fetching targets the requested ticker
     brain.loader.symbol = ticker

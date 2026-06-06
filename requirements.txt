@@ -14,8 +14,9 @@ uni2ts
 chronos-forecasting
 
 # ── Deep Learning ────────────────────────────────────────────────────────────
-torch>=2.0.0
-transformers>=4.40.0        # FinBERT (ProsusAI/finbert, snunlp/KR-FinBert-SC)
+torch>=2.1.0,<2.5.0         # uni2ts requires torch<2.5
+# transformers latest — torch version check patched in main.py for .bin FinBERT models
+transformers>=4.40.0
 accelerate>=0.26.0          # device_map support for transformers
 
 # ── Data / Finance ───────────────────────────────────────────────────────────

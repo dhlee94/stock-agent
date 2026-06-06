@@ -72,8 +72,19 @@ class StockBrain:
             )
         self.fb_model_id = SENTIMENT_MODEL_BY_MARKET[market_type]
         print(f"🧠 Sentiment model for {market_type}: {self.fb_model_id}")
-        self.fb_tokenizer = AutoTokenizer.from_pretrained(self.fb_model_id)
-        self.finbert = AutoModelForSequenceClassification.from_pretrained(self.fb_model_id).to(self.device)
+        # Both FinBERT models (ProsusAI/finbert, snunlp/KR-FinBert-SC) are .bin-only.
+        # transformers>=4.51 uses importlib.metadata.version("torch") to gate torch.load,
+        # blocking use with torch<2.6 — but uni2ts (Moirai) pins torch<2.5.
+        # Patch check_torch_load_is_safe to a no-op for this load only.
+        # Safe: these models are downloaded from HuggingFace Hub, not arbitrary pickles.
+        from transformers import modeling_utils as _mu
+        _orig_check = _mu.check_torch_load_is_safe
+        _mu.check_torch_load_is_safe = lambda: None
+        try:
+            self.fb_tokenizer = AutoTokenizer.from_pretrained(self.fb_model_id)
+            self.finbert = AutoModelForSequenceClassification.from_pretrained(self.fb_model_id).to(self.device)
+        finally:
+            _mu.check_torch_load_is_safe = _orig_check
         self.finbert.eval()
         self.fb_id2label = {int(k): v.lower() for k, v in self.finbert.config.id2label.items()}
         self.fb_supported_labels = sorted(set(self.fb_id2label.values()))

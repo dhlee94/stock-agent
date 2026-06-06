@@ -78,15 +78,22 @@ class MemoryStore:
     REWRITE_MIN_IMPROVEMENT = 0.1
 
     def save_trajectory(self, task: str, plan: str, result: str, feedback_score: float, lessons: List[str] = None):
-        """Save task trajectory to episodic memory."""
+        """Save task trajectory to episodic memory.
+
+        Deduplication: if a near-identical task already exists (similarity ≥ threshold):
+          - Better score  → full overwrite (plan + result + score) AND merge lessons
+          - Same/worse    → lessons-only merge (plan preserved, lessons accumulated)
+        New task          → INSERT as fresh entry
+        """
         new_embedding = self._get_embedding(task)
         query = np.array(new_embedding)
+        new_lessons = lessons or []
 
         with get_connection() as conn:
             cursor = conn.cursor()
-            cursor.execute("SELECT id, score, embedding_json FROM episodic_memory")
+            cursor.execute("SELECT id, score, lessons_json, embedding_json FROM episodic_memory")
             rows = cursor.fetchall()
-            
+
             for row in rows:
                 existing_emb = np.array(json.loads(row['embedding_json']))
                 if existing_emb.shape != query.shape:
@@ -94,21 +101,36 @@ class MemoryStore:
                 similarity = np.dot(query, existing_emb) / (
                     np.linalg.norm(query) * np.linalg.norm(existing_emb) + 1e-9
                 )
-                
+
                 if similarity >= self.REWRITE_SIMILARITY_THRESHOLD:
+                    # Merge lessons: existing + new, deduplicated while preserving order
+                    existing_lessons = json.loads(row['lessons_json'] or '[]')
+                    seen = set(existing_lessons)
+                    merged = existing_lessons + [l for l in new_lessons if l not in seen]
+
                     if feedback_score >= row['score'] + self.REWRITE_MIN_IMPROVEMENT:
+                        # Better run → replace plan/result/score AND update lessons
                         cursor.execute('''
-                            UPDATE episodic_memory SET 
-                                task = ?, plan_json = ?, result = ?, score = ?, lessons_json = ?, embedding_json = ?, created_at = CURRENT_TIMESTAMP
-                            WHERE id = ?
-                        ''', (task, plan, result, feedback_score, json.dumps(lessons or []), json.dumps(new_embedding), row['id']))
-                        return
+                            UPDATE episodic_memory
+                            SET task=?, plan_json=?, result=?, score=?, lessons_json=?, embedding_json=?, created_at=CURRENT_TIMESTAMP
+                            WHERE id=?
+                        ''', (task, plan, result, feedback_score, json.dumps(merged),
+                              json.dumps(new_embedding), row['id']))
+                        print(f"   📝 [Memory] Updated episodic entry #{row['id']} (score {row['score']}→{feedback_score}, {len(merged)} lessons)")
+                    else:
+                        # Same/worse score → keep existing plan, only refresh lessons
+                        cursor.execute('''
+                            UPDATE episodic_memory
+                            SET lessons_json=?, created_at=CURRENT_TIMESTAMP
+                            WHERE id=?
+                        ''', (json.dumps(merged), row['id']))
+                        print(f"   📝 [Memory] Merged lessons into episodic entry #{row['id']} ({len(existing_lessons)}→{len(merged)} lessons)")
                     return
 
             cursor.execute('''
                 INSERT INTO episodic_memory (task, plan_json, result, score, lessons_json, embedding_json)
                 VALUES (?, ?, ?, ?, ?, ?)
-            ''', (task, plan, result, feedback_score, json.dumps(lessons or []), json.dumps(new_embedding)))
+            ''', (task, plan, result, feedback_score, json.dumps(new_lessons), json.dumps(new_embedding)))
 
     def retrieve_similar(self, current_task: str, top_k: int = 3) -> List[Dict[str, Any]]:
         query_embedding = np.array(self._get_embedding(current_task))
