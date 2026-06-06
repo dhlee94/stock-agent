@@ -1,9 +1,10 @@
 """
 Financial Data Tool - Company fundamentals and financial statements
 """
-import json
 import logging
 import yfinance as yf
+
+from utils.response import ToolResponse
 
 # pykrx has a bug in its logging call (logging.info(args, kwargs) instead of
 # logging.info("%s %s", args, kwargs)) that prints a noisy 50-line traceback.
@@ -94,7 +95,6 @@ def get_financials(ticker: str) -> str:
         }
         
         result_data = {
-            "status": "success",
             "ticker": ticker,
             "company": company,
             "valuation": valuation,
@@ -148,7 +148,7 @@ def get_financials(ticker: str) -> str:
             except Exception as e:
                 print(f"   ⚠️ [PyKRX] Enhancement failed: {str(e)}")
 
-        return json.dumps(result_data, ensure_ascii=False)
-        
+        return ToolResponse.success(result_data)
+
     except Exception as e:
-        return json.dumps({"status": "error", "ticker": ticker, "error": str(e)})
+        return ToolResponse.error(str(e), {"ticker": ticker})

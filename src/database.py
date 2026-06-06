@@ -614,6 +614,11 @@ def reembed_if_model_changed(new_model_name: str = "sentence-transformers/paraph
 
         if actual_model != new_model_name:
             print(f"   ⚠️  {new_model_name} unavailable (dim={actual_dim}) — using {actual_model}")
+            if actual_model == current:
+                # 의도한 모델도 실패하고 이전과 동일한 폴백 모델이 사용됨.
+                # 재임베딩 불필요 — 다음 시작 때 다시 시도.
+                print(f"   ℹ️  Effective model unchanged ({actual_model}) — skipping re-embed")
+                return 0
 
         count = 0
         with get_connection() as conn:

@@ -1,16 +1,35 @@
 """
 Crawl Tool - URL content extraction using Playwright
 """
+import ipaddress
+import socket
 from urllib.parse import urlparse
 from playwright.sync_api import sync_playwright
 
 _ALLOWED_SCHEMES = {"http", "https"}
-# Block internal/cloud-metadata endpoints
+# Block well-known internal hostnames and cloud metadata endpoints
 _BLOCKED_HOSTS = {
-    "localhost", "127.0.0.1", "0.0.0.0",
-    "169.254.169.254",   # AWS/GCP metadata
+    "localhost",
     "metadata.google.internal",
+    "169.254.169.254",    # AWS/GCP/Azure IMDS
+    "100.100.100.200",    # Alibaba Cloud metadata
 }
+
+
+def _is_blocked_ip(addr: str) -> bool:
+    """Return True if the resolved IP is private/loopback/link-local/reserved."""
+    try:
+        ip = ipaddress.ip_address(addr)
+        return (
+            ip.is_private
+            or ip.is_loopback
+            or ip.is_link_local
+            or ip.is_reserved
+            or ip.is_unspecified
+            or ip.is_multicast
+        )
+    except ValueError:
+        return False
 
 
 def _validate_url(url: str) -> str | None:
@@ -22,8 +41,21 @@ def _validate_url(url: str) -> str | None:
     if parsed.scheme not in _ALLOWED_SCHEMES:
         return f"Scheme '{parsed.scheme}' not allowed (http/https only)"
     host = parsed.hostname or ""
-    if host in _BLOCKED_HOSTS or host.startswith("192.168.") or host.startswith("10."):
+    if not host:
+        return "Missing host"
+    if host in _BLOCKED_HOSTS:
         return f"Host '{host}' is blocked (internal network)"
+    # Resolve hostname and reject any private/internal IP address.
+    # This catches RFC-1918 (10/8, 172.16/12, 192.168/16), IPv6 loopback (::1),
+    # link-local (fe80::/10), and ULA (fc00::/7).
+    try:
+        resolved = socket.getaddrinfo(host, None)
+        for info in resolved:
+            addr = info[4][0]
+            if _is_blocked_ip(addr):
+                return f"Host '{host}' resolves to blocked address '{addr}'"
+    except socket.gaierror:
+        return f"Cannot resolve host '{host}'"
     return None
 
 

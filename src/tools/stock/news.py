@@ -184,7 +184,5 @@ def get_market_news(ticker: str = None, query: str = None, limit: int = 10,
             "timestamp": datetime.now(pytz.timezone("Asia/Seoul")).isoformat(),
         })
 
-    except RuntimeError:
-        raise
     except Exception as e:
         return ToolResponse.error(str(e))

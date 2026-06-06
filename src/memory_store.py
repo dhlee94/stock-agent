@@ -74,8 +74,9 @@ class MemoryStore:
             # Random vectors make similarity search meaningless — log loudly.
             print(f"❌ [MemoryStore] All embedding methods failed: {e}. "
                   "Memory retrieval will return random results until an embedding provider is configured.")
-            np.random.seed(hash(text) % (2**32))
-            return np.random.rand(768).tolist()
+            # 스레드-안전한 독립 RNG 사용 (전역 np.random 상태 오염 방지)
+            rng = np.random.default_rng(hash(text) % (2**32))
+            return rng.random(768).tolist()
 
     REWRITE_SIMILARITY_THRESHOLD = 0.92
     REWRITE_MIN_IMPROVEMENT = 0.1

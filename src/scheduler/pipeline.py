@@ -1,8 +1,9 @@
 from __future__ import annotations
 
 import asyncio
+import html
 import logging
-from datetime import datetime
+from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 
 from .bot import TelegramBot
@@ -28,9 +29,6 @@ def _evaluate_pending_predictions(tz_name: str) -> int:
     target_date가 지난 미평가 예측을 실제 가격으로 채점한다.
     Returns number of predictions evaluated.
     """
-    import sys, os
-    sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-
     try:
         import yfinance as yf
     except ImportError:
@@ -50,7 +48,6 @@ def _evaluate_pending_predictions(tz_name: str) -> int:
         target_date = pred["target_date"]
         base_price = pred["current_price"]
         try:
-            from datetime import timedelta
             target_dt = datetime.strptime(target_date, "%Y-%m-%d")
             end_dt = target_dt + timedelta(days=7)  # buffer for holidays
             hist = yf.Ticker(ticker).history(
@@ -92,8 +89,8 @@ async def run_once(config: SchedulerConfig) -> int:
 
     now = datetime.now(ZoneInfo(config.timezone))
 
-    # 예측 평가 먼저 실행 (오늘 날짜 기준)
-    evaluated = _evaluate_pending_predictions(config.timezone)
+    # 예측 평가 먼저 실행 (오늘 날짜 기준) — blocking I/O를 스레드풀로 오프로드
+    evaluated = await asyncio.to_thread(_evaluate_pending_predictions, config.timezone)
     if evaluated:
         logger.info("Pre-run evaluation: scored %d predictions", evaluated)
 
@@ -106,7 +103,7 @@ async def run_once(config: SchedulerConfig) -> int:
             result = await agent.run_for_web(_build_task(ticker))
         except Exception as e:
             logger.exception("Analysis failed for %s", ticker)
-            await bot.send_text(f"⚠️ <b>{ticker}</b> 분석 실패: {type(e).__name__}: {e}")
+            await bot.send_text(f"⚠️ <b>{html.escape(ticker)}</b> 분석 실패: {html.escape(type(e).__name__)}: {html.escape(str(e))}")
             continue
 
         await bot.send_ticker_analysis(ticker, result)

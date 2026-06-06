@@ -165,7 +165,7 @@ def technical_analysis(ticker: str, period: str = "6mo") -> str:
         # Generate overall signal
         signals = []
         
-        if rsi:
+        if rsi is not None:
             if rsi < 30:
                 signals.append(("RSI", "oversold", "bullish"))
             elif rsi > 70:

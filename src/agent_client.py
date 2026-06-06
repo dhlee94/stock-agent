@@ -1005,6 +1005,9 @@ Return the JSON verdict object now:"""}
 
             saved_result = final_result if final_result else "분석을 완료하지 못했습니다."
 
+            if feedback is None:
+                feedback = {"score": 0.0, "lessons": []}
+
             self.memory.save_trajectory(
                 user_task, plan_text, final_result,
                 feedback["score"], feedback["lessons"]
