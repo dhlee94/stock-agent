@@ -51,7 +51,7 @@ agent = MementoAgent()
 @app.get("/", response_class=HTMLResponse)
 async def home(request: Request):
     """Main page"""
-    return templates.TemplateResponse("index.html", {"request": request})
+    return templates.TemplateResponse(request, "index.html")
 
 
 # =========================================================
