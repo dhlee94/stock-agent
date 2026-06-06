@@ -70,11 +70,13 @@ These two tools intentionally produce INDEPENDENT signals.
 **forecast_steps** — use the `forecast_horizon` value from Extracted Intent above. If no intent context is available, default to `5`.
 Predictions with `forecast_steps < 10` are automatically saved to DB for accuracy learning.
 
-**context_period** — Step 1: Call `get_forecast_accuracy(ticker)` first. Use the `context_period` with the highest `accuracy_pct` if history exists.
-Step 2 (no history): pick by situation:
-- 급등락·이벤트 직후 → `"1mo"`
-- 일반 분석, 단기 outlook → `"1mo"`
-- 장기 추세·섹터 사이클 → `"6mo"` or `"1y"`
+**context_period** — 기본값 `"1mo"`. **`get_forecast_accuracy` 호출 여부와 무관하게 `stock_moirai_forecast`는 항상 독립적으로 호출 가능하다.** `context_period`는 선택 인자이며 생략(None)하면 자동 결정된다.
+- 히스토리가 있으면: `get_forecast_accuracy(ticker)`를 먼저 호출하고, 가장 높은 `accuracy_pct`의 `context_period`를 사용.
+- 히스토리가 없거나 `get_forecast_accuracy`를 호출하지 않은 경우: 상황에 맞게 직접 선택.
+  - 일반 분석 / 단기 outlook → `"1mo"` (기본)
+  - 급등락·이벤트 직후 → `"1mo"`
+  - 장기 추세·섹터 사이클 → `"6mo"` 또는 `"1y"`
+- ⚠️ `get_forecast_accuracy`를 먼저 호출하지 않았다고 해서 `stock_moirai_forecast`를 생략하지 말 것. `context_period="1mo"`로 바로 호출하면 된다.
 
 ## Other guidelines
 - Understand the user's intent first, then choose the most relevant tools.
