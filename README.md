@@ -1,20 +1,21 @@
-# Memento AI Agent: Stock Expert Edition 🧠
+# Memento AI Agent: Stock Expert Edition
 
 실시간 뉴스 감성 분석과 시계열 예측(Moirai 2.0)을 결합한 멀티-에이전트 주식 분석 시스템입니다.  
 사용자의 자연어 질문을 받아 Intent Extraction → Planning → Execution → Reflection 파이프라인으로 전문가 수준의 한국어 투자 리포트를 생성합니다.
 
-## 🚀 Key Features
+## Key Features
 
-- **🤖 Multi-Agent Pipeline**: Intent Extractor → Planner → Executor (뉴스/기술/예측 전문 Agent) → Summarizer → Reflector
-- **📈 Moirai 2.0 Primary Forecaster**: Salesforce Moirai 2.0으로 가격 예측, Chronos-2는 보조 신호 (선택)
-- **🔄 Prediction Feedback Loop**: 5~9일 예측을 DB에 저장하고, 목표일 이후 yfinance로 자동 채점 → Planner가 적중률 기반으로 context_period 선택
-- **🏭 Sector Top-Down Analysis**: "바이오주 어때?" 같은 섹터 쿼리 시 stock_sector → stock_compare → winner 집중 분석
-- **📊 Peer Analysis**: 경쟁사 상관관계 분석으로 Reflector 신호 교차 검증
-- **⚡ MCP Session Singleton**: subprocess를 앱 수명 동안 유지, Moirai 콜드 스타트 최초 1회로 제한
-- **🐳 Docker Ready**: 컨테이너 즉시 실행 가능
-- **📢 Telegram Digest**: 워치리스트 종목 일일 리포트 자동 전송
+- **Multi-Agent Pipeline**: Intent Extractor → Planner → Executor (뉴스/기술/예측 전문 Agent) → Summarizer → Reflector
+- **Moirai 2.0 Primary Forecaster**: Salesforce Moirai 2.0으로 가격 예측, Chronos-2는 보조 신호 (선택)
+- **Prediction Feedback Loop**: 단기 예측(≤10일)을 DB에 저장하고, 목표일 이후 실제 가격으로 자동 채점 → Planner가 적중률 기반으로 `context_period` 선택
+- **Sector Top-Down Analysis**: "바이오주 어때?" 같은 섹터 쿼리 시 `stock_sector → stock_compare → winner` 집중 분석
+- **Peer Analysis**: 경쟁사 상관관계 분석으로 Reflector 신호 교차 검증
+- **Per-Agent Provider Mixing**: 에이전트별로 다른 LLM Provider 혼용 가능 (모델명에서 자동 감지)
+- **MCP Session Singleton**: subprocess를 앱 수명 동안 유지, Moirai 콜드 스타트 최초 1회로 제한
+- **Docker Ready**: 컨테이너 즉시 실행 가능
+- **Telegram Digest**: 워치리스트 종목 일일 리포트 자동 전송
 
-## 🏗️ Architecture
+## Architecture
 
 ```
 사용자 쿼리 (자연어)
@@ -34,7 +35,7 @@ Summarizer  →  Reflector  →  최종 한국어 리포트
 Episodic/Semantic Memory 저장 (다음 쿼리에 활용)
 ```
 
-## 🛠️ Quick Start
+## Quick Start
 
 ### 1. 환경 설정 (.env)
 
@@ -47,14 +48,17 @@ cp .env.example .env
 주요 설정:
 
 ```env
-# LLM Provider (anthropic 권장)
+# LLM Provider (기본 베이스라인)
 LLM_PROVIDER=anthropic
+LLM_MODEL=claude-haiku-4-5-20251001
 ANTHROPIC_API_KEY=your_api_key_here
 
-# 에이전트별 모델 개별 지정 (미설정 시 LLM_MODEL 사용)
+# 에이전트별 모델 개별 지정 — Provider 혼용 가능 (모델명에서 자동 감지)
+#   claude-*  → Anthropic,  gemini-*  → Gemini,  gpt-*/o* → OpenAI,  llama-* → Groq
 # PLANNER_MODEL=claude-sonnet-4-6
+# EXECUTOR_MODEL=gemini-2.0-flash
 # REFLECTOR_MODEL=claude-sonnet-4-6
-# EXECUTOR_MODEL=claude-haiku-4-5-20251001
+# SUMMARIZER_MODEL=claude-sonnet-4-6
 
 # Moirai 2.0 (기본 활성, 비상업적 용도 — CC-BY-NC-4.0)
 MOIRAI_ENABLED=true
@@ -100,15 +104,18 @@ python -m web.app
 python -m scheduler.main --once
 ```
 
-## 📁 Project Structure
+## Project Structure
 
 ```
 src/
 ├── agent_client.py       # 멀티-에이전트 파이프라인 (핵심)
 ├── mcp_server.py         # MCP 툴 서버 (주가/뉴스/예측/리스크 등)
-├── config.py             # 환경변수 및 per-agent 모델 설정
+├── config.py             # 환경변수 및 per-agent 모델/provider 설정
 ├── database.py           # SQLite (예측 로그, 메모리, 설정)
+├── stock_tool.py         # Moirai/Chronos/FinBERT 래퍼
 ├── memory_store.py       # Episodic / Semantic / Procedural Memory
+├── driver_memory.py      # 종목별 역사적 변동 주도 요인 분석
+├── risk_manager.py       # 목표가 / 손절가 / 리스크-리워드 계산
 ├── prompts/              # 에이전트별 시스템 프롬프트
 │   ├── intent_extractor/ # 쿼리 구조화 (forecast_horizon 포함)
 │   ├── planner/          # 툴 호출 플랜 생성
@@ -118,24 +125,32 @@ src/
 │   ├── forecast_interpreter/ # 예측 결과 근거 해설
 │   ├── summarizer/       # 최종 한국어 리포트 생성
 │   └── reflector/        # 품질 검토 및 재실행 판단
-├── tools/stock/          # 주가/기술분석/뉴스/예측 툴
+├── tools/
+│   ├── stock/            # 주가/기술분석/뉴스/섹터/피어/비교 툴
+│   ├── executor.py       # Python 코드 실행 (제한된 샌드박스)
+│   ├── calc.py           # 수식 계산 (SymPy parse_expr)
+│   ├── crawl.py          # URL 크롤링 (SSRF 방지)
+│   └── search.py         # 웹 검색
 ├── web/                  # FastAPI 웹 서버 (port 8000)
-└── scheduler/            # 텔레그램 일일 다이제스트
+├── scheduler/            # 텔레그램 일일 다이제스트
+└── stock-price-predictor/
+    ├── main.py           # StockBrain (Moirai + Chronos + FinBERT)
+    └── predictor_src/    # 데이터 로더, 모델 유틸리티
 ```
 
-## 🤖 Forecasting Models
+## Forecasting Models
 
 | 모델 | 역할 | 라이선스 | 기본값 |
 |------|------|---------|--------|
-| [Moirai 2.0-R-small](https://huggingface.co/Salesforce/moirai-2.0-R-small) | Primary — 가격 예측, 예측 피드백 루프 | CC-BY-NC-4.0 | ✅ 활성 |
+| [Moirai 2.0-R-small](https://huggingface.co/Salesforce/moirai-2.0-R-small) | Primary — 가격 예측, 예측 피드백 루프 | CC-BY-NC-4.0 | 활성 |
 | [Chronos-2](https://huggingface.co/amazon/chronos-2) | Secondary — 보조 신호 | Apache 2.0 | 비활성 |
 
 > **Moirai 2.0**은 비상업적 연구 목적으로만 사용 가능합니다.
 
-## 🔮 Prediction Feedback Loop
+## Prediction Feedback Loop
 
-에이전트가 `forecast_steps < 10`인 단기 예측을 수행할 때마다 `prediction_log` 테이블에 자동 저장됩니다.  
-스케줄러 실행 시 목표일이 지난 예측을 yfinance로 채점하여 방향 적중률을 누적합니다.  
+에이전트가 `forecast_steps <= 10`인 단기 예측을 수행할 때마다 `prediction_log` 테이블에 자동 저장됩니다.  
+스케줄러 실행 시 target_date가 지난 예측을 yfinance로 채점하여 방향 적중률을 누적합니다.  
 Planner는 `get_forecast_accuracy` 툴로 ticker별 적중률을 조회하여 최적 `context_period`를 선택합니다.
 
 ```bash
@@ -143,6 +158,32 @@ Planner는 `get_forecast_accuracy` 툴로 ticker별 적중률을 조회하여 �
 python -m scheduler.main --once
 ```
 
-## ⚖️ License
+## Per-Agent Provider Mixing
+
+`.env`에서 에이전트별로 모델을 지정할 때 **모델명에서 provider를 자동 감지**합니다.  
+`LLM_PROVIDER`와 무관하게 사용할 API 키만 설정하면 됩니다.
+
+| 모델 prefix | Provider | 필요 환경변수 |
+|-------------|----------|-------------|
+| `claude-*` | Anthropic | `ANTHROPIC_API_KEY` |
+| `gemini-*` | Gemini | `GEMINI_API_KEY` |
+| `gpt-*`, `o*` | OpenAI | `OPENAI_API_KEY` |
+| `llama-*` 등 | Groq | `GROQ_API_KEY` |
+
+**예시**: Planner/Summarizer는 Sonnet, 가벼운 역할은 Gemini Flash로 비용 최적화
+
+```env
+LLM_PROVIDER=anthropic
+LLM_MODEL=claude-haiku-4-5-20251001
+
+PLANNER_MODEL=claude-sonnet-4-6
+EXECUTOR_MODEL=gemini-2.0-flash
+INTENT_EXTRACTOR_MODEL=gemini-2.0-flash
+TECHNICAL_ANALYST_MODEL=gemini-2.0-flash
+SUMMARIZER_MODEL=claude-sonnet-4-6
+REFLECTOR_MODEL=claude-sonnet-4-6
+```
+
+## License
 
 MIT License
