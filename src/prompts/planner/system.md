@@ -76,7 +76,7 @@ Predictions with `forecast_steps < 10` are automatically saved to DB for accurac
   - 일반 분석 / 단기 outlook → `"1mo"` (기본)
   - 급등락·이벤트 직후 → `"1mo"`
   - 장기 추세·섹터 사이클 → `"6mo"` 또는 `"1y"`
-- ⚠️ `get_forecast_accuracy`를 먼저 호출하지 않았다고 해서 `stock_moirai_forecast`를 생략하지 말 것. `context_period="1mo"`로 바로 호출하면 된다.
+- `get_forecast_accuracy` 없이 바로 호출할 때는 `context_period="1mo"`를 기본으로 사용.
 
 ## Other guidelines
 - Understand the user's intent first, then choose the most relevant tools.
