@@ -1,8 +1,8 @@
+# syntax=docker/dockerfile:1
 FROM python:3.12-slim
 
 ENV PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \
-    PIP_NO_CACHE_DIR=1 \
     PYTHONPATH=/app/src
 
 WORKDIR /app
@@ -12,11 +12,16 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 
 COPY requirements.txt .
-RUN pip install --no-cache-dir --upgrade pip setuptools wheel
-RUN pip install --no-cache-dir -r requirements.txt
+# BuildKit cache mount: pip downloads are reused across rebuilds (torch ~500MB 등 재다운로드 방지)
+RUN --mount=type=cache,target=/root/.cache/pip \
+    pip install --upgrade pip setuptools wheel
+RUN --mount=type=cache,target=/root/.cache/pip \
+    pip install -r requirements.txt
 # uni2ts has conflicting pins (scipy, torch); install core deps first, then uni2ts --no-deps
-RUN pip install --no-cache-dir lightning gluonts hydra-core jaxtyping datasets tensorboard orjson multiprocess
-RUN pip install --no-cache-dir --no-deps uni2ts
+RUN --mount=type=cache,target=/root/.cache/pip \
+    pip install lightning gluonts hydra-core jaxtyping datasets tensorboard orjson multiprocess
+RUN --mount=type=cache,target=/root/.cache/pip \
+    pip install --no-deps uni2ts
 
 COPY src/ ./src/
 
