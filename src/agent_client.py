@@ -18,8 +18,24 @@ from config import (
 from database import get_setting, reembed_if_model_changed
 from tools.stock.kr_listing import lookup_kr_ticker
 
-# Re-embed stored memories if the embedding model was changed
-reembed_if_model_changed()
+
+def _resolve_active_embedding_model() -> str:
+    """Return the embedding model name that MemoryStore._get_embedding will use.
+
+    Mirrors the provider priority in MemoryStore._get_embedding:
+      1. OpenAI  (if EMBEDDING_PROVIDER=openai and key present)
+      2. Gemini  (if key present — actual call may still fall back on error)
+      3. Local multilingual fallback
+    No live API test — avoids startup latency and rate-limit hits.
+    reembed_if_model_changed will report any embedding errors at re-embed time.
+    """
+    from config import EMBEDDING_PROVIDER, EMBEDDING_MODEL, OPENAI_API_KEY, GEMINI_API_KEY
+    _LOCAL = "sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2"
+    if EMBEDDING_PROVIDER == "openai" and OPENAI_API_KEY:
+        return EMBEDDING_MODEL
+    if GEMINI_API_KEY:
+        return EMBEDDING_MODEL   # Gemini key present → assume it works
+    return _LOCAL
 from tools.stock.us_listing import lookup_us_ticker, is_valid_us_ticker
 from tools.stock.market_utils import NAME_TO_TICKER
 
@@ -224,6 +240,10 @@ class MementoAgent:
                 f"{p}({v.__class__.__name__})" for p, v in _provider_clients.items()
             )
             print(f"[Agent] Providers ready: {available} | default={LLM_PROVIDER}/{LLM_MODEL}")
+
+        # Re-embed stored memories if embedding model changed — runs once after
+        # all memory stores are initialized to avoid DB lock contention at import time
+        reembed_if_model_changed(_resolve_active_embedding_model())
 
     async def _ensure_mcp_session(self):
         """싱글톤 MCP 세션 반환. 죽어있으면 재생성."""

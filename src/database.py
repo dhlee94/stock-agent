@@ -593,42 +593,46 @@ def reembed_if_model_changed(new_model_name: str = "sentence-transformers/paraph
     print(f"🔄 [DB] Embedding model changed ({current or 'none'} → {new_model_name}). Re-embedding memory...")
 
     try:
-        from transformers import AutoTokenizer, AutoModel
-        import torch, numpy as np
+        import sys, os
+        sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+        from memory_store import MemoryStore
+        ms = MemoryStore()
 
-        tok = AutoTokenizer.from_pretrained(new_model_name)
-        model = AutoModel.from_pretrained(new_model_name)
-        model.eval()
+        # Probe which model actually works — Gemini may rate-limit on batch calls
+        probe = ms._get_embedding("probe")
+        actual_dim = len(probe)
+        # Infer actual model from embedding dimension
+        _GEMINI_DIM  = 3072
+        _OPENAI_DIM  = 1536
+        _LOCAL_MODEL = "sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2"
+        if actual_dim == _GEMINI_DIM:
+            actual_model = new_model_name          # Gemini worked
+        elif actual_dim == _OPENAI_DIM:
+            actual_model = new_model_name          # OpenAI worked
+        else:
+            actual_model = _LOCAL_MODEL            # fell back to local
 
-        def embed(text: str) -> list:
-            inp = tok(text.replace("\n", " "), return_tensors="pt",
-                      padding=True, truncation=True, max_length=512)
-            with torch.no_grad():
-                out = model(**inp)
-            return out.last_hidden_state.mean(dim=1)[0].tolist()
+        if actual_model != new_model_name:
+            print(f"   ⚠️  {new_model_name} unavailable (dim={actual_dim}) — using {actual_model}")
 
         count = 0
         with get_connection() as conn:
             cursor = conn.cursor()
 
-            # Re-embed episodic_memory (task field)
             cursor.execute("SELECT id, task FROM episodic_memory")
             for row_id, task in cursor.fetchall():
-                new_emb = json.dumps(embed(task))
                 cursor.execute("UPDATE episodic_memory SET embedding_json=? WHERE id=?",
-                               (new_emb, row_id))
+                               (json.dumps(ms._get_embedding(task)), row_id))
                 count += 1
 
-            # Re-embed semantic_memory (lesson field)
             cursor.execute("SELECT id, lesson FROM semantic_memory")
             for row_id, lesson in cursor.fetchall():
-                new_emb = json.dumps(embed(lesson))
                 cursor.execute("UPDATE semantic_memory SET embedding_json=? WHERE id=?",
-                               (new_emb, row_id))
+                               (json.dumps(ms._get_embedding(lesson)), row_id))
                 count += 1
 
-        set_setting("embedding_model", new_model_name)
-        print(f"   ✅ Re-embedded {count} rows with {new_model_name}")
+        set_setting("embedding_model", actual_model)
+        print(f"   ✅ Re-embedded {count} rows with {actual_model}")
         return count
 
     except Exception as e:
