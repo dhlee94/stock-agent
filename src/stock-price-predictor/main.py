@@ -9,8 +9,54 @@ os.environ["TF_CPP_MIN_LOG_LEVEL"] = "3"
 
 import argparse
 import numpy as np
+from pathlib import Path
 from predictor_src.data.loader import StockDataLoader
 from transformers import AutoTokenizer, AutoModelForSequenceClassification
+
+
+def _load_finbert_safe(model_id: str, device):
+    """Load a FinBERT model, converting .bin → safetensors on first use.
+
+    Both ProsusAI/finbert and snunlp/KR-FinBert-SC ship only .bin weights.
+    torch.load(.bin) is blocked by transformers>=4.51 when torch<2.6 (CVE-2025-32434).
+    We work around this once by loading with the unsafe path, immediately converting
+    the state dict to safetensors, and caching it locally. All subsequent loads go
+    through safetensors — which is fully safe and fast.
+    """
+    from huggingface_hub import snapshot_download
+    from safetensors.torch import save_file, load_file
+    import json
+
+    cache_dir = Path.home() / ".cache" / "finbert_safetensors"
+    safe_dir = cache_dir / model_id.replace("/", "_")
+    safe_path = safe_dir / "model.safetensors"
+
+    if not safe_path.exists():
+        print(f"   🔄 Converting {model_id} .bin → safetensors (one-time)...")
+        safe_dir.mkdir(parents=True, exist_ok=True)
+
+        # One-time unsafe load to extract weights — only on first run
+        from transformers import modeling_utils as _mu
+        _orig = _mu.check_torch_load_is_safe
+        _mu.check_torch_load_is_safe = lambda: None
+        try:
+            model = AutoModelForSequenceClassification.from_pretrained(model_id)
+        finally:
+            _mu.check_torch_load_is_safe = _orig
+
+        # Convert and persist as safetensors — safe from this point on
+        save_file(model.state_dict(), str(safe_path))
+        # Save config so from_pretrained can reconstruct the model class
+        model.config.save_pretrained(str(safe_dir))
+        print(f"   ✅ Saved safetensors → {safe_path}")
+        return model.to(device)
+
+    # Fast path: load from local safetensors cache
+    print(f"   ✅ Loading {model_id} from safetensors cache")
+    model = AutoModelForSequenceClassification.from_pretrained(
+        str(safe_dir), use_safetensors=True
+    )
+    return model.to(device)
 
 CHRONOS_MODEL_ID = os.environ.get("CHRONOS_MODEL", "amazon/chronos-2")
 MOIRAI_MODEL_ID = os.environ.get("MOIRAI_MODEL", "Salesforce/moirai-2.0-R-small")
@@ -72,19 +118,8 @@ class StockBrain:
             )
         self.fb_model_id = SENTIMENT_MODEL_BY_MARKET[market_type]
         print(f"🧠 Sentiment model for {market_type}: {self.fb_model_id}")
-        # Both FinBERT models (ProsusAI/finbert, snunlp/KR-FinBert-SC) are .bin-only.
-        # transformers>=4.51 uses importlib.metadata.version("torch") to gate torch.load,
-        # blocking use with torch<2.6 — but uni2ts (Moirai) pins torch<2.5.
-        # Patch check_torch_load_is_safe to a no-op for this load only.
-        # Safe: these models are downloaded from HuggingFace Hub, not arbitrary pickles.
-        from transformers import modeling_utils as _mu
-        _orig_check = _mu.check_torch_load_is_safe
-        _mu.check_torch_load_is_safe = lambda: None
-        try:
-            self.fb_tokenizer = AutoTokenizer.from_pretrained(self.fb_model_id)
-            self.finbert = AutoModelForSequenceClassification.from_pretrained(self.fb_model_id).to(self.device)
-        finally:
-            _mu.check_torch_load_is_safe = _orig_check
+        self.fb_tokenizer = AutoTokenizer.from_pretrained(self.fb_model_id)
+        self.finbert = _load_finbert_safe(self.fb_model_id, self.device)
         self.finbert.eval()
         self.fb_id2label = {int(k): v.lower() for k, v in self.finbert.config.id2label.items()}
         self.fb_supported_labels = sorted(set(self.fb_id2label.values()))
