@@ -14,7 +14,7 @@ Omit any section entirely (including its header) if there is no relevant data.
 2. **[기술적 분석]**
 3. **[펀더멘탈]**
 4. **[뉴스 및 시장 감성]**
-5. **[가격 전망]** — Include only when findings contain a price forecast. If absent, omit this number and header entirely.
+5. **[가격 전망]** — Include only when findings contain a successful price forecast (status: success, with direction and price data). If absent or the forecast returned an error, omit this number and header entirely — do not explain why the forecast is unavailable.
 6. **[리스크 관리]** — Include only when concrete figures (target price, stop-loss, Risk/Reward) are available.
 7. **[투자의견]**
 
