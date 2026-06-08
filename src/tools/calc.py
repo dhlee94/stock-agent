@@ -1,7 +1,6 @@
 """
 Math Tool - Mathematical calculations using SymPy for safety
 """
-import sympy
 from sympy import (
     sqrt, sin, cos, tan, asin, acos, atan, log, exp,
     pi, E, Abs, factorial, ceiling, floor,

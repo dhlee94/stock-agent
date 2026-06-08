@@ -1,7 +1,6 @@
 """
 Market Utilities - Market detection and localization helpers
 """
-from typing import List, Tuple
 
 
 def detect_market(ticker: str) -> str:
@@ -17,72 +16,6 @@ def detect_market(ticker: str) -> str:
     if ticker.endswith(('.KS', '.KQ')):
         return 'KR'
     return 'US'
-
-
-def get_search_language(market: str) -> str:
-    """Get primary search language for market."""
-    return 'ko' if market == 'KR' else 'en'
-
-
-def optimize_search_query(ticker: str, name: str, keywords: List[str], market: str) -> Tuple[str, str]:
-    """
-    Generate optimized search query based on market.
-    
-    Returns:
-        (primary_query, fallback_query) - Primary query and fallback if primary fails
-    """
-    if market == 'KR':
-        # Korean stocks: Use Korean company name + Korean keywords
-        primary = f"{name} {' '.join(keywords[:2])}"
-        fallback = f"{name} 주가 전망"
-    else:
-        # US stocks: Use English-optimized queries
-        # Convert Korean keywords to English equivalents if possible
-        english_keywords = _translate_keywords_to_english(keywords)
-        primary = f"{name} {' '.join(english_keywords[:2])} analysis"
-        fallback = f"{ticker} stock news outlook"
-    
-    return primary, fallback
-
-
-def _translate_keywords_to_english(keywords: List[str]) -> List[str]:
-    """
-    Translate common Korean financial keywords to English.
-    Falls back to original if no translation available.
-    """
-    translations = {
-        # Events
-        '실적발표': 'earnings',
-        '실적': 'earnings',
-        '배당': 'dividend',
-        '공급계약': 'supply deal',
-        '인수합병': 'M&A',
-        '파업': 'strike',
-        '유상증자': 'capital raise',
-        # Technology
-        '반도체': 'semiconductor',
-        '2차전지': 'battery',
-        'AI': 'AI',
-        '신사업': 'new business',
-        '기술개발': 'R&D',
-        # Competition
-        '경쟁사': 'competition',
-        '점유율': 'market share',
-        # Samsung-specific
-        'HBM': 'HBM',
-        '파운드리': 'foundry',
-        '수율': 'yield',
-        # General
-        '전망': 'outlook',
-        '분석': 'analysis',
-    }
-    
-    result = []
-    for kw in keywords:
-        translated = translations.get(kw, kw)
-        result.append(translated)
-    
-    return result
 
 
 # Ticker to Name mapping (Centralized Source)

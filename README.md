@@ -57,7 +57,7 @@ ANTHROPIC_API_KEY=your_api_key_here
 #   claude-*  → Anthropic,  gemini-*  → Gemini,  gpt-*/o* → OpenAI,  llama-* → Groq
 # PLANNER_MODEL=claude-sonnet-4-6
 # EXECUTOR_MODEL=gemini-2.0-flash
-# REFLECTOR_MODEL=claude-sonnet-4-6
+# GLOBAL_REFLECTOR_MODEL=claude-sonnet-4-6
 # SUMMARIZER_MODEL=claude-sonnet-4-6
 
 # Moirai 2.0 (기본 활성, 비상업적 용도 — CC-BY-NC-4.0)
@@ -178,10 +178,10 @@ LLM_MODEL=claude-haiku-4-5-20251001
 
 PLANNER_MODEL=claude-sonnet-4-6
 EXECUTOR_MODEL=gemini-2.0-flash
-INTENT_EXTRACTOR_MODEL=gemini-2.0-flash
+GLOBAL_PLANNER_MODEL=claude-sonnet-4-6
 TECHNICAL_ANALYST_MODEL=gemini-2.0-flash
 SUMMARIZER_MODEL=claude-sonnet-4-6
-REFLECTOR_MODEL=claude-sonnet-4-6
+GLOBAL_REFLECTOR_MODEL=claude-sonnet-4-6
 ```
 
 ## License

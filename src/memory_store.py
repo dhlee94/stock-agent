@@ -187,8 +187,6 @@ class SemanticMemory:
             return [lesson for _, lesson in scores[:top_k]]
 
 class ProceduralMemory:
-    def __init__(self, storage_file: str = "procedural_memory.json"):
-        pass
     def save_tool_execution(self, tool_name: str, args: Dict, success: bool, output_summary: str):
         from database import log_tool_execution
         log_tool_execution(tool_name, args, output_summary[:500], success)

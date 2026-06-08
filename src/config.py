@@ -42,9 +42,7 @@ EMBEDDING_MODEL = os.environ.get("EMBEDDING_MODEL") or DEFAULT_EMBEDDING_MODELS.
 # Per-agent model overrides (fall back to LLM_MODEL if unset)
 PLANNER_MODEL             = os.environ.get("PLANNER_MODEL")             or LLM_MODEL
 EXECUTOR_MODEL            = os.environ.get("EXECUTOR_MODEL")            or LLM_MODEL
-REFLECTOR_MODEL           = os.environ.get("REFLECTOR_MODEL")           or LLM_MODEL
 SUMMARIZER_MODEL          = os.environ.get("SUMMARIZER_MODEL")          or LLM_MODEL
-INTENT_EXTRACTOR_MODEL    = os.environ.get("INTENT_EXTRACTOR_MODEL")    or KEYWORD_LLM_MODEL
 NEWS_ANALYST_MODEL        = os.environ.get("NEWS_ANALYST_MODEL")        or LLM_MODEL
 TECHNICAL_ANALYST_MODEL   = os.environ.get("TECHNICAL_ANALYST_MODEL")   or LLM_MODEL
 FORECAST_INTERPRETER_MODEL = os.environ.get("FORECAST_INTERPRETER_MODEL") or LLM_MODEL

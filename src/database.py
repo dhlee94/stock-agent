@@ -247,20 +247,6 @@ def add_ticker(ticker: str, name: str, sector_id: str, market: str):
         ''', (ticker, name, sector_id, market))
 
 
-def get_all_sectors() -> List[Dict[str, Any]]:
-    """Get all sectors with their tickers."""
-    with get_connection() as conn:
-        cursor = conn.cursor()
-        cursor.execute('SELECT * FROM sectors')
-        sectors = [dict(row) for row in cursor.fetchall()]
-        
-        for sector in sectors:
-            cursor.execute('SELECT ticker, name FROM tickers WHERE sector_id = ?', (sector['id'],))
-            sector['tickers'] = [dict(row) for row in cursor.fetchall()]
-        
-        return sectors
-
-
 # ============================================================
 # DRIVER MEMORY OPERATIONS
 # ============================================================
@@ -462,117 +448,6 @@ def get_global_accuracy_summary(min_samples: int = 5) -> List[Dict[str, Any]]:
             ORDER BY market, accuracy_pct DESC
         ''', (min_samples,))
         return [dict(r) for r in cursor.fetchall()]
-
-
-# ============================================================
-# MIGRATION FROM JSON
-# ============================================================
-
-def migrate_from_json():
-    """Migrate data from JSON files to SQLite."""
-    base_path = os.path.join(os.path.dirname(__file__), '..', 'data')
-    
-    # 1. Migrate sector_competitors.json
-    sector_json_path = os.path.join(base_path, 'sector_competitors.json')
-    if os.path.exists(sector_json_path):
-        print("📦 Migrating sector_competitors.json...")
-        with open(sector_json_path, 'r', encoding='utf-8') as f:
-            data = json.load(f)
-        
-        with get_connection() as conn:
-            cursor = conn.cursor()
-            
-            # Insert sectors
-            for sector_id, sector_data in data.get('sectors', {}).items():
-                cursor.execute('''
-                    INSERT OR REPLACE INTO sectors (id, name_kr, name_en)
-                    VALUES (?, ?, ?)
-                ''', (sector_id, sector_data.get('name_kr', ''), sector_id))
-            
-            # Insert tickers
-            ticker_to_sector = data.get('ticker_to_sector', {})
-            ticker_names = data.get('ticker_names', {})
-            
-            for ticker, sector_id in ticker_to_sector.items():
-                market = 'KR' if '.KS' in ticker else 'US'
-                name = ticker_names.get(ticker, ticker)
-                cursor.execute('''
-                    INSERT OR REPLACE INTO tickers (ticker, name, sector_id, market)
-                    VALUES (?, ?, ?, ?)
-                ''', (ticker, name, sector_id, market))
-            
-            # Insert competitors (same sector = competitors)
-            for sector_id, sector_data in data.get('sectors', {}).items():
-                tickers = sector_data.get('tickers', [])
-                for ticker in tickers:
-                    for competitor in tickers:
-                        if ticker != competitor:
-                            cursor.execute('''
-                                INSERT OR IGNORE INTO sector_competitors (ticker, competitor_ticker)
-                                VALUES (?, ?)
-                            ''', (ticker, competitor))
-        
-        print(f"   ✅ Migrated {len(ticker_to_sector)} tickers, {len(data.get('sectors', {}))} sectors")
-    
-    # 2. Migrate driver_memory.json
-    driver_json_path = os.path.join(base_path, 'driver_memory.json')
-    if os.path.exists(driver_json_path):
-        print("📦 Migrating driver_memory.json...")
-        with open(driver_json_path, 'r', encoding='utf-8') as f:
-            data = json.load(f)
-        
-        count = 0
-        with get_connection() as conn:
-            cursor = conn.cursor()
-            
-            for ticker, ticker_data in data.items():
-                name = ticker_data.get('name', ticker)
-                for driver in ticker_data.get('drivers', []):
-                    # Handle both string (legacy) and dict formats
-                    if isinstance(driver, str):
-                        driver_type = 'keyword'
-                        description = driver
-                        impact = 'neutral'
-                        confidence = 0.8
-                    else:
-                        driver_type = driver.get('type', 'unknown')
-                        description = driver.get('description', '')
-                        impact = driver.get('impact', 'neutral')
-                        confidence = driver.get('confidence', 0.8)
-                        
-                    cursor.execute('''
-                        INSERT INTO driver_memory (ticker, name, driver_type, description, impact_direction, confidence)
-                        VALUES (?, ?, ?, ?, ?, ?)
-                    ''', (ticker, name, driver_type, description, impact, confidence))
-                    count += 1
-        
-        print(f"   ✅ Migrated {count} driver entries")
-    
-    # 3. Migrate procedural_memory.json
-    proc_json_path = os.path.join(base_path, 'procedural_memory.json')
-    if os.path.exists(proc_json_path):
-        print("📦 Migrating procedural_memory.json...")
-        with open(proc_json_path, 'r', encoding='utf-8') as f:
-            data = json.load(f)
-        
-        count = 0
-        with get_connection() as conn:
-            cursor = conn.cursor()
-            
-            for entry in data if isinstance(data, list) else []:
-                cursor.execute('''
-                    INSERT INTO procedural_memory (tool_name, args_json, result_summary, success)
-                    VALUES (?, ?, ?, ?)
-                ''', (entry.get('tool', 'unknown'),
-                      json.dumps(entry.get('args', {}), ensure_ascii=False),
-                      entry.get('result', ''),
-                      1 if entry.get('success', True) else 0))
-                count += 1
-        
-        print(f"   ✅ Migrated {count} procedural entries")
-    
-    print("\n✅ Migration complete!")
-
 
 # Always run init_db on import — CREATE TABLE IF NOT EXISTS is idempotent,
 # so existing DBs are safe; new tables added in upgrades get created too.

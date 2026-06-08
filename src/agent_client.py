@@ -10,7 +10,6 @@ from typing import List, Dict, Any, Optional
 from config import (
     LLM_PROVIDER, LLM_MODEL,
     GEMINI_API_KEY, OPENAI_API_KEY, GROQ_API_KEY, ANTHROPIC_API_KEY,
-    DEFAULT_MARKET, RISK_TOLERANCE, SRC_DIR,
     PLANNER_MODEL, EXECUTOR_MODEL, SUMMARIZER_MODEL,
     NEWS_ANALYST_MODEL, TECHNICAL_ANALYST_MODEL, FORECAST_INTERPRETER_MODEL,
     GLOBAL_PLANNER_MODEL, LOCAL_REFLECTOR_MODEL, GLOBAL_REFLECTOR_MODEL, JUDGE_MODEL,
@@ -92,11 +91,9 @@ from mcp.client.stdio import stdio_client
 # Handle both relative and absolute imports
 try:
     from .memory_store import MemoryStore, ProceduralMemory, SemanticMemory
-    from .driver_memory import DriverMemory
     from .prompts import load_prompt
 except ImportError:
     from memory_store import MemoryStore, ProceduralMemory, SemanticMemory
-    from driver_memory import DriverMemory
     from prompts import load_prompt
 
 class MockLLM:
@@ -178,7 +175,6 @@ class MementoAgent:
         self.memory = MemoryStore()
         self.semantic_memory = SemanticMemory()
         self.procedural_memory = ProceduralMemory()
-        self.driver_memory = DriverMemory()
         self.server_script = os.path.join(os.path.dirname(os.path.abspath(__file__)), "mcp_server.py")
         # MCP 싱글톤 세션 — Moirai 콜드 스타트를 최초 1회로 제한
         self._mcp_session = None
@@ -339,8 +335,8 @@ class MementoAgent:
                 return {}
             plan = json.loads(json_match.group(0))
             _verify_kr_ticker_in_subject(plan)
-            mode = plan.get("mode", "single")
             subtasks = plan.get("subtasks", [])
+            mode = "domain" if len(subtasks) > 1 else "single"
             print(f"   📍 Subject: {plan.get('subject', '?')}")
             print(f"   📍 Mode: {mode} | Subtasks: {len(subtasks)}")
             if subtasks:
@@ -799,8 +795,6 @@ Provide your final analysis and recommendation (include Target Price, Stop-loss,
                 return saved_result
             first = leaves[0] if leaves else e
             return f"오류가 발생했습니다: {type(first).__name__}: {first}"
-        
-        return saved_result
 
 if __name__ == "__main__":
     agent = MementoAgent()

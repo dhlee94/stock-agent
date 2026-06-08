@@ -17,13 +17,3 @@ class GoogleNews:
         """Search for news articles via Google News RSS."""
         url = self._build_url("search", query=query)
         return feedparser.parse(url)
-
-    def top_news(self):
-        """Get top news articles via Google News RSS."""
-        url = self._build_url("headlines")
-        return feedparser.parse(url)
-
-    def topic_headlines(self, topic_id):
-        """Get headlines for a specific topic."""
-        url = self._build_url(f"headlines/section/topic/{topic_id.upper()}")
-        return feedparser.parse(url)

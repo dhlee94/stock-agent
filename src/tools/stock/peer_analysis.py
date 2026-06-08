@@ -24,20 +24,13 @@ if SRC_DIR not in sys.path:
 
 try:
     from database import get_sector_competitors as db_get_competitors
-    from database import get_ticker_info
 except ImportError:
     # Fallback/Mock for testing without DB
     def db_get_competitors(ticker: str) -> List[str]: return []
-    def get_ticker_info(ticker: str) -> Optional[Dict]: return None
 
 def get_sector_competitors(ticker: str) -> List[str]:
     """Get competitors for a ticker from database."""
     return db_get_competitors(ticker)
-
-def get_ticker_name(ticker: str) -> str:
-    """Get human-readable name for a ticker."""
-    info = get_ticker_info(ticker)
-    return info['name'] if info else ticker
 
 # Known company name to ticker mapping - KOREAN MARKET
 KR_COMPANY_TICKER_MAP = {
