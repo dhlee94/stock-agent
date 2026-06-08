@@ -14,6 +14,7 @@ KOREAN_SECTORS = {
     "자동차": ["005380.KS", "000270.KS", "012330.KS"],   # Hyundai Motor, Kia, Hyundai Mobis
     "금융": ["105560.KS", "055550.KS", "086790.KS"],     # KB Financial, Shinhan, Hana Financial
     "인터넷": ["035720.KS", "035420.KS", "263750.KS"],   # Kakao, Naver, Pearl Abyss
+    "에너지": ["015760.KS", "010950.KS", "096770.KS"],   # 한국전력, S-Oil, SK이노베이션
 }
 
 # Major US sectors (using sector ETFs)

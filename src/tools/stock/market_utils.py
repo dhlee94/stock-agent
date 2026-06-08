@@ -83,6 +83,10 @@ TICKER_TO_NAME = {
     'MCD': "McDonald's",
     'NKE': 'Nike',
     'PLTR': 'Palantir',
+    # Korean Energy
+    '015760.KS': '한국전력',
+    '010950.KS': 'S-Oil',
+    '096770.KS': 'SK이노베이션',
 }
 
 # Reverse mapping for entity mining fallback
@@ -133,6 +137,10 @@ NAME_TO_TICKER.update({
     "맥도날드": "MCD",
     "나이키": "NKE",
     "팔란티어": "PLTR",
+    "한전": "015760.KS",
+    "한국전력": "015760.KS",
+    "에스오일": "010950.KS",
+    "SK이노": "096770.KS",
 })
 
 def get_company_name(ticker: str) -> str:
