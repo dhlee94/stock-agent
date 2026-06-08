@@ -385,18 +385,9 @@ def get_forecast_accuracy(ticker: str) -> str:
 # Main Entry Point
 # =========================================================
 if __name__ == "__main__":
-    print("🚀 Stock Expert MCP Server Started!")
-    print("")
-    print("📈 Stock Tools:")
-    print("   stock_price, stock_chart, stock_financials, stock_news")
-    print("   stock_technical, stock_compare, stock_sector")
+    import sys as _sys
     chronos_status = "enabled" if CHRONOS_ENABLED else "disabled"
     moirai_status  = "enabled" if MOIRAI_ENABLED  else "disabled"
-    print(f"   stock_news_sentiment")
-    print(f"   stock_chronos_forecast [{chronos_status}]")
-    print(f"   stock_moirai_forecast  [{moirai_status}]")
-    print("   analyze_drivers, analyze_peers, calculate_risk")
-    print("")
-    print("🛠️ Utility Tools:")
-    print("   web_search, web_crawl, run_python, calc_math, read_file, save_memory")
+    print("🚀 Stock Expert MCP Server Started!", file=_sys.stderr)
+    print(f"   stock_moirai_forecast [{moirai_status}] | stock_chronos_forecast [{chronos_status}]", file=_sys.stderr)
     mcp.run()

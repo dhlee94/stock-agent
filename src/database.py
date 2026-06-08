@@ -161,7 +161,7 @@ def init_db():
         cursor.execute('CREATE INDEX IF NOT EXISTS idx_driver_ticker ON driver_memory(ticker)')
         cursor.execute('CREATE INDEX IF NOT EXISTS idx_proc_tool ON procedural_memory(tool_name)')
 
-        print("✅ Database initialized successfully")
+        print("✅ Database initialized successfully", file=__import__("sys").stderr)
 
 
 # ============================================================
