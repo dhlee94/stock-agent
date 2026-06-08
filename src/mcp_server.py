@@ -386,8 +386,18 @@ def get_forecast_accuracy(ticker: str) -> str:
 # =========================================================
 if __name__ == "__main__":
     import sys as _sys
+    import builtins as _builtins
+
+    # MCP uses stdout as a pure JSONRPC channel (line-delimited).
+    # Any print() from tool handlers corrupts the stream → redirect all
+    # print() globally to stderr before mcp.run() takes over stdout.
+    _real_print = _builtins.print
+    def _stderr_print(*args, **kwargs):
+        kwargs.setdefault("file", _sys.stderr)
+        _real_print(*args, **kwargs)
+    _builtins.print = _stderr_print
+
     chronos_status = "enabled" if CHRONOS_ENABLED else "disabled"
     moirai_status  = "enabled" if MOIRAI_ENABLED  else "disabled"
-    print("🚀 Stock Expert MCP Server Started!", file=_sys.stderr)
-    print(f"   stock_moirai_forecast [{moirai_status}] | stock_chronos_forecast [{chronos_status}]", file=_sys.stderr)
+    print(f"🚀 MCP Server started | moirai [{moirai_status}] | chronos [{chronos_status}]")
     mcp.run()
