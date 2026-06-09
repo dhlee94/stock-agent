@@ -679,7 +679,7 @@ Provide your final analysis and recommendation (include Target Price, Stop-loss,
         semantic_knowledge: List[str],
     ) -> str:
         """Fan-out domain analysis: parallel subtasks → Global Reflector → Judge debate loop."""
-        MAX_GLOBAL_ITER = 10
+        MAX_GLOBAL_ITER = 3
         semaphore = asyncio.Semaphore(3)
         subtasks = global_plan.get("subtasks", [])
         all_findings = ""
