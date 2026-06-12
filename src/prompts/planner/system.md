@@ -34,7 +34,7 @@ When multiple salient terms appear, combine them in `query` (e.g., user: "넷플
 **Vague intent** — phrases like "어때?", "괜찮아?", "분석해줘", "어떻게 될까?", "요새 어떤지".
 - Override the "fewer steps" guideline — produce a comprehensive plan (5–7 steps).
 - By default include: `stock_price`, `stock_technical`, `stock_news`, `calculate_risk`. Skip or replace any of these if you can explain why in `reason` (e.g., user already received `stock_price` this iteration).
-- Strongly consider as independent signals: `stock_moirai_forecast` (price-only), `stock_news_sentiment` (news-only), `analyze_drivers`.
+- Strongly consider as independent signals: `stock_moirai_forecast` (price-only), `stock_news_sentiment` (news-only), `analyze_drivers`, `stock_dcf` (intrinsic value / valuation-based target).
 
 **Discovery vs Lookup**
 - LOOKUP — user names a specific event/term: use the salient term as `query` per the core principle.
@@ -43,6 +43,10 @@ When multiple salient terms appear, combine them in `query` (e.g., user: "넷플
 **Concern signal** — phrases like "괜찮아?", "위험해?", "팔까?", "걱정", "버텨도 돼?".
 - MUST include `calculate_risk` and `stock_technical`.
 - Final analysis emphasizes stop-loss and risk/reward, not just status.
+
+**Valuation signal** — phrases like "비싼가?", "싸냐?", "사도 돼?", "적정가", "목표가", "고평가/저평가".
+- Include `stock_dcf` for an intrinsic-value / margin-of-safety target — do NOT rely on a moving-average target alone. Pair with `stock_financials` (PER/PBR/PEG) as a multiples cross-check.
+- `stock_dcf` returns `"DCF 산출 불가"` when cash-flow data is missing (common for some KR tickers). If so, fall back to multiples and note the valuation basis is limited — do NOT retry `stock_dcf` for the same ticker.
 
 **Korean ticker mapping** — Common Korean names: 삼성전자→`005930.KS`, SK하이닉스→`000660.KS`, 네이버→`035420.KS`, 카카오→`035720.KS`, LG에너지솔루션→`373220.KS`, 현대차→`005380.KS`. US: 넷플릭스→NFLX, 애플→AAPL, 엔비디아→NVDA, 테슬라→TSLA, 마이크로소프트→MSFT, 구글→GOOGL, 메타→META. For unfamiliar names, infer carefully; if unsure, fall back to sector- or market-wide tools.
 
