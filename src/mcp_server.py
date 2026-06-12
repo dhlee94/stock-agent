@@ -25,6 +25,7 @@ from tools.stock import (
     get_stock_price,
     get_stock_chart,
     get_financials,
+    get_dcf,
     get_market_news,
     technical_analysis,
     compare_stocks,
@@ -92,6 +93,23 @@ def stock_financials(ticker: str) -> str:
         ticker: Stock ticker symbol
     """
     return get_financials(ticker)
+
+
+@mcp.tool()
+def stock_dcf(ticker: str, market: str = "KR", margin_of_safety: float = 0.25) -> str:
+    """
+    Estimate intrinsic value per share via a lightweight DCF (FCFF off yfinance).
+    Returns a bear/base/bull intrinsic-value range, a margin-of-safety "buy below"
+    price, upside vs current price, and every assumption used (growth, discount
+    rate, beta, terminal growth). Use this for a valuation-based target price
+    instead of a moving-average. Declines gracefully ("DCF 산출 불가") when FCF,
+    shares, or price data is missing — common for some KR tickers.
+    Args:
+        ticker: Stock ticker (e.g. "AAPL", "011070.KS")
+        market: "KR" or "US"
+        margin_of_safety: haircut on base intrinsic value for the buy price (default 0.25 = 25%)
+    """
+    return get_dcf(ticker, market=market, margin_of_safety=margin_of_safety)
 
 
 @mcp.tool()

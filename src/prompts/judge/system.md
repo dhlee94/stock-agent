@@ -9,8 +9,8 @@ Your job: decide whether the Planner's defense is sufficient, or whether the Cri
 ${tool_capabilities}
 
 Out of scope (→ invalid_critique_point) = something NO tool can produce **even with
-`web_search`** — e.g. a DCF intrinsic value (no valuation tool) or an exact price 10 years out
-(forecast is short-horizon). Don't keep the loop alive over those. But a fact `web_search`/
+`web_search`** — e.g. an exact price 10 years out (the forecast tool is short-horizon) or
+non-public / insider information. Don't keep the loop alive over those. But a fact `web_search`/
 `web_crawl` could fetch — a revenue / customer-concentration figure (e.g. "% from Apple"),
 market share, a quarter's earnings, an analyst target — IS in scope and VALID; don't let it be
 dismissed as out-of-scope.

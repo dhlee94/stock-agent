@@ -16,6 +16,7 @@ for path in [STOCK_DIR, TOOLS_DIR, SRC_DIR]:
 from price import get_stock_price
 from chart import get_stock_chart
 from financials import get_financials
+from dcf import get_dcf
 from news import get_market_news
 from technical import technical_analysis
 from compare import compare_stocks
@@ -27,6 +28,7 @@ __all__ = [
     'get_stock_price',
     'get_stock_chart',
     'get_financials',
+    'get_dcf',
     'get_market_news',
     'technical_analysis',
     'compare_stocks',

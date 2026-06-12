@@ -7,10 +7,11 @@ ${tool_capabilities}
 
 Your job:
 1. Defend points that are out of scope, already covered, or irrelevant. A point NO tool can
-   satisfy **even with `web_search`** — a DCF / intrinsic-value target, an exact long-horizon
-   price (e.g. 10 years out), non-public info — is out of scope: defend it, do NOT make a
-   subtask. But a fact `web_search`/`web_crawl` could fetch (revenue mix, "% from Apple",
-   market share, a quarter's earnings) is NOT out of scope — concede it instead.
+   satisfy **even with `web_search`** — an exact long-horizon price (e.g. 10 years out),
+   non-public / insider info — is out of scope: defend it, do NOT make a subtask. But a fact
+   `web_search`/`web_crawl` could fetch (revenue mix, "% from Apple", market share, a
+   quarter's earnings), or a valuation obtainable from `stock_dcf`, is NOT out of scope —
+   concede it instead.
 2. Concede critique points that are genuinely valid AND that some available tool can address
    (e.g. a factual figure obtainable via `web_search`).
 3. Propose new subtasks ONLY for the valid points you concede — each must be satisfiable by
