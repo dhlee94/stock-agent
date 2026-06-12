@@ -3,7 +3,7 @@ import os
 import re
 import numpy as np
 from datetime import datetime, timedelta
-from typing import List, Dict, Any, Optional, Callable, Awaitable
+from typing import List, Dict, Any, Callable
 from config import EMBEDDING_PROVIDER, EMBEDDING_MODEL, GEMINI_API_KEY, OPENAI_API_KEY
 from database import get_connection
 

@@ -227,6 +227,11 @@ class MementoAgent:
             server_params = StdioServerParameters(
                 command=sys.executable,
                 args=[self.server_script],
+                # Forward the full parent environment so MCP tools see API keys
+                # (NAVER, KRX, etc.). MCP's stdio client otherwise passes only a
+                # minimal default env, and .env is not in the Docker image
+                # (dockerignored) — so the subprocess would see no keys at all.
+                env=os.environ.copy(),
             )
             read, write = await stack.enter_async_context(stdio_client(server_params))
             session = await stack.enter_async_context(ClientSession(read, write))
@@ -331,10 +336,19 @@ class MementoAgent:
                 prompt += f"User: {content}\n\n"
             elif role == "assistant":
                 prompt += f"Assistant: {content}\n\n"
-        response = await client.aio.models.generate_content(
-            model=effective_model,
-            contents=prompt,
-        )
+        gen_kwargs = {"model": effective_model, "contents": prompt}
+        # Gemini 2.5 Flash enables "thinking" by default — unnecessary cost and
+        # latency for these throughput agents. Disable it (budget=0) where the
+        # SDK/model supports it; fall back to defaults otherwise.
+        if "2.5" in effective_model and "flash" in effective_model:
+            try:
+                gen_kwargs["config"] = _gemini_genai.types.GenerateContentConfig(
+                    temperature=0.3,
+                    thinking_config=_gemini_genai.types.ThinkingConfig(thinking_budget=0),
+                )
+            except Exception:
+                pass  # older SDK without ThinkingConfig — use defaults
+        response = await client.aio.models.generate_content(**gen_kwargs)
         return response.text
 
     async def _call_global_planner(self, user_task: str) -> Dict[str, Any]:
@@ -365,7 +379,7 @@ class MementoAgent:
             print(f"   📍 Mode: {mode} | Subtasks: {len(subtasks)}")
             if subtasks:
                 for st in subtasks:
-                    print(f"      • {st.get('focus', '?')}")
+                    print(f"      • {st.get('focus', '?')}  🔍 hints={st.get('search_hints', [])}")
             return plan
         except json.JSONDecodeError as e:
             print(f"   ⚠️ Global Planner JSON parse failed: {e}")
@@ -385,7 +399,7 @@ class MementoAgent:
             notes=intent.get("notes", ""),
         )
 
-    async def _call_planner(self, user_task: str, tool_descriptions: str, context_examples: str, semantic_knowledge: List[str] = None, critique: Optional[Dict] = None, previous_findings: str = "", extracted_intent: Optional[Dict[str, Any]] = None, subtask_focus: str = "", subtask_context: str = "") -> List[Dict]:
+    async def _call_planner(self, user_task: str, tool_descriptions: str, context_examples: str, semantic_knowledge: List[str] = None, critique: Optional[Dict] = None, previous_findings: str = "", extracted_intent: Optional[Dict[str, Any]] = None, subtask_focus: str = "", subtask_context: str = "", subtask_search_hints: Optional[List[str]] = None) -> List[Dict]:
         """
         Planner LLM: Generates a free-form execution plan based on available tools and past memory.
         Returns a list of steps: [{"step": 1, "tool": "tool_name", "args": {...}, "reason": "..."}, ...]
@@ -431,10 +445,12 @@ class MementoAgent:
             critique_context=critique_context,
         )
         if subtask_focus:
+            hints = subtask_search_hints or []
             planner_system += "\n\n" + load_prompt(
                 "planner/subtask_context",
                 focus=subtask_focus,
                 context=subtask_context or "",
+                search_hints=", ".join(hints) if hints else "(none — derive targeted query from focus/context)",
             )
         planner_prompt = [
             {"role": "system", "content": planner_system},
@@ -597,6 +613,8 @@ Provide your final analysis and recommendation (include Target Price, Stop-loss,
                 result = json.loads(m.group(0))
                 new_subtasks = result.get("new_subtasks", [])
                 print(f"   📝 Concedes: {result.get('concede', [])} | New subtasks: {len(new_subtasks)}")
+                for st in new_subtasks:
+                    print(f"      ↳ {st.get('focus', '?')}  🔍 hints={st.get('search_hints', [])}")
                 return result
         except json.JSONDecodeError:
             pass
@@ -642,6 +660,7 @@ Provide your final analysis and recommendation (include Target Price, Stop-loss,
         async with semaphore:
             focus = subtask.get("focus", "")
             context = subtask.get("context", "")
+            search_hints = subtask.get("search_hints", []) or []
             print(f"\n📌 [Subtask] Starting: {focus}")
 
             async def _execute_plan(plan: List[Dict]) -> str:
@@ -677,6 +696,7 @@ Provide your final analysis and recommendation (include Target Price, Stop-loss,
                 extracted_intent=global_plan,
                 subtask_focus=focus,
                 subtask_context=context,
+                subtask_search_hints=search_hints,
             )
             findings = await _execute_plan(plan)
 
@@ -688,6 +708,7 @@ Provide your final analysis and recommendation (include Target Price, Stop-loss,
                     extracted_intent=global_plan,
                     subtask_focus=focus,
                     subtask_context=context,
+                    subtask_search_hints=search_hints,
                 )
                 findings = await _execute_plan(plan)
 

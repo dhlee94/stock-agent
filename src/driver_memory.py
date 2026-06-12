@@ -9,7 +9,7 @@ This module identifies what moves each stock by analyzing:
 import json
 import os
 import re
-from datetime import datetime, timedelta
+from datetime import datetime
 from typing import List, Dict, Any, Optional
 
 import yfinance as yf
@@ -200,7 +200,7 @@ class DriverMemory:
             try:
                 import google.generativeai as genai
                 genai.configure(api_key=GEMINI_API_KEY)
-                gemini_model_name = KEYWORD_LLM_MODEL if KEYWORD_LLM_PROVIDER == "gemini" else "gemini-2.0-flash"
+                gemini_model_name = KEYWORD_LLM_MODEL if KEYWORD_LLM_PROVIDER == "gemini" else "gemini-2.5-flash"
                 model = genai.GenerativeModel(gemini_model_name)
                 response = model.generate_content(prompt)
                 return response.text

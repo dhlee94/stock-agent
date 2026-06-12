@@ -5,6 +5,7 @@ import logging
 import yfinance as yf
 
 from utils.response import ToolResponse
+from config import KRX_ID, KRX_PW
 
 # pykrx has a bug in its logging call (logging.info(args, kwargs) instead of
 # logging.info("%s %s", args, kwargs)) that prints a noisy 50-line traceback.
@@ -105,8 +106,13 @@ def get_financials(ticker: str) -> str:
             "financial_health": health,
         }
 
-        # 🚀 KR Market Enhancement with PyKRX
-        if ticker.endswith(".KS") or ticker.endswith(".KQ"):
+        # 🚀 KR Market Enhancement with PyKRX — needs KRX credentials.
+        # Skip quietly when unset so we don't spam KRX login-failure logs;
+        # the base (yfinance) fundamentals above are returned as-is.
+        is_kr = ticker.endswith(".KS") or ticker.endswith(".KQ")
+        if is_kr and not (KRX_ID and KRX_PW):
+            print(f"   ⏭️ [PyKRX] KRX_ID/KRX_PW 미설정 — {ticker} KR 펀더멘털 보강 스킵 (yfinance 값 사용)")
+        elif is_kr:
             try:
                 from pykrx import stock
                 from datetime import datetime, timedelta
@@ -146,7 +152,10 @@ def get_financials(ticker: str) -> str:
                     print(f"   ⚠️ [PyKRX] No fundamental data returned for {ticker}")
                         
             except Exception as e:
-                print(f"   ⚠️ [PyKRX] Enhancement failed: {str(e)}")
+                # Non-fatal: a pykrx/KRX data-layer hiccup (usually an outdated
+                # pykrx vs. a KRX site change — empty response surfaced through
+                # pykrx's buggy error logger). Base yfinance fundamentals stand.
+                print(f"   ⚠️ [PyKRX] 보강 실패 (비치명적 — yfinance 값 유지): {str(e)}")
 
         return ToolResponse.success(result_data)
 

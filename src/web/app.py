@@ -33,7 +33,6 @@ from agent_client import MementoAgent
 # Import stock tools
 from tools.stock import (
     get_stock_price,
-    get_stock_chart,
     get_financials,
     get_market_news,
     technical_analysis,

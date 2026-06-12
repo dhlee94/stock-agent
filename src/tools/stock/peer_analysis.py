@@ -12,8 +12,8 @@ import json
 import re
 import numpy as np
 import yfinance as yf
-from typing import List, Dict, Tuple, Optional, Any
-from datetime import datetime, timedelta
+from typing import List, Dict, Tuple, Optional
+from datetime import datetime
 import sys
 import os
 

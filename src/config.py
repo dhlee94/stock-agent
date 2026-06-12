@@ -19,13 +19,13 @@ KEYWORD_LLM_PROVIDER = os.environ.get("KEYWORD_LLM_PROVIDER", LLM_PROVIDER).lowe
 # KEYWORD_LLM_MODEL / EMBEDDING_MODEL env vars when you want a different
 # model on the same provider (e.g. Anthropic Haiku vs. Sonnet).
 DEFAULT_MAIN_MODELS = {
-    "gemini": "gemini-2.0-flash",
+    "gemini": "gemini-2.5-flash",
     "openai": "gpt-4o",
     "groq": "llama-3.3-70b-versatile",
     "anthropic": "claude-sonnet-4-6",
 }
 DEFAULT_KEYWORD_MODELS = {
-    "gemini": "gemini-2.0-flash",
+    "gemini": "gemini-2.5-flash",
     "openai": "gpt-4o-mini",
     "groq": "llama-3.3-70b-versatile",
     "anthropic": "claude-haiku-4-5-20251001",
@@ -62,6 +62,12 @@ ANTHROPIC_API_KEY = os.environ.get("ANTHROPIC_API_KEY")
 # Get keys at https://developers.naver.com/apps/#/list (register an app, enable 검색).
 NAVER_CLIENT_ID = os.environ.get("NAVER_CLIENT_ID", "")
 NAVER_CLIENT_SECRET = os.environ.get("NAVER_CLIENT_SECRET", "")
+
+# KRX (한국거래소) credentials — used by pykrx to enhance KR fundamentals
+# (PER/PBR/EPS/dividend) with authoritative exchange data. When unset, the
+# enhancement step is skipped silently and yfinance values are used instead.
+KRX_ID = os.environ.get("KRX_ID", "")
+KRX_PW = os.environ.get("KRX_PW", "")
 
 # Torch compute device for forecasting models (Moirai / Chronos / FinBERT)
 # Options: auto (cuda→mps→cpu), cpu, mps, cuda
