@@ -424,8 +424,11 @@ class MementoAgent:
             missing = critique.get("missing_data") or []
             suggested = critique.get("suggested_tools") or []
             prior = (previous_findings or "").strip()
-            if len(prior) > 1800:
-                prior = prior[:1800] + "\n...(truncated)"
+            # Keep the planner's "already collected" window at least as wide as the
+            # Global Reflector's (all_findings[:6000]) so it doesn't re-fetch data
+            # the Reflector already judged present.
+            if len(prior) > 6000:
+                prior = prior[:6000] + "\n...(truncated)"
             critique_context = load_prompt(
                 "planner/critique_context",
                 issues=issues if issues else "none",
@@ -588,7 +591,7 @@ Provide your final analysis and recommendation (include Target Price, Stop-loss,
             if m:
                 result = json.loads(m.group(0))
                 approved = result.get("approved", False)
-                print(f"   {'✅ Approved' if approved else '❌ Rejected'}: {result.get('critique', '')[:100]}")
+                print(f"   {'✅ Approved' if approved else '❌ Rejected'}: {result.get('critique', '')}")
                 return result
         except json.JSONDecodeError:
             pass
@@ -641,7 +644,7 @@ Provide your final analysis and recommendation (include Target Price, Stop-loss,
             if m:
                 result = json.loads(m.group(0))
                 verdict = result.get("verdict", "planner")
-                print(f"   ⚖️ Verdict: {verdict} — {result.get('reason', '')[:100]}")
+                print(f"   ⚖️ Verdict: {verdict} — {result.get('reason', '')}")
                 return result
         except json.JSONDecodeError:
             pass
@@ -655,8 +658,15 @@ Provide your final analysis and recommendation (include Target Price, Stop-loss,
         semaphore: asyncio.Semaphore,
         user_task: str,
         global_plan: Dict[str, Any],
+        critique: Optional[Dict[str, Any]] = None,
+        previous_findings: str = "",
     ) -> Dict[str, Any]:
-        """Execute one subtask: Local Planner → Execute → Local Reflector (1 retry on failure)."""
+        """Execute one subtask: Local Planner → Execute → Local Reflector (1 retry on failure).
+
+        On refinement iterations, `critique` (adapted from the Global Reflector /
+        Judge) and `previous_findings` are forwarded to the planner so it closes the
+        identified gaps instead of replanning blind. None/"" on the first iteration.
+        """
         async with semaphore:
             focus = subtask.get("focus", "")
             context = subtask.get("context", "")
@@ -697,6 +707,8 @@ Provide your final analysis and recommendation (include Target Price, Stop-loss,
                 subtask_focus=focus,
                 subtask_context=context,
                 subtask_search_hints=search_hints,
+                critique=critique,
+                previous_findings=previous_findings,
             )
             findings = await _execute_plan(plan)
 
@@ -709,6 +721,8 @@ Provide your final analysis and recommendation (include Target Price, Stop-loss,
                     subtask_focus=focus,
                     subtask_context=context,
                     subtask_search_hints=search_hints,
+                    critique=critique,
+                    previous_findings=previous_findings,
                 )
                 findings = await _execute_plan(plan)
 
@@ -759,18 +773,32 @@ Provide your final analysis and recommendation (include Target Price, Stop-loss,
         """Fan-out domain analysis: parallel subtasks → Global Reflector → Judge debate loop."""
         semaphore = asyncio.Semaphore(3)
         subtasks = global_plan.get("subtasks", [])
-        all_findings = ""
+        # Accumulate findings across iterations keyed by subtask focus. Later iters
+        # run only the gap-filling subtasks the Defense proposes; prior coverage is
+        # carried forward (reused), not discarded — so the Reflector always sees the
+        # full picture and each iter only fills what's missing instead of replacing
+        # everything with the latest narrow slice.
+        findings_by_focus: Dict[str, str] = {}
+        all_findings = ""  # defined even if MAX_GLOBAL_ITER == 0 (loop never runs)
+        pending_critique: Optional[Dict[str, Any]] = None  # Reflector/Judge feedback for next iter
+        prior_findings = ""                                # accumulated findings handed to next iter
 
         for global_iter in range(MAX_GLOBAL_ITER):
             print(f"\n🌐 [Domain] Global iteration {global_iter + 1}/{MAX_GLOBAL_ITER} — {len(subtasks)} subtasks")
 
             results = await asyncio.gather(*[
-                self._run_subtask(st, session, tool_descriptions, semaphore, user_task, global_plan)
+                self._run_subtask(st, session, tool_descriptions, semaphore, user_task, global_plan,
+                                  critique=pending_critique, previous_findings=prior_findings)
                 for st in subtasks
             ])
 
+            # Merge this iter's results: new focuses are added, repeated focuses
+            # refreshed. Focuses not re-run this iter keep their prior findings.
+            for r in results:
+                findings_by_focus[r["focus"]] = r["findings"]
+
             all_findings = "\n\n".join(
-                f"## [{r['focus']}]\n{r['findings']}" for r in results
+                f"## [{focus}]\n{findings}" for focus, findings in findings_by_focus.items()
             )
 
             global_critique = await self._call_global_reflector(user_task, all_findings)
@@ -796,7 +824,19 @@ Provide your final analysis and recommendation (include Target Price, Stop-loss,
                 break
 
             subtasks = new_subtasks
-            print(f"   🔁 Reflector wins — {len(subtasks)} new subtasks queued")
+            # Schema-bridge the global debate outcome into the planner's critique
+            # shape so the next iter's subtask planners get an explicit gap brief.
+            # Feed only Judge-upheld points; fall back to the Reflector's raw
+            # missing_coverage if the Judge supplied none.
+            valid_points = judge_verdict.get("valid_critique_points") or global_critique.get("missing_coverage", [])
+            pending_critique = {
+                "logical_issues": global_critique.get("weak_points", []),
+                "missing_data": valid_points,
+                "suggested_tools": [],
+            }
+            prior_findings = all_findings
+            print(f"   🔁 Reflector wins — {len(subtasks)} new subtasks queued | "
+                  f"critique→planner: {len(valid_points)} gaps")
 
         return await self._call_summarizer(user_task, all_findings)
 
