@@ -50,7 +50,7 @@ python-telegram-bot>=21.6
 apscheduler>=3.10.4
 
 # ── Search / News ────────────────────────────────────────────────────────────
-duckduckgo-search>=4.0.0
+ddgs>=9.0.0  # renamed from duckduckgo-search (EOL); same DDGS().text() API
 feedparser>=6.0.10
 
 # ── Utilities ────────────────────────────────────────────────────────────────
