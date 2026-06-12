@@ -4,6 +4,7 @@ Math Tool - Mathematical calculations using SymPy for safety
 from sympy import (
     sqrt, sin, cos, tan, asin, acos, atan, log, exp,
     pi, E, Abs, factorial, ceiling, floor,
+    Integer, Float, Rational, Symbol,
 )
 from sympy.parsing.sympy_parser import (
     parse_expr, standard_transformations, implicit_multiplication_application,
@@ -19,6 +20,13 @@ _SAFE_LOCALS = {
     "abs": Abs, "factorial": factorial,
     "ceil": ceiling, "floor": floor,
 }
+# parse_expr's auto_number / implicit-multiplication transformations emit calls
+# to these sympy constructors (e.g. 16 → Integer(16)). They MUST be reachable
+# in global_dict, otherwise every literal raises "name 'Integer' is not defined".
+# We expose only these constructors (no __builtins__/__import__) to keep eval safe.
+_SAFE_GLOBALS = {
+    "Integer": Integer, "Float": Float, "Rational": Rational, "Symbol": Symbol,
+}
 
 
 def calculate_math(expression: str) -> str:
@@ -33,7 +41,7 @@ def calculate_math(expression: str) -> str:
         expr = parse_expr(
             expression,
             local_dict=_SAFE_LOCALS,
-            global_dict={},
+            global_dict=_SAFE_GLOBALS,
             transformations=_TRANSFORMATIONS,
         )
         result = float(expr.evalf())
