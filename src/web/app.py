@@ -3,6 +3,7 @@ Stock Expert Web Server - FastAPI
 """
 import sys
 import os
+import uuid
 
 # Add src directory to path
 SRC_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -15,6 +16,7 @@ from fastapi.templating import Jinja2Templates
 import uvicorn
 import json
 import asyncio
+from typing import Dict
 
 # WEB_API_KEY가 .env에 설정된 경우 모든 /api/* 요청에 X-API-Key 헤더 필요.
 # 미설정 시 로컬 개발 편의를 위해 인증 없이 허용.
@@ -51,6 +53,32 @@ app.mount("/static", StaticFiles(directory=os.path.join(os.path.dirname(__file__
 
 # Initialize agent (singleton)
 agent = MementoAgent()
+
+# In-memory job store: job_id → {status, response?, error?}
+# status: "running" | "done" | "error"
+_jobs: Dict[str, dict] = {}
+
+
+async def _run_chat_job(job_id: str, message: str):
+    """Background task that runs the agent and stores the result."""
+    try:
+        result = await asyncio.wait_for(agent.run_for_web(message), timeout=600)
+        _jobs[job_id] = {"status": "done", "response": result}
+    except (asyncio.TimeoutError, TimeoutError):
+        _jobs[job_id] = {
+            "status": "error",
+            "error": "분석 시간이 초과되었습니다 (10분). 더 구체적인 종목명을 입력하거나 다시 시도해주세요.",
+        }
+    except asyncio.CancelledError:
+        _jobs[job_id] = {"status": "error", "error": "요청이 취소되었습니다. 다시 시도해주세요."}
+    except Exception as e:
+        _jobs[job_id] = {"status": "error", "error": str(e)}
+
+    # Keep dict bounded: evict oldest completed jobs when over 100
+    if len(_jobs) > 100:
+        done_keys = [k for k, v in _jobs.items() if v["status"] != "running"]
+        for k in done_keys[:max(0, len(_jobs) - 100)]:
+            _jobs.pop(k, None)
 
 
 # =========================================================
@@ -117,14 +145,14 @@ async def api_analyze(ticker: str = Form(...), name: str = Form(...),
         # Get all data
         price_data = json.loads(get_stock_price(ticker, market))
         tech_data = json.loads(technical_analysis(ticker))
-        
+
         # Get market news
         try:
             # Pass name as query fallback if ticker has no news
             news_data = json.loads(get_market_news(ticker, query=name, limit=5))
         except Exception:
             news_data = {"status": "error", "news": []}
-        
+
         # Independent signals: news sentiment + price forecast
         try:
             sentiment_data = json.loads(news_sentiment(ticker, name, market))
@@ -165,28 +193,20 @@ async def api_analyze(ticker: str = Form(...), name: str = Form(...),
 
 @app.post("/api/chat")
 async def api_chat(message: str = Form(...), _: None = Depends(_require_api_key)):
-    """Natural language chat with AI agent"""
-    try:
-        result = await asyncio.wait_for(agent.run_for_web(message), timeout=600)
-        return JSONResponse(content={
-            "status": "success",
-            "response": result
-        })
-    except (asyncio.TimeoutError, TimeoutError):
-        return JSONResponse(content={
-            "status": "error",
-            "error": "분석 시간이 초과되었습니다 (10분). 더 구체적인 종목명을 입력하시거나 다시 시도해주세요."
-        })
-    except asyncio.CancelledError:
-        return JSONResponse(content={
-            "status": "error",
-            "error": "요청이 취소되었습니다. 다시 시도해주세요."
-        })
-    except Exception as e:
-        return JSONResponse(content={
-            "status": "error",
-            "error": str(e)
-        })
+    """Submit a chat job and return a job_id for polling."""
+    job_id = uuid.uuid4().hex[:12]
+    _jobs[job_id] = {"status": "running"}
+    asyncio.create_task(_run_chat_job(job_id, message))
+    return JSONResponse({"job_id": job_id})
+
+
+@app.get("/api/job/{job_id}")
+async def api_job_status(job_id: str, _: None = Depends(_require_api_key)):
+    """Poll the status of a chat job."""
+    job = _jobs.get(job_id)
+    if not job:
+        return JSONResponse({"status": "not_found"}, status_code=404)
+    return JSONResponse(job)
 
 
 # =========================================================

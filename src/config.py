@@ -50,6 +50,7 @@ GLOBAL_PLANNER_MODEL      = os.environ.get("GLOBAL_PLANNER_MODEL")      or LLM_M
 LOCAL_REFLECTOR_MODEL     = os.environ.get("LOCAL_REFLECTOR_MODEL")     or KEYWORD_LLM_MODEL
 GLOBAL_REFLECTOR_MODEL    = os.environ.get("GLOBAL_REFLECTOR_MODEL")    or LLM_MODEL
 JUDGE_MODEL               = os.environ.get("JUDGE_MODEL")               or LLM_MODEL
+MEMORY_COMPRESSOR_MODEL   = os.environ.get("MEMORY_COMPRESSOR_MODEL")   or KEYWORD_LLM_MODEL
 
 # API Keys
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY") or os.environ.get("GOOGLE_API_KEY")
@@ -62,6 +63,11 @@ ANTHROPIC_API_KEY = os.environ.get("ANTHROPIC_API_KEY")
 NAVER_CLIENT_ID = os.environ.get("NAVER_CLIENT_ID", "")
 NAVER_CLIENT_SECRET = os.environ.get("NAVER_CLIENT_SECRET", "")
 
+# Torch compute device for forecasting models (Moirai / Chronos / FinBERT)
+# Options: auto (cuda→mps→cpu), cpu, mps, cuda
+# Note: mps works only when running natively on Apple Silicon — not inside Docker.
+TORCH_DEVICE = os.environ.get("TORCH_DEVICE", "auto")
+
 # Forecasting model selection
 # Moirai 2.0: primary forecaster (CC-BY-NC-4.0 — research/non-commercial only)
 MOIRAI_ENABLED = os.environ.get("MOIRAI_ENABLED", "true").lower() == "true"
@@ -69,6 +75,9 @@ MOIRAI_MODEL = os.environ.get("MOIRAI_MODEL", "Salesforce/moirai-2.0-R-small")
 # Chronos-2: secondary signal, off by default (Apache 2.0 — commercial OK)
 CHRONOS_ENABLED = os.environ.get("CHRONOS_ENABLED", "false").lower() == "true"
 CHRONOS_MODEL = os.environ.get("CHRONOS_MODEL", "amazon/chronos-2")
+
+# Agent iteration limits
+MAX_GLOBAL_ITER = int(os.environ.get("MAX_GLOBAL_ITER", "3"))
 
 # App Settings
 DEFAULT_MARKET = os.environ.get("DEFAULT_MARKET", "KR")

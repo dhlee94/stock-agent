@@ -11,6 +11,7 @@
 - **Sector Top-Down Analysis**: "바이오주 어때?" 같은 섹터 쿼리 시 `stock_sector → stock_compare → winner` 집중 분석
 - **Peer Analysis**: 경쟁사 상관관계 분석으로 Reflector 신호 교차 검증
 - **Per-Agent Provider Mixing**: 에이전트별로 다른 LLM Provider 혼용 가능 (모델명에서 자동 감지)
+- **Semantic Memory Compression**: 주간/월간/연간 롤오버 시 시맨틱 메모리를 자동 압축·요약
 - **MCP Session Singleton**: subprocess를 앱 수명 동안 유지, Moirai 콜드 스타트 최초 1회로 제한
 - **Docker Ready**: 컨테이너 즉시 실행 가능
 - **Telegram Digest**: 워치리스트 종목 일일 리포트 자동 전송
@@ -24,7 +25,7 @@ Intent Extractor  — subject, intent_class, forecast_horizon, search_keywords �
     ↓
 Planner          — MCP 툴 호출 플랜 생성 (섹터 쿼리 시 Top-down 고정 플랜)
     ↓
-Executor Loop (MAX_ITER=2, MAX_STEPS_PER_ITER=8)
+Executor Loop (MAX_GLOBAL_ITER=3, configurable via .env)
   ├─ stock_news / stock_news_sentiment  →  News Analyst
   ├─ stock_technical                    →  Technical Analyst
   ├─ stock_moirai_forecast              →  Forecast Interpreter
@@ -55,8 +56,8 @@ ANTHROPIC_API_KEY=your_api_key_here
 
 # 에이전트별 모델 개별 지정 — Provider 혼용 가능 (모델명에서 자동 감지)
 #   claude-*  → Anthropic,  gemini-*  → Gemini,  gpt-*/o* → OpenAI,  llama-* → Groq
-# PLANNER_MODEL=claude-sonnet-4-6
-# EXECUTOR_MODEL=gemini-2.0-flash
+# 비용 티어링은 아래 "Per-Agent Provider Mixing" 섹션 참고 (호출 빈도 기준 Haiku/Sonnet/Gemini 분배)
+# PLANNER_MODEL=claude-haiku-4-5-20251001
 # GLOBAL_REFLECTOR_MODEL=claude-sonnet-4-6
 # SUMMARIZER_MODEL=claude-sonnet-4-6
 
@@ -66,6 +67,12 @@ MOIRAI_MODEL=Salesforce/moirai-2.0-R-small
 
 # Chronos-2 (보조 신호, 기본 비활성 — Apache 2.0)
 CHRONOS_ENABLED=false
+
+# Torch 디바이스 (auto: cuda→mps→cpu 순 자동 선택, Apple Silicon 네이티브만 mps 가능)
+# TORCH_DEVICE=auto
+
+# Domain 분석 글로벌 반복 횟수 (기본값 3)
+# MAX_GLOBAL_ITER=3
 
 # 텔레그램 다이제스트
 TELEGRAM_BOT_TOKEN=your_bot_token
@@ -170,19 +177,32 @@ python -m scheduler.main --once
 | `gpt-*`, `o*` | OpenAI | `OPENAI_API_KEY` |
 | `llama-*` 등 | Groq | `GROQ_API_KEY` |
 
-**예시**: Planner/Summarizer는 Sonnet, 가벼운 역할은 Gemini Flash로 비용 최적화
+**비용 티어링 — 호출 빈도 기준** (Sonnet=$3/$15, Haiku=$1/$5, Gemini≈무료 per 1M):
+
+- **고빈도** (서브태스크마다, `N × global_iter`회 호출) → **Haiku**: 절감 효과가 가장 큼
+- **저빈도** (실행당 1~3회, 루프 결정 + 사용자용 최종 리포트) → **Sonnet**: 적게 불려서 유지해도 저렴
+- **처리량/가공** 역할 → **Gemini Flash**
 
 ```env
 LLM_PROVIDER=anthropic
 LLM_MODEL=claude-haiku-4-5-20251001
 
-PLANNER_MODEL=claude-sonnet-4-6
-EXECUTOR_MODEL=gemini-2.0-flash
+# 고빈도 (per-subtask) → Haiku
+PLANNER_MODEL=claude-haiku-4-5-20251001
+NEWS_ANALYST_MODEL=claude-haiku-4-5-20251001
+FORECAST_INTERPRETER_MODEL=claude-haiku-4-5-20251001
+# 저빈도, 품질 중요 → Sonnet
 GLOBAL_PLANNER_MODEL=claude-sonnet-4-6
-TECHNICAL_ANALYST_MODEL=gemini-2.0-flash
-SUMMARIZER_MODEL=claude-sonnet-4-6
 GLOBAL_REFLECTOR_MODEL=claude-sonnet-4-6
+JUDGE_MODEL=claude-sonnet-4-6
+SUMMARIZER_MODEL=claude-sonnet-4-6
+# 처리량 → Gemini Flash
+EXECUTOR_MODEL=gemini-2.0-flash
+TECHNICAL_ANALYST_MODEL=gemini-2.0-flash
+LOCAL_REFLECTOR_MODEL=gemini-2.0-flash
 ```
+
+> **Prompt Caching**: Anthropic 호출은 시스템 프롬프트에 `cache_control`을 적용해, 한 실행 안에서 반복되는 에이전트 호출이 캐시된 프리픽스를 ~0.1배 입력 비용으로 재사용합니다. 캐시 히트 시 `💾 cache hit` 로그가 출력됩니다. (OpenAI는 자동 캐싱, Gemini는 별도 API라 미적용)
 
 ## License
 

@@ -207,7 +207,7 @@
             }
         });
 
-        // Chat form submission
+        // Chat form submission — polling-based (survives sleep/wake)
         document.getElementById('chatForm').addEventListener('submit', async (e) => {
             e.preventDefault();
 
@@ -217,55 +217,55 @@
             document.getElementById('chatLoading').classList.remove('hidden');
             document.getElementById('chatResponse').classList.add('hidden');
 
+            const loadingMsgs = [
+                'AI가 분석 중입니다...',
+                '데이터를 수집하고 있습니다...',
+                '섹터 및 종목을 분석 중입니다...',
+                '예측 모델을 실행 중입니다...',
+                '최종 리포트를 작성 중입니다...'
+            ];
+            let msgIdx = 0;
+            const msgTimer = setInterval(() => {
+                msgIdx = (msgIdx + 1) % loadingMsgs.length;
+                const el = document.getElementById('chatLoadingMsg');
+                if (el) el.textContent = loadingMsgs[msgIdx];
+            }, 15000);
+
+            const finish = (html) => {
+                clearInterval(msgTimer);
+                document.getElementById('chatLoading').classList.add('hidden');
+                const el = document.getElementById('chatResponse');
+                el.innerHTML = html;
+                el.classList.remove('hidden');
+            };
+
+            let pollInterval = null;
+
             try {
                 const formData = new FormData();
                 formData.append('message', message);
+                const submitRes = await fetch('/api/chat', { method: 'POST', body: formData });
+                const { job_id } = await submitRes.json();
 
-                // 서버 타임아웃(300s)보다 조금 긴 310초 설정
-                const controller = new AbortController();
-                const timeoutId = setTimeout(() => controller.abort(), 620000);
-
-                // 로딩 메시지 주기적 업데이트
-                const loadingMsgs = [
-                    'AI가 분석 중입니다...',
-                    '데이터를 수집하고 있습니다...',
-                    '섹터 및 종목을 분석 중입니다...',
-                    '예측 모델을 실행 중입니다...',
-                    '최종 리포트를 작성 중입니다...'
-                ];
-                let msgIdx = 0;
-                const msgTimer = setInterval(() => {
-                    msgIdx = (msgIdx + 1) % loadingMsgs.length;
-                    const el = document.getElementById('chatLoadingMsg');
-                    if (el) el.textContent = loadingMsgs[msgIdx];
-                }, 15000);
-
-                const response = await fetch('/api/chat', {
-                    method: 'POST',
-                    body: formData,
-                    signal: controller.signal
-                });
-                clearTimeout(timeoutId);
-                clearInterval(msgTimer);
-                const data = await response.json();
-
-                const responseEl = document.getElementById('chatResponse');
-                if (data.status === 'success') {
-                    responseEl.innerHTML = `<div class="chat-success">${data.response.replace(/\n/g, '<br>')}</div>`;
-                } else {
-                    responseEl.innerHTML = `<div class="chat-error">오류: ${data.error}</div>`;
-                }
-                responseEl.classList.remove('hidden');
+                pollInterval = setInterval(async () => {
+                    try {
+                        const res = await fetch(`/api/job/${job_id}`);
+                        const data = await res.json();
+                        if (data.status === 'done') {
+                            clearInterval(pollInterval);
+                            finish(`<div class="chat-success">${data.response.replace(/\n/g, '<br>')}</div>`);
+                        } else if (data.status === 'error' || data.status === 'not_found') {
+                            clearInterval(pollInterval);
+                            finish(`<div class="chat-error">오류: ${data.error || '알 수 없는 오류'}</div>`);
+                        }
+                        // status === 'running' → keep polling
+                    } catch (_) {
+                        // 네트워크 순단 (절전 복귀 등) — 다음 인터벌에 자동 재시도
+                    }
+                }, 3000);
             } catch (error) {
-                clearTimeout(timeoutId);
-                clearInterval(msgTimer);
-                const msg = error.name === 'AbortError'
-                    ? '분석 시간이 초과되었습니다 (10분). 더 구체적인 종목명을 입력하거나 다시 시도해주세요.'
-                    : `오류: ${error.message}`;
-                document.getElementById('chatResponse').innerHTML = `<div class="chat-error">${msg}</div>`;
-                document.getElementById('chatResponse').classList.remove('hidden');
-            } finally {
-                document.getElementById('chatLoading').classList.add('hidden');
+                if (pollInterval) clearInterval(pollInterval);
+                finish(`<div class="chat-error">오류: ${error.message}</div>`);
             }
         });
 

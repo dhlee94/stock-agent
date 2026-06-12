@@ -13,6 +13,7 @@ from config import (
     PLANNER_MODEL, EXECUTOR_MODEL, SUMMARIZER_MODEL,
     NEWS_ANALYST_MODEL, TECHNICAL_ANALYST_MODEL, FORECAST_INTERPRETER_MODEL,
     GLOBAL_PLANNER_MODEL, LOCAL_REFLECTOR_MODEL, GLOBAL_REFLECTOR_MODEL, JUDGE_MODEL,
+    MEMORY_COMPRESSOR_MODEL, MAX_GLOBAL_ITER,
 )
 from database import get_setting, reembed_if_model_changed
 from tools.stock.kr_listing import lookup_kr_ticker
@@ -168,6 +169,18 @@ def _verify_kr_ticker_in_subject(intent: Dict[str, Any]) -> None:
             print(f"   ⚠️ LLM ticker {llm_sym!r} for '{name}' not found in US listings")
 
 
+def _prev_period_key(level: str, current_key: str) -> str:
+    """Return the period key immediately before current_key for the given level."""
+    from datetime import datetime, timedelta
+    if level == 'weekly':
+        year, week = int(current_key.split('-W')[0]), int(current_key.split('-W')[1])
+        prev = datetime.fromisocalendar(year, week, 1) - timedelta(weeks=1)
+        iso = prev.isocalendar()
+        return f"{iso[0]}-W{iso[1]:02d}"
+    if level == 'monthly':
+        year, month = int(current_key.split('-')[0]), int(current_key.split('-')[1])
+        return f"{year-1}-12" if month == 1 else f"{year}-{month-1:02d}"
+    return str(int(current_key) - 1)  # yearly
 
 
 class MementoAgent:
@@ -289,11 +302,22 @@ class MementoAgent:
                 "messages": chat_messages,
             }
             if system_parts:
-                kwargs["system"] = "\n\n".join(system_parts)
+                # Cache the (large, mostly-static) system prompt. Repeated agent
+                # calls within a run reuse the cached prefix at ~0.1x input cost.
+                # Prefixes shorter than the model minimum silently skip caching.
+                kwargs["system"] = [{
+                    "type": "text",
+                    "text": "\n\n".join(system_parts),
+                    "cache_control": {"type": "ephemeral"},
+                }]
             response = await loop.run_in_executor(
                 None,
                 lambda: client.messages.create(**kwargs),
             )
+            usage = getattr(response, "usage", None)
+            if usage and getattr(usage, "cache_read_input_tokens", 0):
+                print(f"   💾 cache hit: {usage.cache_read_input_tokens} tok "
+                      f"({effective_model})")
             return response.content[0].text
 
         # Gemini (google-genai SDK)
@@ -669,6 +693,39 @@ Provide your final analysis and recommendation (include Target Price, Stop-loss,
 
             return {"focus": focus, "findings": findings}
 
+    async def _compress_if_needed(self):
+        """Background task: compress semantic memory when week/month/year rolls over."""
+        from datetime import datetime
+        from database import get_setting, set_setting
+
+        now = datetime.now()
+        iso = now.isocalendar()
+        current_week  = f"{iso[0]}-W{iso[1]:02d}"
+        current_month = f"{now.year}-{now.month:02d}"
+        current_year  = str(now.year)
+
+        async def _call_compressor(messages):
+            return await self._call_llm(messages, model=MEMORY_COMPRESSOR_MODEL)
+
+        for level, setting_key, current_key in [
+            ('weekly',  'last_weekly_compression',  current_week),
+            ('monthly', 'last_monthly_compression', current_month),
+            ('yearly',  'last_yearly_compression',  current_year),
+        ]:
+            last = get_setting(setting_key)
+            if not last:
+                set_setting(setting_key, current_key)
+                continue
+            if last != current_key:
+                prev = _prev_period_key(level, current_key)
+                try:
+                    count = await self.semantic_memory.compress_period(level, prev, _call_compressor)
+                    if count > 0:
+                        print(f"🗜️ [Memory] {level.capitalize()} compression done: {prev} ({count} entries)")
+                except Exception as e:
+                    print(f"⚠️ [Memory] {level} compression failed ({prev}): {e}")
+                set_setting(setting_key, current_key)
+
     async def _run_flow(
         self,
         user_task: str,
@@ -679,7 +736,6 @@ Provide your final analysis and recommendation (include Target Price, Stop-loss,
         semantic_knowledge: List[str],
     ) -> str:
         """Fan-out domain analysis: parallel subtasks → Global Reflector → Judge debate loop."""
-        MAX_GLOBAL_ITER = 3
         semaphore = asyncio.Semaphore(3)
         subtasks = global_plan.get("subtasks", [])
         all_findings = ""
@@ -746,17 +802,20 @@ Provide your final analysis and recommendation (include Target Price, Stop-loss,
         if semantic_knowledge:
             print(f"🧠 Retrieved {len(semantic_knowledge)} generalized lessons from Semantic Memory")
 
-        # 2. MCP 세션 획득 (싱글톤 — Moirai 콜드 스타트 최초 1회)
+        # 2. Memory compression (fire-and-forget background task)
+        asyncio.create_task(self._compress_if_needed())
+
+        # 3. MCP 세션 획득 (싱글톤 — Moirai 콜드 스타트 최초 1회)
         try:
             session, tool_descriptions = await self._ensure_mcp_session()
         except Exception as e:
             return f"MCP 서버 시작 실패: {e}"
 
         try:
-            # 3. GLOBAL PLANNER — parses intent and decides single vs domain mode
+            # 4. GLOBAL PLANNER — parses intent and decides single vs domain mode
             global_plan = await self._call_global_planner(user_task)
 
-            # 4. Fan-out flow: 1 subtask for single queries, N for domain
+            # 5. Fan-out flow: 1 subtask for single queries, N for domain
             saved_result = await self._run_flow(
                 user_task, global_plan, session, tool_descriptions,
                 context_examples, semantic_knowledge,

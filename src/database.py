@@ -132,6 +132,22 @@ def init_db():
             )
         ''')
         
+        # Semantic memory compression columns (migration: added after initial schema)
+        for _col, _def in [
+            ("compression_level", "TEXT DEFAULT 'raw'"),
+            ("period_key",        "TEXT"),
+            ("source_count",      "INTEGER DEFAULT 1"),
+        ]:
+            try:
+                cursor.execute(f"ALTER TABLE semantic_memory ADD COLUMN {_col} {_def}")
+            except Exception:
+                pass  # column already exists
+
+        # Backfill existing rows that predate the migration
+        cursor.execute(
+            "UPDATE semantic_memory SET compression_level='raw' WHERE compression_level IS NULL"
+        )
+
         # Prediction log — 5-day direction forecast tracking for Planner feedback
         cursor.execute('''
             CREATE TABLE IF NOT EXISTS prediction_log (
@@ -448,6 +464,43 @@ def get_global_accuracy_summary(min_samples: int = 5) -> List[Dict[str, Any]]:
             ORDER BY market, accuracy_pct DESC
         ''', (min_samples,))
         return [dict(r) for r in cursor.fetchall()]
+
+def get_semantic_lessons_by_level(level: str) -> List[Dict[str, Any]]:
+    """Fetch all semantic memory rows at a given compression level."""
+    with get_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute(
+            "SELECT id, lesson, embedding_json, period_key, created_at "
+            "FROM semantic_memory WHERE compression_level=?",
+            (level,)
+        )
+        return [dict(r) for r in cursor.fetchall()]
+
+
+def save_compressed_lesson(lesson: str, embedding: list, level: str, period_key: str, source_count: int) -> bool:
+    """Insert a compressed lesson. Returns False if the lesson text already exists."""
+    with get_connection() as conn:
+        cursor = conn.cursor()
+        try:
+            cursor.execute(
+                "INSERT INTO semantic_memory "
+                "(lesson, source_task, embedding_json, compression_level, period_key, source_count) "
+                "VALUES (?, ?, ?, ?, ?, ?)",
+                (lesson, f"compressed:{period_key}", json.dumps(embedding), level, period_key, source_count)
+            )
+            return True
+        except Exception:
+            return False  # UNIQUE constraint on lesson
+
+
+def delete_semantic_lessons_by_ids(ids: List[int]):
+    """Bulk-delete semantic memory rows by id."""
+    if not ids:
+        return
+    with get_connection() as conn:
+        cursor = conn.cursor()
+        cursor.executemany("DELETE FROM semantic_memory WHERE id=?", [(i,) for i in ids])
+
 
 # Always run init_db on import — CREATE TABLE IF NOT EXISTS is idempotent,
 # so existing DBs are safe; new tables added in upgrades get created too.

@@ -66,6 +66,24 @@ def _load_finbert_safe(model_id: str, device):
     tokenizer = AutoTokenizer.from_pretrained(str(safe_dir))
     return model.to(device), tokenizer
 
+def _resolve_torch_device() -> "torch.device":
+    """Select compute device from TORCH_DEVICE env var.
+
+    TORCH_DEVICE=auto  → cuda → mps → cpu (default)
+    TORCH_DEVICE=mps   → Apple Silicon GPU (native Mac only, not inside Docker)
+    TORCH_DEVICE=cpu   → always CPU
+    TORCH_DEVICE=cuda  → NVIDIA GPU
+    """
+    setting = os.environ.get("TORCH_DEVICE", "auto").lower()
+    if setting == "auto":
+        if torch.cuda.is_available():
+            return torch.device("cuda")
+        if hasattr(torch.backends, "mps") and torch.backends.mps.is_available():
+            return torch.device("mps")
+        return torch.device("cpu")
+    return torch.device(setting)
+
+
 CHRONOS_MODEL_ID = os.environ.get("CHRONOS_MODEL", "amazon/chronos-2")
 MOIRAI_MODEL_ID = os.environ.get("MOIRAI_MODEL", "Salesforce/moirai-2.0-R-small")
 MOIRAI_ENABLED = os.environ.get("MOIRAI_ENABLED", "false").lower() == "true"
@@ -94,10 +112,10 @@ class StockBrain:
     """
 
     def __init__(self, ticker_symbol, ticker_name, market_type):
-        self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        self.device = _resolve_torch_device()
         print(f"🧠 {ticker_name} ({ticker_symbol}) brain init... (Device: {self.device})")
 
-        dtype = torch.bfloat16 if torch.cuda.is_available() else torch.float32
+        dtype = torch.bfloat16 if self.device.type == "cuda" else torch.float32
         print(f"🧠 Chronos model: {CHRONOS_MODEL_ID}")
         self._chronos_v2 = "chronos-2" in CHRONOS_MODEL_ID
         if self._chronos_v2:
