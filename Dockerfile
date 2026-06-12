@@ -28,6 +28,13 @@ RUN --mount=type=cache,target=/root/.cache/pip \
 # install chromium + its OS-level deps here.
 RUN playwright install --with-deps chromium
 
+# Pre-build matplotlib's font cache at build time (after all fonts, incl. the
+# emoji font pulled in by playwright's deps, are installed). The cache is baked
+# into the image, so at runtime matplotlib loads it silently instead of
+# re-scanning fonts and logging "Failed to extract ... NotoColorEmoji.ttf
+# (Non-scalable fonts are not supported)" / "generated new fontManager".
+RUN python -c "import matplotlib.pyplot"
+
 COPY src/ ./src/
 
 RUN mkdir -p /app/data
