@@ -597,7 +597,7 @@ Provide your final analysis and recommendation (include Target Price, Stop-loss,
             pass
         return {"approved": True, "critique": "parse error — defaulting to approved", "missing_coverage": [], "weak_points": []}
 
-    async def _call_global_planner_defense(self, user_task: str, critique: Dict[str, Any], all_findings: str) -> Dict[str, Any]:
+    async def _call_global_planner_defense(self, user_task: str, critique: Dict[str, Any], all_findings: str, tool_descriptions: str = "") -> Dict[str, Any]:
         """Global Planner defends its analysis and proposes new subtasks for valid critique points."""
         print("\n🛡️ [Global Planner] Responding to critique...")
         critique_text = (
@@ -606,7 +606,7 @@ Provide your final analysis and recommendation (include Target Price, Stop-loss,
             f"Weak points: {critique.get('weak_points', [])}"
         )
         prompt = [
-            {"role": "system", "content": load_prompt("global_planner/defense")},
+            {"role": "system", "content": load_prompt("global_planner/defense", tool_capabilities=tool_descriptions or "(no tools listed)")},
             {"role": "user", "content": f"User query: {user_task}\n\n{critique_text}\n\nCurrent findings (excerpt):\n{all_findings[:3000]}"},
         ]
         response = await self._call_llm(prompt, model=GLOBAL_PLANNER_MODEL, max_tokens=4096)
@@ -623,7 +623,7 @@ Provide your final analysis and recommendation (include Target Price, Stop-loss,
             pass
         return {"defense": "", "concede": [], "new_subtasks": []}
 
-    async def _call_judge(self, user_task: str, critique: Dict[str, Any], defense: Dict[str, Any]) -> Dict[str, Any]:
+    async def _call_judge(self, user_task: str, critique: Dict[str, Any], defense: Dict[str, Any], tool_descriptions: str = "") -> Dict[str, Any]:
         """Judge decides whether Planner's defense is sufficient or Reflector's critique stands."""
         print("\n⚖️ [Judge] Evaluating debate...")
         debate_text = (
@@ -635,7 +635,7 @@ Provide your final analysis and recommendation (include Target Price, Stop-loss,
             f"Proposes new subtasks: {[st.get('focus') for st in defense.get('new_subtasks', [])]}"
         )
         prompt = [
-            {"role": "system", "content": load_prompt("judge/system")},
+            {"role": "system", "content": load_prompt("judge/system", tool_capabilities=tool_descriptions or "(no tools listed)")},
             {"role": "user", "content": f"User query: {user_task}\n\n{debate_text}"},
         ]
         response = await self._call_llm(prompt, model=JUDGE_MODEL, max_tokens=2048)
@@ -811,8 +811,8 @@ Provide your final analysis and recommendation (include Target Price, Stop-loss,
                 print("   ⚠️ Max global iterations reached — using current findings")
                 break
 
-            defense = await self._call_global_planner_defense(user_task, global_critique, all_findings)
-            judge_verdict = await self._call_judge(user_task, global_critique, defense)
+            defense = await self._call_global_planner_defense(user_task, global_critique, all_findings, tool_descriptions)
+            judge_verdict = await self._call_judge(user_task, global_critique, defense, tool_descriptions)
 
             if judge_verdict.get("verdict") == "planner":
                 print("   ⚖️ Judge: Planner wins — proceeding to summary")
