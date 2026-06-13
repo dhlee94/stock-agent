@@ -93,43 +93,22 @@ for _pkg in ["tools", "tools.stock"]:
 _prompts_mod = _stub_module("prompts")
 _prompts_mod.load_prompt = MagicMock(return_value="[mocked prompt]")
 
-# Stub config
-_cfg = _stub_module(
-    "config",
-    LLM_PROVIDER="gemini",
-    LLM_MODEL="gemini-2.0-flash",
-    EMBEDDING_PROVIDER="gemini",
-    EMBEDDING_MODEL="models/gemini-embedding-001",
-    KEYWORD_LLM_MODEL="gemini-2.0-flash",
-    GEMINI_API_KEY=None,
-    OPENAI_API_KEY=None,
-    GROQ_API_KEY=None,
-    ANTHROPIC_API_KEY=None,
-    NAVER_CLIENT_ID="",
-    NAVER_CLIENT_SECRET="",
-    DEFAULT_MARKET="KR",
-    RISK_TOLERANCE="Medium",
-    PLANNER_MODEL="gemini-2.0-flash",
-    EXECUTOR_MODEL="gemini-2.0-flash",
-    SUMMARIZER_MODEL="gemini-2.0-flash",
-    NEWS_ANALYST_MODEL="gemini-2.0-flash",
-    TECHNICAL_ANALYST_MODEL="gemini-2.0-flash",
-    FORECAST_INTERPRETER_MODEL="gemini-2.0-flash",
-    GLOBAL_PLANNER_MODEL="gemini-2.0-flash",
-    LOCAL_REFLECTOR_MODEL="gemini-2.0-flash",
-    GLOBAL_REFLECTOR_MODEL="gemini-2.0-flash",
-    JUDGE_MODEL="gemini-2.0-flash",
-    MOIRAI_ENABLED=False,
-    MOIRAI_MODEL="",
-    CHRONOS_ENABLED=False,
-    CHRONOS_MODEL="",
-    SRC_DIR="/fake",
-    DATA_DIR="/fake",
-    PROMPTS_DIR="/fake",
-)
+# Use the REAL config module instead of a hand-maintained stub, so this test
+# automatically stays in sync with whatever agent_client imports from config.
+# (Previously, adding a new config constant — e.g. MEMORY_COMPRESSOR_MODEL —
+# silently broke test collection with an ImportError.)
+#
+# This is safe: config.py only reads os.environ with defaults — no network,
+# DB, or key validation — and dotenv.load_dotenv is stubbed to a no-op above,
+# so the developer's local .env is never read. We clear the provider API keys
+# first so behavior is deterministic regardless of the shell environment
+# (the SDK clients are stubbed either way).
+for _k in ("GEMINI_API_KEY", "GOOGLE_API_KEY", "OPENAI_API_KEY",
+           "GROQ_API_KEY", "ANTHROPIC_API_KEY"):
+    os.environ.pop(_k, None)
 
-# Now it's safe to import agent_client
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
+import config  # noqa: E402  (real module — keeps this test in sync with product)
 import agent_client  # noqa: E402
 from agent_client import MementoAgent  # noqa: E402
 
