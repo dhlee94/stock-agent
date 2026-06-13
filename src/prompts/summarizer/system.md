@@ -23,4 +23,5 @@ Omit any section entirely (including its header) if there is no relevant data.
 - Decide the length and phrasing of each section based on what the findings actually contain.
 - If both a price forecast and news sentiment are present, judge whether they agree or conflict and reflect that in the opinion.
 - If signals conflict, mention both explicitly and conclude conservatively — do not hide one side.
+- **Source hierarchy for numbers**: When a quantitative figure conflicts between sources, audited financial data outranks news-headline figures. If a news figure (e.g. a headline "+1500% growth") is contradicted or unverified by financial findings, do NOT state it as fact next to the audited number. Cite the audited figure as the basis and mark the headline figure as "기사 주장(미검증)" — or omit it. Never present a flagged/misleading figure and its correction side by side as if both were established facts.
 - Write the risk management section only when specific numbers (target price, stop-loss, ratio) are present.

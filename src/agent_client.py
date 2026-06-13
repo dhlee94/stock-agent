@@ -510,12 +510,60 @@ Summarize the key findings from this tool output:"""}
         response = await self._call_llm(executor_prompt, model=EXECUTOR_MODEL)
         return response
 
+    # Sentiment gap (positive - negative) below this many percentage points is
+    # statistical noise, not a directional signal — forced to NEUTRAL.
+    _SENTIMENT_NEUTRAL_GAP_PP = 15.0
+
+    @staticmethod
+    def _sentiment_guardrail(tool_result: str) -> str:
+        """Deterministic pre-check on raw sentiment JSON, injected as ground truth.
+
+        Arithmetic the LLM should not be left to eyeball: the positive-negative
+        gap and thin coverage. Returns a guardrail block, or "" when the input is
+        not a parseable sentiment payload (e.g. raw stock_news) — safe degrade.
+        """
+        try:
+            data = json.loads(tool_result)
+            dist = data.get("distribution")
+            if not isinstance(dist, dict):
+                return ""
+        except (ValueError, TypeError):
+            return ""
+
+        lines = []
+        pos, neg = dist.get("positive"), dist.get("negative")
+        # The KR FinBert model has no neutral class, so a small pos-neg gap is
+        # noise. Only force NEUTRAL when neutral is absent from the model.
+        if isinstance(pos, (int, float)) and isinstance(neg, (int, float)):
+            gap_pp = abs(pos - neg) * 100
+            if "neutral" not in dist and gap_pp < MementoAgent._SENTIMENT_NEUTRAL_GAP_PP:
+                lines.append(
+                    f"Sentiment gap: positive {pos*100:.1f}% - negative {neg*100:.1f}% "
+                    f"= {gap_pp:.1f}pp (< {MementoAgent._SENTIMENT_NEUTRAL_GAP_PP:.0f}pp). "
+                    "→ Signal is forced to [NEUTRAL | Weak]; do not reclassify as BULLISH/BEARISH."
+                )
+
+        count = data.get("count")
+        if isinstance(count, int) and 0 < count < 3:
+            lines.append(f"Coverage: only {count} article(s) → thin; hedge the Implication.")
+
+        if not lines:
+            return ""
+        return (
+            "[PRE-COMPUTED — TREAT AS GROUND TRUTH, DO NOT OVERRIDE]\n"
+            + "\n".join(lines)
+        )
+
     async def _call_news_analyst(self, tool_result: str) -> str:
         """Specialist: interprets news/sentiment tool output into a structured signal."""
         print("\n📰 [News Analyst] Interpreting news signal...")
+        guardrail = self._sentiment_guardrail(tool_result)
+        user_content = f"다음 뉴스/감성 데이터를 분석하세요:\n\n{tool_result[:3000]}"
+        if guardrail:
+            user_content = f"{guardrail}\n\n{user_content}"
         prompt = [
             {"role": "system", "content": load_prompt("news_analyst/system")},
-            {"role": "user", "content": f"다음 뉴스/감성 데이터를 분석하세요:\n\n{tool_result[:3000]}"},
+            {"role": "user", "content": user_content},
         ]
         return await self._call_llm(prompt, model=NEWS_ANALYST_MODEL)
 
