@@ -22,16 +22,6 @@ SRC_DIR = os.path.normpath(os.path.join(os.path.dirname(__file__), '../..'))
 if SRC_DIR not in sys.path:
     sys.path.append(SRC_DIR)
 
-try:
-    from database import get_sector_competitors as db_get_competitors
-except ImportError:
-    # Fallback/Mock for testing without DB
-    def db_get_competitors(ticker: str) -> List[str]: return []
-
-def get_sector_competitors(ticker: str) -> List[str]:
-    """Get competitors for a ticker from database."""
-    return db_get_competitors(ticker)
-
 # Known company name to ticker mapping - KOREAN MARKET
 KR_COMPANY_TICKER_MAP = {
     "삼성전자": "005930.KS",
@@ -299,11 +289,11 @@ def analyze_peer_group(
     Analyze peer group using news entity mining or user-specified targets.
     
     Workflow:
-    1. Entity Mining: Find top 5 co-mentioned companies from news (or use compare_with)
-    2. LLM/Sector Fallback: If no peers found, use SECTOR_COMPETITORS mapping
-    3. STL Decomposition: Extract trend component (configurable period)
-    4. Pearson Correlation: Calculate trend similarity
-    5. Reference Proxy: Select peer with correlation > threshold
+    1. Entity Mining: Find top 5 co-mentioned companies from news (or use compare_with).
+       If none are found, the target is analyzed independently (no peer comparison).
+    2. STL Decomposition: Extract trend component (configurable period)
+    3. Pearson Correlation: Calculate trend similarity
+    4. Reference Proxy: Select peer with correlation > threshold
     
     Args:
         ticker: Target stock ticker

@@ -214,30 +214,6 @@ def get_all_settings() -> List[Dict[str, Any]]:
 # SECTOR & TICKER OPERATIONS
 # ============================================================
 
-def get_sector_competitors(ticker: str) -> List[str]:
-    """Get competitors for a ticker."""
-    with get_connection() as conn:
-        cursor = conn.cursor()
-        
-        # First try direct competitor mapping
-        cursor.execute('''
-            SELECT competitor_ticker FROM sector_competitors WHERE ticker = ?
-        ''', (ticker,))
-        
-        results = cursor.fetchall()
-        if results:
-            return [row['competitor_ticker'] for row in results]
-        
-        # Fallback: get all tickers in the same sector
-        cursor.execute('''
-            SELECT t2.ticker FROM tickers t1
-            JOIN tickers t2 ON t1.sector_id = t2.sector_id
-            WHERE t1.ticker = ? AND t2.ticker != ?
-        ''', (ticker, ticker))
-        
-        return [row['ticker'] for row in cursor.fetchall()]
-
-
 def get_ticker_info(ticker: str) -> Optional[Dict[str, Any]]:
     """Get ticker information."""
     with get_connection() as conn:
