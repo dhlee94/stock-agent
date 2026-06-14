@@ -38,6 +38,43 @@ def _fcf_cagr(stock):
         return None
 
 
+def _reliable_fcf(stock, info):
+    """Return (fcf, source) using a sane Free Cash Flow, or (None, reason).
+
+    yfinance's info['freeCashflow'] is sometimes corrupted — e.g. it can exceed
+    operating cash flow, which is impossible (FCF = OCF − CapEx, CapEx ≥ 0). A bad
+    FCF silently inflates the whole DCF. So prefer the cash-flow statement
+    (authoritative) and accept info['freeCashflow'] only when it passes a
+    plausibility gate (must not exceed operating cash flow).
+    """
+    # 1) Authoritative: latest from the cash-flow statement.
+    try:
+        cf = stock.cashflow
+        if cf is not None and not cf.empty:
+            if "Free Cash Flow" in cf.index:
+                s = cf.loc["Free Cash Flow"].dropna()
+                if len(s) and float(s.iloc[0]) > 0:
+                    return float(s.iloc[0]), "cash-flow statement (Free Cash Flow)"
+            if "Operating Cash Flow" in cf.index and "Capital Expenditure" in cf.index:
+                ocf_s = cf.loc["Operating Cash Flow"].dropna()
+                capex_s = cf.loc["Capital Expenditure"].dropna()
+                if len(ocf_s) and len(capex_s):
+                    v = float(ocf_s.iloc[0]) + float(capex_s.iloc[0])  # CapEx is negative
+                    if v > 0:
+                        return v, "OCF + CapEx (cash-flow statement)"
+    except Exception:
+        pass
+    # 2) info['freeCashflow'] — only when plausible (≤ operating cash flow).
+    fcf = info.get("freeCashflow")
+    ocf = info.get("operatingCashflow")
+    if fcf and fcf > 0:
+        if ocf and fcf > ocf:
+            return None, (f"info.freeCashflow ({fcf:,.0f}) exceeds operating cash flow "
+                          f"({ocf:,.0f}); impossible — discarded")
+        return float(fcf), "info.freeCashflow"
+    return None, "no valid free cash flow data"
+
+
 def get_dcf(ticker: str, market: str = "KR",
             projection_years: int = 5,
             terminal_growth: float = 0.025,
@@ -51,16 +88,16 @@ def get_dcf(ticker: str, market: str = "KR",
         stock = yf.Ticker(ticker)
         info = stock.info
 
-        fcf = info.get("freeCashflow")
+        fcf, fcf_source = _reliable_fcf(stock, info)
         shares = info.get("sharesOutstanding")
         price = info.get("currentPrice") or info.get("regularMarketPrice")
 
-        # Graceful decline — DCF is impossible without these
+        # Graceful decline — DCF is impossible without a sane FCF
         if not fcf or fcf <= 0:
             return ToolResponse.error(
-                "DCF 산출 불가 — 유효한 free cash flow 데이터 없음 (음수/결측). "
-                "FCF가 음수이거나 불규칙한 기업은 DCF가 부적합합니다.",
-                {"ticker": ticker, "free_cash_flow": fcf},
+                "DCF 산출 불가 — 유효한 free cash flow 데이터 없음 (음수/결측/비정상). "
+                f"사유: {fcf_source}. FCF가 음수이거나 불규칙한 기업은 DCF가 부적합합니다.",
+                {"ticker": ticker, "free_cash_flow": fcf, "fcf_source": fcf_source},
             )
         if not shares or not price:
             return ToolResponse.error(
@@ -129,6 +166,7 @@ def get_dcf(ticker: str, market: str = "KR",
             "in_buy_zone": bool(price <= buy_below),
             "assumptions": {
                 "fcf_ttm": fcf,
+                "fcf_source": fcf_source,
                 "growth_rate_pct": round(base_growth * 100, 2),
                 "growth_source": growth_source,
                 "discount_rate_pct": round(discount_base * 100, 2),
