@@ -260,6 +260,66 @@ def _budget_findings(findings_by_focus: Dict[str, str], total_budget: int = 1800
     return "\n\n".join(parts)
 
 
+def _market_consistency_anchor(ticker: str) -> str:
+    """Deterministic GROUND-TRUTH block that defuses the 'fetched data must be wrong'
+    hallucination — e.g. the Reflector insisting NFLX is ~$1,000/~430M shares and
+    calling the correct post-split $80/4.2B figures a '10x error' (even fabricating
+    `$338B ÷ $80 ≈ 421M` to defend its prior).
+
+    Built deterministically from yfinance: it does the consistency arithmetic itself
+    (price × shares = market cap), states the 52-week range, and surfaces recent
+    stock splits — the fact that reconciles the clash with the model's stale memory.
+    A prompt principle ("trust the data") lost to a strong prior; injecting the
+    computed facts leaves nothing to rationalize. Returns "" on any failure or when
+    the figures are unavailable (e.g. many KR tickers, sector queries).
+    """
+    try:
+        import yfinance as yf
+        from datetime import datetime
+        info = yf.Ticker(ticker).info
+        price = info.get("currentPrice") or info.get("regularMarketPrice")
+        shares = info.get("sharesOutstanding")
+        mktcap = info.get("marketCap")
+        if not (price and shares and mktcap):
+            return ""
+        # Actually VERIFY the relationship before asserting it — never claim
+        # "consistent" on faith. price × shares must reconcile with market cap.
+        implied = price * shares
+        consistent = abs(implied - mktcap) <= 0.02 * mktcap   # within 2%
+
+        lines = [f"[VERIFIED MARKET FACTS — {ticker}, computed from the fetched data]"]
+        if consistent:
+            lines.append(f"- Price ${price:,.2f} × shares {shares/1e9:.3f}B = ${implied/1e9:.1f}B "
+                         f"≈ reported market cap ${mktcap/1e9:.1f}B → INTERNALLY CONSISTENT. "
+                         "Price and share count are correct (NOT a 10x error); do not flag them as a data error.")
+        else:
+            lines.append(f"- Price ${price:,.2f} × shares {shares/1e9:.3f}B = ${implied/1e9:.1f}B "
+                         f"vs reported market cap ${mktcap/1e9:.1f}B → these DO NOT reconcile "
+                         "(genuine data discrepancy worth flagging).")
+        lo, hi = info.get("fiftyTwoWeekLow"), info.get("fiftyTwoWeekHigh")
+        if lo and hi:
+            note = "within range" if (lo <= price <= hi) else "OUTSIDE its own 52-week range — flag this"
+            lines.append(f"- 52-week range ${lo:,.2f}–${hi:,.2f}; current price ${price:,.2f} is {note}.")
+        try:
+            cutoff = datetime.now().year - 3
+            sp = yf.Ticker(ticker).splits
+            recent = [(d.strftime("%Y-%m-%d"), float(r)) for d, r in sp.items() if d.year >= cutoff]
+            if recent:
+                s = ", ".join(f"{d} {r:.0f}:1" for d, r in recent)
+                lines.append(f"- Recent stock split(s): {s}. Pre-split prices/share counts are NOT "
+                             "comparable to current values — this reconciles any clash with older memory.")
+        except Exception:
+            pass
+        # Only suppress data-validity distrust when the data is verifiably consistent;
+        # never tell the critic to ignore a genuine discrepancy.
+        if consistent:
+            lines.append("- Do NOT reject or re-plan the analysis on the grounds that the price, share count, "
+                         "or market cap look wrong versus your training memory.")
+        return "\n".join(lines)
+    except Exception:
+        return ""
+
+
 class MementoAgent:
     def __init__(self):
         self.memory = MemoryStore()
@@ -937,6 +997,14 @@ Provide your final analysis and recommendation (include Target Price, Stop-loss,
         # run so concurrent web jobs never share state.
         tool_cache: Dict[str, "asyncio.Future"] = {}
         subtasks = global_plan.get("subtasks", [])
+        # Deterministic GROUND-TRUTH anchor for the primary ticker (computed once),
+        # prepended to the Reflector/Defense view. Defuses the "fetched data must be
+        # wrong" hallucination (e.g. calling NFLX's correct post-split $80/4.2B a
+        # "10x error"). "" for sector/multi-ticker queries or when figures are absent.
+        subject = global_plan.get("subject", "") or ""
+        _kr, _us = _KR_TICKER_RE.search(subject), _US_TICKER_RE.search(subject)
+        _ticker = f"{_kr.group(1)}.{_kr.group(2)}" if _kr else (_us.group(1) if _us else None)
+        anchor = _market_consistency_anchor(_ticker) if _ticker else ""
         # Accumulate findings across iterations keyed by subtask focus. Later iters
         # run only the gap-filling subtasks the Defense proposes; prior coverage is
         # carried forward (reused), not discarded — so the Reflector always sees the
@@ -969,8 +1037,9 @@ Provide your final analysis and recommendation (include Target Price, Stop-loss,
             # latest gap-filling findings are never tail-dropped. Full all_findings is
             # kept for the summarizer.
             critic_findings = _budget_findings(findings_by_focus)
+            critic_view = f"{anchor}\n\n{critic_findings}" if anchor else critic_findings
 
-            global_critique = await self._call_global_reflector(user_task, critic_findings)
+            global_critique = await self._call_global_reflector(user_task, critic_view)
 
             if global_critique.get("approved"):
                 print("   ✅ Global Reflector approved — proceeding to summary")
@@ -980,7 +1049,7 @@ Provide your final analysis and recommendation (include Target Price, Stop-loss,
                 print("   ⚠️ Max global iterations reached — using current findings")
                 break
 
-            defense = await self._call_global_planner_defense(user_task, global_critique, critic_findings, tool_descriptions)
+            defense = await self._call_global_planner_defense(user_task, global_critique, critic_view, tool_descriptions)
             judge_verdict = await self._call_judge(user_task, global_critique, defense, tool_descriptions)
 
             if judge_verdict.get("verdict") == "planner":
