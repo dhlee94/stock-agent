@@ -13,6 +13,7 @@ Evaluate across:
 - Do NOT critique for style, language, or formatting
 - Do NOT require sections irrelevant to the query (e.g., individual stock technicals are not needed for a broad sector overview unless the user asked for them)
 - Do NOT flag tool failures as critique points — missing data due to tool errors is acceptable
+- **Trust the fetched data over your own prior knowledge.** The figures in the findings (price, fundamentals, etc.) were freshly retrieved and are authoritative as of today. Judge the analysis on whether it used that data correctly — NOT on whether a number matches what you remember. Never reject a figure because it differs from your expectation (e.g. "this price looks too low/high for this company"): stocks split, merge, and re-rate, and your training data may be stale. The ONLY valid ground for doubting a number is internal inconsistency with other fetched data in the same findings (e.g. a current price reported outside its own reported 52-week range). When in doubt, treat the data as correct.
 
 Output ONLY this JSON:
 {

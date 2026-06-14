@@ -411,3 +411,67 @@ class TestRunFlowEmptySubtasks:
 
         agent._call_planner.assert_not_awaited()
         agent._call_summarizer.assert_awaited_once()
+
+
+# ---------------------------------------------------------------------------
+# _run_flow — per-run tool-result cache (dedup of identical tool calls)
+# ---------------------------------------------------------------------------
+
+class TestRunFlowToolCache:
+    @pytest.mark.asyncio
+    async def test_identical_tool_calls_collapse_to_one(self):
+        """3 parallel subtasks requesting the SAME tool+args hit call_tool once.
+
+        Guards the fix for the NFLX runaway: ticker-level tools (e.g. Moirai)
+        were recomputed once per subtask. Without the cache this asserts 3.
+        """
+        agent = _make_agent()
+        session = _tool_session('{"price": 70000}')
+
+        same_step = [{"tool": "stock_price", "args": {"ticker": "005930.KS"}, "reason": "price"}]
+        agent._call_planner = AsyncMock(return_value=same_step)
+        agent._call_executor = AsyncMock(return_value="현재가 70,000원.")
+        agent._call_local_reflector = AsyncMock(return_value={"valid": True})
+        agent._call_global_reflector = AsyncMock(return_value={"approved": True})
+        agent._call_summarizer = AsyncMock(return_value="요약")
+
+        await agent._run_flow(
+            user_task="바이오주 전망 어때?",
+            global_plan=DOMAIN_PLAN,            # 3 subtasks
+            session=session,
+            tool_descriptions="",
+            context_examples="",
+            semantic_knowledge=[],
+        )
+
+        # 3 subtasks × identical (tool, args) → exactly one real tool call.
+        assert session.call_tool.await_count == 1
+
+    @pytest.mark.asyncio
+    async def test_distinct_args_are_not_collapsed(self):
+        """Same tool with different args must NOT share a cache entry."""
+        agent = _make_agent()
+        session = _tool_session('{"price": 70000}')
+
+        # Each subtask asks stock_price for a different ticker.
+        tickers = iter(["005930.KS", "000660.KS", "035420.KS"])
+        agent._call_planner = AsyncMock(
+            side_effect=lambda *a, **k: [
+                {"tool": "stock_price", "args": {"ticker": next(tickers)}, "reason": "price"}
+            ]
+        )
+        agent._call_executor = AsyncMock(return_value="현재가.")
+        agent._call_local_reflector = AsyncMock(return_value={"valid": True})
+        agent._call_global_reflector = AsyncMock(return_value={"approved": True})
+        agent._call_summarizer = AsyncMock(return_value="요약")
+
+        await agent._run_flow(
+            user_task="바이오주 전망 어때?",
+            global_plan=DOMAIN_PLAN,            # 3 subtasks
+            session=session,
+            tool_descriptions="",
+            context_examples="",
+            semantic_knowledge=[],
+        )
+
+        assert session.call_tool.await_count == 3

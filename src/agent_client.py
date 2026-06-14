@@ -183,6 +183,44 @@ def _prev_period_key(level: str, current_key: str) -> str:
     return str(int(current_key) - 1)  # yearly
 
 
+# Identity/metadata keys that never help the Global Reflector judge an analysis —
+# not figures, not signals. Dropped from the raw-figure digest to save context
+# without touching any number the critic actually evaluates. Conservative on
+# purpose: only obviously-irrelevant fields, matched case-insensitively.
+_DIGEST_DROP_KEYS = frozenset({
+    "website", "irwebsite", "url", "logo", "logo_url",
+    "employees", "fulltimeemployees",
+    "country", "address", "address1", "city", "state", "zip", "phone", "fax",
+    "longbusinesssummary", "long_business_summary", "businesssummary", "description",
+    "timestamp", "uuid", "exchange", "quotetype",
+})
+
+
+def _digest_tool_output(raw: str, limit: int) -> str:
+    """Compact, number-preserving digest of a tool's raw JSON output.
+
+    Strips JSON whitespace (lossless) and drops a conservative denylist of
+    identity/metadata keys (website, employees, country, free-text descriptions…)
+    that the Reflector never uses. Every numeric/signal field is kept verbatim —
+    no rounding. Falls back to a plain slice when the output isn't JSON (e.g.
+    already-prose tool results). Result is truncated to `limit` chars.
+    """
+    try:
+        obj = json.loads(raw)
+    except (ValueError, TypeError):
+        return raw[:limit]
+
+    def _prune(o):
+        if isinstance(o, dict):
+            return {k: _prune(v) for k, v in o.items()
+                    if k.lower() not in _DIGEST_DROP_KEYS}
+        if isinstance(o, list):
+            return [_prune(v) for v in o]
+        return o
+
+    return json.dumps(_prune(obj), ensure_ascii=False, separators=(",", ":"))[:limit]
+
+
 class MementoAgent:
     def __init__(self):
         self.memory = MemoryStore()
@@ -425,10 +463,10 @@ class MementoAgent:
             suggested = critique.get("suggested_tools") or []
             prior = (previous_findings or "").strip()
             # Keep the planner's "already collected" window at least as wide as the
-            # Global Reflector's (all_findings[:6000]) so it doesn't re-fetch data
+            # Global Reflector's (all_findings[:18000]) so it doesn't re-fetch data
             # the Reflector already judged present.
-            if len(prior) > 6000:
-                prior = prior[:6000] + "\n...(truncated)"
+            if len(prior) > 18000:
+                prior = prior[:18000] + "\n...(truncated)"
             critique_context = load_prompt(
                 "planner/critique_context",
                 issues=issues if issues else "none",
@@ -631,7 +669,7 @@ Provide your final analysis and recommendation (include Target Price, Stop-loss,
         print("\n🔍 [Global Reflector] Critiquing combined analysis...")
         prompt = [
             {"role": "system", "content": load_prompt("global_reflector/system")},
-            {"role": "user", "content": f"User query: {user_task}\n\nCombined findings:\n{all_findings[:6000]}"},
+            {"role": "user", "content": f"User query: {user_task}\n\nCombined findings:\n{all_findings[:18000]}"},
         ]
         response = await self._call_llm(prompt, model=GLOBAL_REFLECTOR_MODEL, max_tokens=4096)
         try:
@@ -655,7 +693,7 @@ Provide your final analysis and recommendation (include Target Price, Stop-loss,
         )
         prompt = [
             {"role": "system", "content": load_prompt("global_planner/defense", tool_capabilities=tool_descriptions or "(no tools listed)")},
-            {"role": "user", "content": f"User query: {user_task}\n\n{critique_text}\n\nCurrent findings (excerpt):\n{all_findings[:3000]}"},
+            {"role": "user", "content": f"User query: {user_task}\n\n{critique_text}\n\nCurrent findings (excerpt):\n{all_findings[:12000]}"},
         ]
         response = await self._call_llm(prompt, model=GLOBAL_PLANNER_MODEL, max_tokens=4096)
         try:
@@ -708,6 +746,7 @@ Provide your final analysis and recommendation (include Target Price, Stop-loss,
         global_plan: Dict[str, Any],
         critique: Optional[Dict[str, Any]] = None,
         previous_findings: str = "",
+        tool_cache: Optional[Dict[str, "asyncio.Future"]] = None,
     ) -> Dict[str, Any]:
         """Execute one subtask: Local Planner → Execute → Local Reflector (1 retry on failure).
 
@@ -721,6 +760,25 @@ Provide your final analysis and recommendation (include Target Price, Stop-loss,
             search_hints = subtask.get("search_hints", []) or []
             print(f"\n📌 [Subtask] Starting: {focus}")
 
+            if tool_cache is None:
+                tool_cache = {}
+
+            async def _cached_call_tool(tool_name: str, args: Dict, key: str):
+                """Reuse an identical tool call (in-flight or completed) within this
+                run, so e.g. one ticker's Moirai forecast is computed once instead of
+                once per parallel subtask. Failures are not cached → retries re-run."""
+                fut = tool_cache.get(key)
+                if fut is None:
+                    async def _runner():
+                        try:
+                            return await session.call_tool(tool_name, arguments=args)
+                        except Exception:
+                            tool_cache.pop(key, None)
+                            raise
+                    fut = asyncio.ensure_future(_runner())
+                    tool_cache[key] = fut
+                return await fut
+
             async def _execute_plan(plan: List[Dict]) -> str:
                 findings = ""
                 for step in plan:
@@ -729,9 +787,11 @@ Provide your final analysis and recommendation (include Target Price, Stop-loss,
                         continue
                     args = step.get("args", {})
                     tips = self.procedural_memory.get_tool_tips(tool_name)
+                    key = tool_name + "|" + json.dumps(args, sort_keys=True, ensure_ascii=False)
+                    cached = key in tool_cache
                     try:
-                        print(f"      ⚡ {tool_name}")
-                        result = await session.call_tool(tool_name, arguments=args)
+                        print(f"      {'♻️ ' if cached else '⚡'}{tool_name}{' (cached)' if cached else ''}")
+                        result = await _cached_call_tool(tool_name, args, key)
                         tool_output = result.content[0].text
                         if tool_name in ("stock_news", "stock_news_sentiment"):
                             interpretation = await self._call_news_analyst(tool_output)
@@ -741,7 +801,17 @@ Provide your final analysis and recommendation (include Target Price, Stop-loss,
                             interpretation = await self._call_forecast_interpreter(tool_output)
                         else:
                             interpretation = await self._call_executor(step, tool_output, findings, tips)
-                        findings += f"\n### {step.get('reason', tool_name)}\n{interpretation}\n"
+                        # Carry the raw tool figures alongside the prose interpretation for
+                        # number-dense tools, so concrete values (ratios, DCF assumptions,
+                        # RSI/MACD, share count, forecast levels) survive to the Reflector and
+                        # summarizer instead of being lost in the LLM's summary — the #1 cause
+                        # of false "missing data" rejections. News/sentiment are text-heavy with
+                        # a dedicated analyst, so their raw payload is omitted here.
+                        if tool_name in ("stock_news", "stock_news_sentiment"):
+                            block = interpretation
+                        else:
+                            block = f"{interpretation}\n[원본 수치] {_digest_tool_output(tool_output, 1500)}"
+                        findings += f"\n### {step.get('reason', tool_name)}\n{block}\n"
                         self.procedural_memory.save_tool_execution(tool_name, args, True, interpretation)
                     except Exception as e:
                         print(f"      ⚠️ {tool_name} failed: {e}")
@@ -820,6 +890,13 @@ Provide your final analysis and recommendation (include Target Price, Stop-loss,
     ) -> str:
         """Fan-out domain analysis: parallel subtasks → Global Reflector → Judge debate loop."""
         semaphore = asyncio.Semaphore(3)
+        # Per-run tool-result cache keyed by (tool, args). Parallel subtasks and
+        # later global iterations repeatedly request the same ticker-level tools
+        # (price / Moirai forecast / DCF / financials) with identical args; without
+        # this, each call redoes the work — a single NFLX job ran Moirai's torch
+        # inference 17×. Identical calls now reuse the first result. Scoped to one
+        # run so concurrent web jobs never share state.
+        tool_cache: Dict[str, "asyncio.Future"] = {}
         subtasks = global_plan.get("subtasks", [])
         # Accumulate findings across iterations keyed by subtask focus. Later iters
         # run only the gap-filling subtasks the Defense proposes; prior coverage is
@@ -836,7 +913,8 @@ Provide your final analysis and recommendation (include Target Price, Stop-loss,
 
             results = await asyncio.gather(*[
                 self._run_subtask(st, session, tool_descriptions, semaphore, user_task, global_plan,
-                                  critique=pending_critique, previous_findings=prior_findings)
+                                  critique=pending_critique, previous_findings=prior_findings,
+                                  tool_cache=tool_cache)
                 for st in subtasks
             ])
 
