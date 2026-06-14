@@ -475,3 +475,31 @@ class TestRunFlowToolCache:
         )
 
         assert session.call_tool.await_count == 3
+
+    @pytest.mark.asyncio
+    async def test_identical_raw_block_embedded_once(self):
+        """The raw [원본 수치] digest is embedded once per run; repeats become a reference
+        so the same block isn't copy-pasted verbatim across subtasks (Reflector padding)."""
+        agent = _make_agent()
+        session = _tool_session('{"price": 70000}')
+
+        same_step = [{"tool": "stock_price", "args": {"ticker": "005930.KS"}, "reason": "price"}]
+        agent._call_planner = AsyncMock(return_value=same_step)
+        agent._call_executor = AsyncMock(return_value="현재가 70,000원.")
+        agent._call_local_reflector = AsyncMock(return_value={"valid": True})
+        agent._call_global_reflector = AsyncMock(return_value={"approved": True})
+        agent._call_summarizer = AsyncMock(return_value="요약")
+
+        await agent._run_flow(
+            user_task="바이오주 전망 어때?",
+            global_plan=DOMAIN_PLAN,            # 3 subtasks, identical tool+args
+            session=session,
+            tool_descriptions="",
+            context_examples="",
+            semantic_knowledge=[],
+        )
+
+        # The summarizer receives the full combined findings — inspect dedup there.
+        findings = agent._call_summarizer.call_args[0][1]
+        assert findings.count("[원본 수치] {") == 1            # raw digest embedded once
+        assert findings.count("이미 제시됨") == 2              # other two are references

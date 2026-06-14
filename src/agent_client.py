@@ -846,6 +846,7 @@ Provide your final analysis and recommendation (include Target Price, Stop-loss,
         critique: Optional[Dict[str, Any]] = None,
         previous_findings: str = "",
         tool_cache: Optional[Dict[str, "asyncio.Future"]] = None,
+        embedded_raw: Optional[set] = None,
     ) -> Dict[str, Any]:
         """Execute one subtask: Local Planner → Execute → Local Reflector (1 retry on failure).
 
@@ -906,9 +907,18 @@ Provide your final analysis and recommendation (include Target Price, Stop-loss,
                         # summarizer instead of being lost in the LLM's summary — the #1 cause
                         # of false "missing data" rejections. News/sentiment are text-heavy with
                         # a dedicated analyst, so their raw payload is omitted here.
+                        # The raw digest for a given (tool, args) is identical wherever
+                        # it appears; embed it once per run and reference it thereafter so
+                        # the same financials/price block isn't copy-pasted verbatim across
+                        # subtasks (which the Reflector flags as padding). asyncio is
+                        # cooperative single-threaded, so the check-then-add is atomic here.
                         if tool_name in ("stock_news", "stock_news_sentiment"):
                             block = interpretation
+                        elif embedded_raw is not None and key in embedded_raw:
+                            block = f"{interpretation}\n[원본 수치] (동일 데이터 — 다른 항목에서 이미 제시됨)"
                         else:
+                            if embedded_raw is not None:
+                                embedded_raw.add(key)
                             block = f"{interpretation}\n[원본 수치] {_digest_tool_output(tool_output, 1500)}"
                         findings += f"\n### {step.get('reason', tool_name)}\n{block}\n"
                         self.procedural_memory.save_tool_execution(tool_name, args, True, interpretation)
@@ -996,6 +1006,9 @@ Provide your final analysis and recommendation (include Target Price, Stop-loss,
         # inference 17×. Identical calls now reuse the first result. Scoped to one
         # run so concurrent web jobs never share state.
         tool_cache: Dict[str, "asyncio.Future"] = {}
+        # Per-run set of (tool, args) keys whose raw digest has already been embedded
+        # in findings, so the same block isn't copy-pasted verbatim across subtasks.
+        embedded_raw: set = set()
         subtasks = global_plan.get("subtasks", [])
         # Deterministic GROUND-TRUTH anchor for the primary ticker (computed once),
         # prepended to the Reflector/Defense view. Defuses the "fetched data must be
@@ -1021,7 +1034,7 @@ Provide your final analysis and recommendation (include Target Price, Stop-loss,
             results = await asyncio.gather(*[
                 self._run_subtask(st, session, tool_descriptions, semaphore, user_task, global_plan,
                                   critique=pending_critique, previous_findings=prior_findings,
-                                  tool_cache=tool_cache)
+                                  tool_cache=tool_cache, embedded_raw=embedded_raw)
                 for st in subtasks
             ])
 
