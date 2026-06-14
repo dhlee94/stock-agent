@@ -305,15 +305,27 @@ def calculate_risk(ticker: str, market: str = "KR") -> str:
         if tech_data.get("status") == "error":
             return json.dumps({"error": f"Failed to get technical data: {tech_data.get('error')}"})
 
-        # Optional Chronos directional prior — CHRONOS_ENABLED=false면 스킵
+        # Directional prior from the primary ENABLED forecaster. Moirai is the
+        # primary model (MOIRAI_ENABLED default true); Chronos is a secondary
+        # fallback (default off). Previously only Chronos was consulted, so with
+        # the default config the AI prior was always absent and the target price
+        # degenerated to a pure-technical level (ai_predicted_change_pct=0).
         ai_prediction = None
-        if CHRONOS_ENABLED:
+        name = price_data.get("name", ticker)
+        for enabled, forecast_fn in ((MOIRAI_ENABLED, price_forecast_moirai),
+                                     (CHRONOS_ENABLED, price_forecast)):
+            if not enabled:
+                continue
             try:
-                forecast_data = json.loads(price_forecast(ticker, price_data.get("name", ticker), market))
+                forecast_data = json.loads(forecast_fn(ticker, name, market))
+                if forecast_data.get("status") == "error":
+                    continue
                 pct = forecast_data.get("pct_change")
-                ai_prediction = {"predicted_change_pct": pct if pct is not None else 0.0}
+                if pct is not None:
+                    ai_prediction = {"predicted_change_pct": pct}
+                    break
             except Exception:
-                ai_prediction = None
+                continue
 
         result = calculate_risk_levels(current_price, tech_data, ai_prediction)
         result["ticker"] = ticker
