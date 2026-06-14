@@ -221,6 +221,45 @@ def _digest_tool_output(raw: str, limit: int) -> str:
     return json.dumps(_prune(obj), ensure_ascii=False, separators=(",", ":"))[:limit]
 
 
+def _budget_findings(findings_by_focus: Dict[str, str], total_budget: int = 18000,
+                     min_per_focus: int = 1000) -> str:
+    """Build a critic-facing findings string where EVERY focus is represented.
+
+    A flat head-slice (all_findings[:N]) drops whole focuses off the tail — exactly
+    the gap-filling subtasks added in later iterations — so the Reflector keeps
+    re-reporting gaps that were in fact already filled. Instead, distribute a char
+    budget across focuses with max-min fairness: small focuses are kept whole and
+    release their surplus; large focuses split the remainder equally; every focus is
+    guaranteed at least `min_per_focus` chars (enough for its interpretation + key
+    figures, which are front-loaded). Total stays ~bounded by total_budget, so the
+    critic's input cost does not grow with iteration count.
+    """
+    items = list(findings_by_focus.items())
+    if not items:
+        return ""
+    remaining, caps, unresolved = total_budget, {}, list(items)
+    while unresolved:
+        share = max(min_per_focus, remaining // len(unresolved))
+        still, progressed = [], False
+        for focus, text in unresolved:
+            if len(text) <= share:
+                caps[focus] = len(text); remaining -= len(text); progressed = True
+            else:
+                still.append((focus, text))
+        if not progressed:                       # everyone left exceeds the share
+            share = max(min_per_focus, remaining // len(still)) if still else 0
+            for focus, text in still:
+                caps[focus] = share
+            break
+        unresolved = still
+    parts = []
+    for focus, text in items:
+        cap = caps.get(focus, min_per_focus)
+        body = text if len(text) <= cap else text[:cap].rstrip() + " …(trimmed)"
+        parts.append(f"## [{focus}]\n{body}")
+    return "\n\n".join(parts)
+
+
 class MementoAgent:
     def __init__(self):
         self.memory = MemoryStore()
@@ -669,7 +708,7 @@ Provide your final analysis and recommendation (include Target Price, Stop-loss,
         print("\n🔍 [Global Reflector] Critiquing combined analysis...")
         prompt = [
             {"role": "system", "content": load_prompt("global_reflector/system")},
-            {"role": "user", "content": f"User query: {user_task}\n\nCombined findings:\n{all_findings[:18000]}"},
+            {"role": "user", "content": f"User query: {user_task}\n\nCombined findings:\n{all_findings}"},
         ]
         response = await self._call_llm(prompt, model=GLOBAL_REFLECTOR_MODEL, max_tokens=4096)
         try:
@@ -693,7 +732,7 @@ Provide your final analysis and recommendation (include Target Price, Stop-loss,
         )
         prompt = [
             {"role": "system", "content": load_prompt("global_planner/defense", tool_capabilities=tool_descriptions or "(no tools listed)")},
-            {"role": "user", "content": f"User query: {user_task}\n\n{critique_text}\n\nCurrent findings (excerpt):\n{all_findings[:12000]}"},
+            {"role": "user", "content": f"User query: {user_task}\n\n{critique_text}\n\nCurrent findings:\n{all_findings}"},
         ]
         response = await self._call_llm(prompt, model=GLOBAL_PLANNER_MODEL, max_tokens=4096)
         try:
@@ -926,8 +965,12 @@ Provide your final analysis and recommendation (include Target Price, Stop-loss,
             all_findings = "\n\n".join(
                 f"## [{focus}]\n{findings}" for focus, findings in findings_by_focus.items()
             )
+            # Critic-facing view: every focus represented (per-focus budget) so the
+            # latest gap-filling findings are never tail-dropped. Full all_findings is
+            # kept for the summarizer.
+            critic_findings = _budget_findings(findings_by_focus)
 
-            global_critique = await self._call_global_reflector(user_task, all_findings)
+            global_critique = await self._call_global_reflector(user_task, critic_findings)
 
             if global_critique.get("approved"):
                 print("   ✅ Global Reflector approved — proceeding to summary")
@@ -937,7 +980,7 @@ Provide your final analysis and recommendation (include Target Price, Stop-loss,
                 print("   ⚠️ Max global iterations reached — using current findings")
                 break
 
-            defense = await self._call_global_planner_defense(user_task, global_critique, all_findings, tool_descriptions)
+            defense = await self._call_global_planner_defense(user_task, global_critique, critic_findings, tool_descriptions)
             judge_verdict = await self._call_judge(user_task, global_critique, defense, tool_descriptions)
 
             if judge_verdict.get("verdict") == "planner":
@@ -960,7 +1003,7 @@ Provide your final analysis and recommendation (include Target Price, Stop-loss,
                 "missing_data": valid_points,
                 "suggested_tools": [],
             }
-            prior_findings = all_findings
+            prior_findings = critic_findings
             print(f"   🔁 Reflector wins — {len(subtasks)} new subtasks queued | "
                   f"critique→planner: {len(valid_points)} gaps")
 
