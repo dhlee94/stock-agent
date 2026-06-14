@@ -6,6 +6,7 @@ import yfinance as yf
 
 from utils.response import ToolResponse
 from config import KRX_ID, KRX_PW
+from dcf import _reliable_fcf  # shared FCF sanitizer (rejects corrupted info.freeCashflow)
 
 # pykrx has a bug in its logging call (logging.info(args, kwargs) instead of
 # logging.info("%s %s", args, kwargs)) that prints a noisy 50-line traceback.
@@ -75,13 +76,18 @@ def get_financials(ticker: str) -> str:
         }
         
         # Financial Health
+        # Use the sanitized FCF (same logic as the DCF tool) so the two tools never
+        # report conflicting figures. yfinance info['freeCashflow'] can be corrupted
+        # (e.g. exceed operating cash flow), which a naive pass-through would surface.
+        _fcf, _fcf_source = _reliable_fcf(stock, info)
         health = {
             "total_cash": info.get('totalCash'),
             "total_debt": info.get('totalDebt'),
             "debt_to_equity": info.get('debtToEquity'),
             "current_ratio": info.get('currentRatio'),
             "quick_ratio": info.get('quickRatio'),
-            "free_cash_flow": info.get('freeCashflow'),
+            "free_cash_flow": _fcf,
+            "free_cash_flow_source": _fcf_source,
             "operating_cash_flow": info.get('operatingCashflow'),
         }
         
