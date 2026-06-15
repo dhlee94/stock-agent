@@ -48,7 +48,7 @@
             </form>
             <div id="chatLoading" class="chat-loading hidden">
                 <div class="spinner"></div>
-                <p id="chatLoadingMsg">AI가 분석 중입니다... (복잡한 쿼리는 5~10분 소요될 수 있습니다)</p>
+                <p id="chatLoadingMsg">AI가 분석 중입니다...</p>
             </div>
             <div id="chatResponse" class="chat-response hidden"></div>
         </div>
@@ -75,38 +75,6 @@
                 </div>
             </div>
 
-            <!-- Forecast Chart Card -->
-            <div class="card chart-card">
-                <h3>📉 AI 주가 예측 (30일)</h3>
-                <div class="chart-container">
-                    <canvas id="forecastChart"></canvas>
-                </div>
-            </div>
-
-            <!-- Model Comparison Card -->
-            <div class="card model-card">
-                <h3>🤖 모델 비교</h3>
-                <div class="model-grid">
-                    <div class="model-item" id="moiraiItem" style="display:none">
-                        <div class="model-name">Moirai 2.0 <span class="model-primary">primary</span></div>
-                        <div class="model-badge">Salesforce · CC-BY-NC-4.0</div>
-                        <div id="moiraiDirection" class="model-direction">-</div>
-                        <div id="moiraiPct" class="model-pct">-</div>
-                        <div id="moiraiTrajectory" class="model-trajectory"></div>
-                        <div id="moiraiCI" class="model-ci"></div>
-                    </div>
-                    <div class="model-consensus">
-                        <div id="consensusLabel" class="consensus-label">-</div>
-                    </div>
-                    <div class="model-item" id="chronosItem" style="display:none">
-                        <div class="model-name">Chronos-2 <span class="model-secondary">sub</span></div>
-                        <div class="model-badge">Amazon · Apache 2.0</div>
-                        <div id="chronosDirection" class="model-direction">-</div>
-                        <div id="chronosPct" class="model-pct">-</div>
-                    </div>
-                </div>
-            </div>
-
             <!-- Technical Analysis Card -->
             <div class="card tech-card">
                 <h3>📊 기술적 분석</h3>
@@ -130,11 +98,11 @@
                 <div id="recommendation" class="recommendation">-</div>
             </div>
 
-            <!-- AI Prediction Card -->
+            <!-- AI Info Card -->
             <div class="card ai-card">
-                <h3>🤖 AI 분석 요약</h3>
+                <h3>🤖 시장 신호 요약</h3>
                 <div id="aiResult" class="ai-result">
-                    <p>AI 분석 결과가 여기에 표시됩니다.</p>
+                    <p>분석 결과가 여기에 표시됩니다.</p>
                 </div>
             </div>
 
@@ -153,12 +121,7 @@
         </footer>
     </div>
 
-    <!-- Chart.js -->
-    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
-
     <script>
-        let chartInstance = null;
-
         // Quick pick buttons
         function quickPick(ticker, name, market) {
             document.getElementById('ticker').value = ticker;
@@ -175,7 +138,6 @@
             const name = document.getElementById('name').value;
             const market = document.querySelector('input[name="market"]:checked').value;
 
-            // Show loading
             document.getElementById('loading').classList.remove('hidden');
             document.getElementById('results').classList.add('hidden');
 
@@ -193,7 +155,7 @@
 
                 if (data.status === 'success') {
                     if (data.price?.status === 'error') {
-                        alert(`종목 코드를 찾을 수 없습니다: ${ticker}\n올바른 형식: KR → 005930.KS, US → AAPL`);
+                        alert(`종목 코드를 찾을 수 없습니다: ${ticker}`);
                     } else {
                         displayResults(data, market);
                     }
@@ -207,7 +169,7 @@
             }
         });
 
-        // Chat form submission — polling-based (survives sleep/wake)
+        // Chat form submission
         document.getElementById('chatForm').addEventListener('submit', async (e) => {
             e.preventDefault();
 
@@ -221,7 +183,6 @@
                 'AI가 분석 중입니다...',
                 '데이터를 수집하고 있습니다...',
                 '섹터 및 종목을 분석 중입니다...',
-                '예측 모델을 실행 중입니다...',
                 '최종 리포트를 작성 중입니다...'
             ];
             let msgIdx = 0;
@@ -229,7 +190,7 @@
                 msgIdx = (msgIdx + 1) % loadingMsgs.length;
                 const el = document.getElementById('chatLoadingMsg');
                 if (el) el.textContent = loadingMsgs[msgIdx];
-            }, 15000);
+            }, 10000);
 
             const finish = (html) => {
                 clearInterval(msgTimer);
@@ -239,15 +200,13 @@
                 el.classList.remove('hidden');
             };
 
-            let pollInterval = null;
-
             try {
                 const formData = new FormData();
                 formData.append('message', message);
                 const submitRes = await fetch('/api/chat', { method: 'POST', body: formData });
                 const { job_id } = await submitRes.json();
 
-                pollInterval = setInterval(async () => {
+                const pollInterval = setInterval(async () => {
                     try {
                         const res = await fetch(`/api/job/${job_id}`);
                         const data = await res.json();
@@ -258,13 +217,9 @@
                             clearInterval(pollInterval);
                             finish(`<div class="chat-error">오류: ${data.error || '알 수 없는 오류'}</div>`);
                         }
-                        // status === 'running' → keep polling
-                    } catch (_) {
-                        // 네트워크 순단 (절전 복귀 등) — 다음 인터벌에 자동 재시도
-                    }
+                    } catch (_) {}
                 }, 3000);
             } catch (error) {
-                if (pollInterval) clearInterval(pollInterval);
                 finish(`<div class="chat-error">오류: ${error.message}</div>`);
             }
         });
@@ -274,10 +229,7 @@
             const currency = market === 'US' ? '$' : '₩';
             const price = data.price;
             const tech = data.technical;
-            const forecast = data.price_forecast;
-            const moirai = data.moirai_forecast || null;
 
-            // Price info
             document.getElementById('stockName').textContent = `${data.name} (${data.ticker})`;
             document.getElementById('currentPrice').textContent = currency + formatNumber(price.current_price);
             const changeEl = document.getElementById('priceChange');
@@ -288,13 +240,6 @@
             document.getElementById('dayLow').textContent = currency + formatNumber(price.day_low);
             document.getElementById('volume').textContent = formatVolume(price.volume);
 
-            // Chart
-            renderChart(forecast, moirai);
-
-            // Model comparison
-            renderModelComparison(forecast, moirai);
-
-            // Technical
             if (tech.status === 'success') {
                 const indicators = tech.indicators;
                 document.getElementById('rsiValue').textContent = indicators.rsi?.value || '-';
@@ -311,18 +256,13 @@
                 recEl.className = 'recommendation ' + getRecClass(tech.recommendation);
             }
 
-            // AI Info (sentiment + forecast summary)
             const aiEl = document.getElementById('aiResult');
             const sentiment = data.news_sentiment;
-            const pct = forecast?.pct_change;
-            const moiraiPct = moirai?.pct_change;
             aiEl.innerHTML = `
                 <div class="ai-sentiment">뉴스 감성: <b>${sentiment?.dominant || '-'}</b></div>
-                ${moirai && moirai.status !== 'error' ? `<div class="ai-forecast">Moirai 2.0 예측(30일): <b>${(moiraiPct >= 0 ? '+' : '') + moiraiPct.toFixed(2) + '%'}</b></div>` : ''}
-                ${pct != null ? `<div class="ai-forecast">Chronos-2 예측(30일): <b>${(pct >= 0 ? '+' : '') + pct.toFixed(2) + '%'}</b></div>` : ''}
+                <div class="ai-note">※ 현재 확정 데이터(가격/기술/감성) 중심으로 분석을 제공합니다.</div>
             `;
 
-            // News
             const newsEl = document.getElementById('newsList');
             const news = data.news?.news || [];
             newsEl.innerHTML = news.length ? news.map(n =>
@@ -332,163 +272,6 @@
             document.getElementById('results').classList.remove('hidden');
         }
 
-        function renderModelComparison(forecast, moirai) {
-            const consensusEl = document.getElementById('consensusLabel');
-            const moiraiItem  = document.getElementById('moiraiItem');
-            const chronosItem = document.getElementById('chronosItem');
-
-            // Moirai — primary
-            if (moirai && moirai.status !== 'error') {
-                moiraiItem.style.display = '';
-                const mDir = moirai.direction;
-                const mPct = moirai.pct_change;
-                document.getElementById('moiraiDirection').textContent = mDir === 'up' ? '▲ 상승' : '▼ 하락';
-                document.getElementById('moiraiDirection').className = 'model-direction ' + (mDir === 'up' ? 'up' : 'down');
-                document.getElementById('moiraiPct').textContent = (mPct >= 0 ? '+' : '') + mPct.toFixed(2) + '%';
-                document.getElementById('moiraiPct').className = 'model-pct ' + (mPct >= 0 ? 'up' : 'down');
-
-                // 궤적 방향 전환 경고
-                const traj = moirai.trajectory || {};
-                const trajEl = document.getElementById('moiraiTrajectory');
-                if (trajEl) {
-                    const shapeLabel = {
-                        'up': '', 'down': '',
-                        'up_then_down': `↑${traj.short_pct > 0 ? '+' : ''}${traj.short_pct}% → ↓${traj.long_pct}% (${traj.turning_day}일차 전환)`,
-                        'down_then_up': `↓${traj.short_pct}% → ↑+${traj.long_pct}% (${traj.turning_day}일차 전환)`
-                    }[traj.shape] || '';
-                    trajEl.textContent = shapeLabel;
-                    trajEl.className = 'model-trajectory' + (shapeLabel ? ' has-turn' : '');
-                }
-
-                // 신뢰구간 과신 경고 (평균 구간폭 < 1%)
-                const fd = moirai.forecast_data || [];
-                const cur = moirai.current_price_raw || 0;
-                if (fd.length && cur) {
-                    const avgSpread = fd.reduce((s, d) => s + (d.upper - d.lower), 0) / fd.length / cur * 100;
-                    const ciEl = document.getElementById('moiraiCI');
-                    if (ciEl) ciEl.textContent = avgSpread < 1.0 ? `⚠️ 신뢰구간 좁음 (${avgSpread.toFixed(1)}%)` : `CI: ±${(avgSpread/2).toFixed(1)}%`;
-                }
-            } else {
-                moiraiItem.style.display = 'none';
-            }
-
-            // Chronos — secondary
-            if (forecast && forecast.status !== 'error' && forecast.pct_change != null) {
-                chronosItem.style.display = '';
-                const fDir = forecast.direction;
-                const fPct = forecast.pct_change;
-                document.getElementById('chronosDirection').textContent = fDir === 'up' ? '▲ 상승' : '▼ 하락';
-                document.getElementById('chronosDirection').className = 'model-direction ' + (fDir === 'up' ? 'up' : 'down');
-                document.getElementById('chronosPct').textContent = (fPct >= 0 ? '+' : '') + fPct.toFixed(2) + '%';
-                document.getElementById('chronosPct').className = 'model-pct ' + (fPct >= 0 ? 'up' : 'down');
-            } else {
-                chronosItem.style.display = 'none';
-            }
-
-            // Consensus (only when both visible)
-            const bothVisible = moiraiItem.style.display !== 'none' && chronosItem.style.display !== 'none';
-            if (bothVisible) {
-                const agree = moirai.direction === forecast.direction;
-                consensusEl.textContent = agree ? '✅ 합의' : '⚠️ 불일치';
-                consensusEl.className = 'consensus-label ' + (agree ? 'agree' : 'disagree');
-            } else {
-                consensusEl.textContent = '';
-            }
-        }
-
-        function renderChart(forecast, moirai) {
-            const ctx = document.getElementById('forecastChart').getContext('2d');
-            if (chartInstance) chartInstance.destroy();
-
-            const md = moirai?.forecast_data;
-            const fd = forecast?.forecast_data;
-            if (!md && !fd) return;
-
-            // Use Moirai labels if available, otherwise Chronos
-            const labels = (md || fd).map(d => d.date);
-            const datasets = [];
-
-            // Moirai — primary (cyan)
-            if (md) {
-                datasets.push({
-                    label: 'Moirai 2.0 (중위값)',
-                    data: md.map(d => d.price),
-                    borderColor: '#22d3ee',
-                    borderDash: [5, 5],
-                    tension: 0.4,
-                    pointRadius: 0,
-                    borderWidth: 2,
-                });
-                datasets.push({
-                    label: 'Moirai 2.0 신뢰구간',
-                    data: md.map(d => d.upper),
-                    borderColor: 'transparent',
-                    backgroundColor: 'rgba(34,211,238,0.1)',
-                    fill: '+1',
-                    pointRadius: 0,
-                });
-                datasets.push({
-                    label: '',
-                    data: md.map(d => d.lower),
-                    borderColor: 'transparent',
-                    backgroundColor: 'rgba(34,211,238,0.1)',
-                    fill: false,
-                    pointRadius: 0,
-                });
-            }
-
-            // Chronos — secondary (purple)
-            if (fd) {
-                datasets.push({
-                    label: 'Chronos-2 (중위값)',
-                    data: fd.map(d => d.price),
-                    borderColor: '#a855f7',
-                    borderDash: [3, 3],
-                    tension: 0.4,
-                    pointRadius: 0,
-                    borderWidth: 2,
-                });
-                datasets.push({
-                    label: 'Chronos-2 신뢰구간',
-                    data: fd.map(d => d.upper),
-                    borderColor: 'transparent',
-                    backgroundColor: 'rgba(168,85,247,0.08)',
-                    fill: '+1',
-                    pointRadius: 0,
-                });
-                datasets.push({
-                    label: '',
-                    data: fd.map(d => d.lower),
-                    borderColor: 'transparent',
-                    backgroundColor: 'rgba(168,85,247,0.08)',
-                    fill: false,
-                    pointRadius: 0,
-                });
-            }
-
-            chartInstance = new Chart(ctx, {
-                type: 'line',
-                data: { labels, datasets },
-                options: {
-                    responsive: true,
-                    maintainAspectRatio: false,
-                    plugins: {
-                        legend: {
-                            labels: {
-                                color: '#ccc',
-                                filter: item => item.text !== ''
-                            }
-                        }
-                    },
-                    scales: {
-                        x: { ticks: { color: '#888' }, grid: { color: '#333' } },
-                        y: { ticks: { color: '#888' }, grid: { color: '#333' } }
-                    }
-                }
-            });
-        }
-
-        // Helpers
         function formatNumber(num) { return num ? num.toLocaleString() : '-'; }
         function formatVolume(vol) {
             if (!vol) return '-';

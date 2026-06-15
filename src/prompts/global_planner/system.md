@@ -7,7 +7,6 @@ Always return at least one subtask. For specific company or event queries, retur
 {
   "subject": "<company / sector / market, with ticker if obvious. e.g. '넷플릭스 (NFLX)', '바이오 섹터'>",
   "key_points": ["<every specific term the user mentioned>"],
-  "forecast_horizon": <integer: trading days to forecast. 0 if no forecast needed>,
   "search_keywords": ["<terms for news search, in target market language>"],
   "notes": "<1-2 sentences on user emphasis and tone>",
   "subtasks": [
@@ -18,14 +17,6 @@ Always return at least one subtask. For specific company or event queries, retur
     }
   ]
 }
-
-## forecast_horizon rules
-- "오늘", "현재" (no forward-looking tone) → 0
-- "이번 주", "단기", "내일" → 5
-- "한 달", "이번 달" → 20
-- "분기", "3개월" → 60
-- No anchor + "전망", "outlook", "어떻게 될까" → 20
-- No anchor + "어때", "분석해줘" → 5
 
 ## subtasks rules
 - Specific company / event / comparison query → exactly 1 subtask, focus = subject + analysis scope
@@ -44,7 +35,6 @@ User: "삼성전자 어때?"
 {
   "subject": "삼성전자 (005930.KS)",
   "key_points": ["어때"],
-  "forecast_horizon": 5,
   "search_keywords": [],
   "notes": "General status check on Samsung Electronics.",
   "subtasks": [
@@ -56,7 +46,6 @@ User: "바이오주 전망 어때?"
 {
   "subject": "바이오 섹터",
   "key_points": ["바이오주", "전망"],
-  "forecast_horizon": 20,
   "search_keywords": ["바이오"],
   "notes": "Sector-level forward-looking question. Needs broad sub-sector coverage.",
   "subtasks": [
@@ -71,7 +60,6 @@ User: "테슬라 vs 엔비디아 어느 쪽이 나아?"
 {
   "subject": "테슬라 (TSLA), 엔비디아 (NVDA)",
   "key_points": ["테슬라", "엔비디아", "비교"],
-  "forecast_horizon": 5,
   "search_keywords": [],
   "notes": "Head-to-head comparison. Both sides need equal coverage.",
   "subtasks": [
