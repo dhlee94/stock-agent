@@ -14,10 +14,12 @@ English news for US stocks is passed directly to the Summarizer LLM, which
 handles translation to Korean in the final analysis (no extra LLM call here).
 """
 import os
+import re
+import html
 import json
 import yfinance as yf
 from datetime import datetime
-from typing import Optional, List, Dict
+from typing import Optional, List, Dict, Tuple
 import pytz
 
 from market_utils import detect_market, get_company_name, get_english_name, TICKER_TO_NAME
@@ -27,6 +29,46 @@ from news_filter import filter_news
 
 
 _VALID_SOURCES = {"auto", "naver", "yfinance"}
+_HTML_TAG_RE = re.compile(r"<[^>]+>")
+
+
+def _strip_html(text) -> Optional[str]:
+    """Plain text from an HTML/RSS snippet (Google News summaries carry markup)."""
+    if not text:
+        return None
+    s = html.unescape(_HTML_TAG_RE.sub("", str(text)))
+    s = re.sub(r"\s+", " ", s).strip()  # collapse whitespace incl. &nbsp; (\xa0)
+    return s or None
+
+
+def _tag_and_rank_relevance(items: List[Dict], ticker: Optional[str],
+                            search_name: Optional[str],
+                            english_name: Optional[str]) -> Tuple[List[Dict], int]:
+    """Tag each item 'direct' (names the subject) vs 'contextual' (domain/sector
+    news that may still be relevant), then stable-sort direct-first.
+
+    Nothing is dropped — a strict company-name filter would discard genuinely
+    relevant domain articles (e.g. "광고요금제 스트리밍 트렌드" for Netflix). Tagging
+    instead lets downstream weight direct vs contextual, and surfaces how many
+    articles actually name the subject (the '관련 기사 3~4개뿐' signal)."""
+    tokens = set()
+    for t in (search_name, english_name):
+        if t:
+            tokens.add(t.lower())
+    if ticker:
+        tokens.add(ticker.lower())
+        base = ticker.split(".")[0].lower()
+        if base:
+            tokens.add(base)
+
+    direct = 0
+    for it in items:
+        hay = " ".join(str(v) for v in (it.get("title"), it.get("snippet")) if v).lower()
+        is_direct = any(tok in hay for tok in tokens) if tokens else True
+        it["relevance"] = "direct" if is_direct else "contextual"
+        direct += is_direct
+    items.sort(key=lambda x: 0 if x.get("relevance") == "direct" else 1)  # stable: keeps date order within tier
+    return items, direct
 
 
 def _resolve_source(source: str, market: str) -> str:
@@ -77,6 +119,7 @@ def _yfinance_news(ticker: Optional[str], query: Optional[str], limit: int, mark
                 "type": content.get("contentType", "STORY"),
                 "thumbnail": thumbnail,
                 "language": "en" if market == "US" else "ko",
+                "snippet": _strip_html(content.get("summary") or content.get("description")),
             })
 
     run_google_news = bool(query) or (not news_items and ticker)
@@ -118,6 +161,7 @@ def _yfinance_news(ticker: Optional[str], query: Optional[str], limit: int, mark
                     "type": "news",
                     "thumbnail": None,
                     "language": "en" if market == "US" else "ko",
+                    "snippet": _strip_html(entry.get("summary")),
                 })
         except Exception as e:
             print(f"   ⚠️ GoogleNews search failed: {e}")
@@ -174,10 +218,18 @@ def get_market_news(ticker: str = None, query: str = None, limit: int = 10,
         if dropped:
             print(f"   🧹 [News] 광고/스팸 {dropped}건 제외")
 
+        # Tag relevance (direct vs contextual/domain) and rank direct-first so the
+        # truncation below keeps subject-naming articles, while domain news survives
+        # in the remaining slots.
+        news_items, _ = _tag_and_rank_relevance(news_items, ticker, search_name, english_name)
+
         if len(news_items) > limit:
             news_items = news_items[:limit]
         if not news_items:
             raise RuntimeError(f"No news found for '{search_name or query}' via {resolved}")
+
+        direct_count = sum(1 for it in news_items if it.get("relevance") == "direct")
+        print(f"   🔎 [News] 관련성: direct {direct_count} / contextual {len(news_items) - direct_count}")
 
         return ToolResponse.success({
             "ticker": ticker,
@@ -187,6 +239,8 @@ def get_market_news(ticker: str = None, query: str = None, limit: int = 10,
             "source_requested": source,
             "source_used": resolved,
             "count": len(news_items),
+            "direct_count": direct_count,
+            "contextual_count": len(news_items) - direct_count,
             "news": news_items,
             "timestamp": datetime.now(pytz.timezone("Asia/Seoul")).isoformat(),
         })

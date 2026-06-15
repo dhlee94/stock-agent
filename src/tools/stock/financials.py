@@ -100,7 +100,25 @@ def get_financials(ticker: str) -> str:
             "country": info.get('country'),
             "website": info.get('website'),
         }
-        
+
+        # Analyst consensus — target prices & recommendation. Often the single most
+        # decision-relevant block for a valuation question, and previously fetched by
+        # no tool at all. recommendation_mean: 1=Strong Buy … 5=Sell.
+        _cur = info.get('currentPrice') or info.get('regularMarketPrice')
+        _tgt = info.get('targetMeanPrice')
+        analyst = {
+            "current_price": _cur,
+            "target_mean_price": _tgt,
+            "target_high_price": info.get('targetHighPrice'),
+            "target_low_price": info.get('targetLowPrice'),
+            "target_median_price": info.get('targetMedianPrice'),
+            "upside_to_mean_target_pct": (round((_tgt - _cur) / _cur * 100, 2)
+                                          if (_cur and _tgt) else None),
+            "recommendation_mean": info.get('recommendationMean'),
+            "recommendation_key": info.get('recommendationKey'),
+            "num_analyst_opinions": info.get('numberOfAnalystOpinions'),
+        }
+
         result_data = {
             "ticker": ticker,
             "company": company,
@@ -110,6 +128,7 @@ def get_financials(ticker: str) -> str:
             "dividend": dividend,
             "growth": growth,
             "financial_health": health,
+            "analyst": analyst,
         }
 
         # 🚀 KR Market Enhancement with PyKRX — needs KRX credentials.
