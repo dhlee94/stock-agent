@@ -113,25 +113,28 @@ def get_dcf(ticker: str, market: str = "KR",
         beta_used = beta if (beta and beta > 0) else 1.0
         net_debt = (info.get("totalDebt") or 0) - (info.get("totalCash") or 0)
 
-        # Growth: override > FCF-history CAGR > revenue/earnings growth > default, capped
+        # Growth inputs — compute BOTH the FCF-history CAGR and revenue/earnings
+        # growth, so a divergence between them can be flagged and hedged below.
+        fcf_cagr = _fcf_cagr(stock)
+        rev_growth = info.get("revenueGrowth")
+        if rev_growth is None:
+            rev_growth = info.get("earningsGrowth")
+
+        def _cap_growth(g):
+            return max(0.0, min(g, 0.25))  # sane stage-1 band
+
+        # Base stage-1 rate: override > FCF CAGR > revenue/earnings > default. The
+        # rate is held for high_growth_years then faded toward terminal, so the cap
+        # can sit higher than a single-stage model would tolerate.
         if growth_override is not None:
             base_growth, growth_source = growth_override, "override"
+        elif fcf_cagr is not None:
+            base_growth, growth_source = fcf_cagr, "FCF history CAGR"
+        elif rev_growth is not None:
+            base_growth, growth_source = rev_growth, "revenue/earnings growth"
         else:
-            cagr = _fcf_cagr(stock)
-            if cagr is not None:
-                base_growth, growth_source = cagr, "FCF history CAGR"
-            else:
-                rg = info.get("revenueGrowth")
-                if rg is None:
-                    rg = info.get("earningsGrowth")
-                if rg is not None:
-                    base_growth, growth_source = rg, "revenue/earnings growth"
-                else:
-                    base_growth, growth_source = 0.05, "default 5% (no data)"
-        # Stage-1 (high-growth) rate, capped. It is held for high_growth_years, then
-        # faded toward terminal — so the cap can be higher than a single-stage model
-        # would tolerate without over-valuing a perpetual grower.
-        base_growth = max(0.0, min(base_growth, 0.25))  # sane band for stage-1 growth
+            base_growth, growth_source = 0.05, "default 5% (no data)"
+        base_growth = _cap_growth(base_growth)
 
         # Discount at a WACC proxy, not raw cost of equity: discounting FCFF (a
         # pre-financing cash flow) at the equity-only rate over-penalizes levered
@@ -183,6 +186,33 @@ def get_dcf(ticker: str, market: str = "KR",
                 {"ticker": ticker, "net_debt": net_debt},
             )
 
+        # Recalculation loop / consistency guard: a base case driven by FCF-history
+        # growth can diverge sharply from revenue growth (e.g. NFLX FCF CAGR capped at
+        # 25% vs ~16% revenue). When the gap exceeds the threshold, ALSO run a
+        # conservative DCF with stage-1 growth synced to revenue growth and surface
+        # the divergence — so the optimistic figure is never reported alone, and the
+        # critic sees a hedged range instead of having to object to a single number.
+        DIVERGENCE_THRESHOLD_PP = 0.05
+        growth_consistency = None
+        if rev_growth is not None and growth_source in ("FCF history CAGR", "override"):
+            rev_capped = _cap_growth(rev_growth)
+            divergence = base_growth - rev_capped
+            if abs(divergence) > DIVERGENCE_THRESHOLD_PP:
+                cons_iv = _intrinsic(rev_capped, discount_base)
+                growth_consistency = {
+                    "diverged": True,
+                    "fcf_cagr_pct": round(fcf_cagr * 100, 2) if fcf_cagr is not None else None,
+                    "base_growth_used_pct": round(base_growth * 100, 2),
+                    "revenue_growth_pct": round(rev_growth * 100, 2),
+                    "divergence_pp": round(divergence * 100, 2),
+                    "conservative_iv_revenue_synced": round(cons_iv, 2) if cons_iv is not None else None,
+                    "conservative_buy_below": (round(cons_iv * (1 - margin_of_safety), 2)
+                                               if cons_iv is not None else None),
+                    "note": ("Base growth (FCF history) exceeds revenue growth by >5pp. Treat "
+                             "intrinsic value as a RANGE between the base case and the "
+                             "revenue-synced conservative value — not the optimistic figure alone."),
+                }
+
         # Margin of safety: conservative buy price = base intrinsic × (1 - MOS)
         buy_below = base_iv * (1 - margin_of_safety)
 
@@ -196,6 +226,7 @@ def get_dcf(ticker: str, market: str = "KR",
             "upside_vs_base_pct": round((base_iv - price) / price * 100, 2),
             "upside_vs_buy_below_pct": round((buy_below - price) / price * 100, 2),
             "in_buy_zone": bool(price <= buy_below),
+            "growth_consistency": growth_consistency,
             "assumptions": {
                 "fcf_ttm": fcf,
                 "fcf_source": fcf_source,

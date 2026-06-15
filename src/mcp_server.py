@@ -96,20 +96,32 @@ def stock_financials(ticker: str) -> str:
 
 
 @mcp.tool()
-def stock_dcf(ticker: str, market: str = "KR", margin_of_safety: float = 0.25) -> str:
+def stock_dcf(ticker: str, market: str = "KR", margin_of_safety: float = 0.25,
+              growth_override: float = None) -> str:
     """
-    Estimate intrinsic value per share via a lightweight DCF (FCFF off yfinance).
-    Returns a bear/base/bull intrinsic-value range, a margin-of-safety "buy below"
-    price, upside vs current price, and every assumption used (growth, discount
-    rate, beta, terminal growth). Use this for a valuation-based target price
-    instead of a moving-average. Declines gracefully ("DCF 산출 불가") when FCF,
-    shares, or price data is missing — common for some KR tickers.
+    Estimate intrinsic value per share via a lightweight two-stage DCF (FCFF off
+    yfinance). Returns a bear/base/bull intrinsic-value range, a margin-of-safety
+    "buy below" price, upside vs current price, and every assumption used (growth,
+    discount rate, beta, terminal growth). Use this for a valuation-based target
+    price instead of a moving-average. Declines gracefully ("DCF 산출 불가") when
+    FCF, shares, or price data is missing — common for some KR tickers.
+
+    The output includes a `growth_consistency` block: when the FCF-history growth
+    used for the base case diverges from revenue growth by >5pp, it reports the
+    divergence AND a conservative intrinsic value re-run with growth synced to
+    revenue. Read both before quoting a target.
+
     Args:
         ticker: Stock ticker (e.g. "AAPL", "011070.KS")
         market: "KR" or "US"
         margin_of_safety: haircut on base intrinsic value for the buy price (default 0.25 = 25%)
+        growth_override: optional stage-1 annual growth as a decimal (e.g. 0.16 for 16%)
+            to force INSTEAD of the FCF-history CAGR. Use when the FCF-based growth is
+            implausible vs revenue growth (the `growth_consistency` block flags this).
+            Capped to a sane band internally. Leave unset to auto-derive.
     """
-    return get_dcf(ticker, market=market, margin_of_safety=margin_of_safety)
+    return get_dcf(ticker, market=market, margin_of_safety=margin_of_safety,
+                   growth_override=growth_override)
 
 
 @mcp.tool()
