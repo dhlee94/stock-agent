@@ -23,6 +23,7 @@ import pytz
 from market_utils import detect_market, get_company_name, get_english_name, TICKER_TO_NAME
 from utils.response import ToolResponse
 from news_naver import search_news as _naver_search, naver_keys_present
+from news_filter import filter_news
 
 
 _VALID_SOURCES = {"auto", "naver", "yfinance"}
@@ -166,6 +167,12 @@ def get_market_news(ticker: str = None, query: str = None, limit: int = 10,
             news_items = _naver_news(ticker, query, limit, search_name)
         else:
             news_items = _yfinance_news(ticker, query, limit, market, search_name, english_name)
+
+        # Drop ad / pump-and-dump spam before truncation so the kept items are the
+        # real signal (filtering after [:limit] would waste slots on spam).
+        news_items, dropped = filter_news(news_items)
+        if dropped:
+            print(f"   🧹 [News] 광고/스팸 {dropped}건 제외")
 
         if len(news_items) > limit:
             news_items = news_items[:limit]
