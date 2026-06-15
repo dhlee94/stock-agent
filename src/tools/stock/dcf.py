@@ -1,7 +1,9 @@
 """
 DCF (Discounted Cash Flow) intrinsic-value tool.
 
-A lightweight FCFF DCF computed off yfinance data. Outputs a bear/base/bull
+A lightweight two-stage FCFF DCF computed off yfinance data: stage-1 growth is
+held for a high-growth window, then faded linearly to terminal growth over a
+10-year explicit horizon, and discounted at a WACC proxy. Outputs a bear/base/bull
 intrinsic-value range plus a margin-of-safety "buy below" price, and exposes
 every assumption used. Declines cleanly when the data it needs (FCF, shares,
 price) is missing — common for many KR tickers.
@@ -76,13 +78,15 @@ def _reliable_fcf(stock, info):
 
 
 def get_dcf(ticker: str, market: str = "KR",
-            projection_years: int = 5,
+            projection_years: int = 10,
+            high_growth_years: int = 3,
             terminal_growth: float = 0.025,
             equity_risk_premium: float = 0.05,
             risk_free_rate: float = 0.04,
+            tax_rate: float = 0.21,
             margin_of_safety: float = 0.25,
             growth_override=None) -> str:
-    """Intrinsic value per share via a lightweight FCFF DCF with a margin of safety."""
+    """Intrinsic value per share via a lightweight two-stage FCFF DCF with a margin of safety."""
     print(f"💰 [DCF] Valuing {ticker} (proj={projection_years}y, MOS={margin_of_safety:.0%})")
     try:
         stock = yf.Ticker(ticker)
@@ -124,15 +128,43 @@ def get_dcf(ticker: str, market: str = "KR",
                     base_growth, growth_source = rg, "revenue/earnings growth"
                 else:
                     base_growth, growth_source = 0.05, "default 5% (no data)"
-        base_growth = max(0.0, min(base_growth, 0.15))  # sane band
+        # Stage-1 (high-growth) rate, capped. It is held for high_growth_years, then
+        # faded toward terminal — so the cap can be higher than a single-stage model
+        # would tolerate without over-valuing a perpetual grower.
+        base_growth = max(0.0, min(base_growth, 0.25))  # sane band for stage-1 growth
 
-        discount_base = risk_free_rate + beta_used * equity_risk_premium
+        # Discount at a WACC proxy, not raw cost of equity: discounting FCFF (a
+        # pre-financing cash flow) at the equity-only rate over-penalizes levered
+        # firms and systematically understates intrinsic value. CAPM cost of equity +
+        # an after-tax cost of debt (~150bp credit spread), weighted by market values.
+        total_debt = info.get("totalDebt") or 0
+        equity_mv = price * shares
+        cost_of_equity = risk_free_rate + beta_used * equity_risk_premium
+        after_tax_cost_of_debt = (risk_free_rate + 0.015) * (1 - tax_rate)
+        v = equity_mv + total_debt
+        wacc = (((equity_mv / v) * cost_of_equity + (total_debt / v) * after_tax_cost_of_debt)
+                if (v > 0 and total_debt > 0) else cost_of_equity)
+        discount_base = wacc
+
+        n_high = max(1, min(high_growth_years, projection_years))
+        fade_steps = projection_years - n_high
+
+        def _growth_in_year(yr, g):
+            """Two-stage growth: hold g through the high-growth stage, then fade
+            linearly to terminal_growth so the explicit period lands smoothly into
+            perpetuity (no abrupt growth→terminal cliff). A 5-year-only horizon used
+            to truncate the runway of genuine growers; the fade restores it without
+            assuming elevated growth forever."""
+            if yr <= n_high or fade_steps <= 0:
+                return g
+            t = (yr - n_high) / fade_steps          # (0, 1]; == 1 in the final year
+            return g + (terminal_growth - g) * t
 
         def _intrinsic(g, r):
             r = max(r, terminal_growth + 0.01)  # discount rate must exceed terminal growth
             pv, f = 0.0, fcf
             for yr in range(1, projection_years + 1):
-                f *= (1 + g)
+                f *= (1 + _growth_in_year(yr, g))
                 pv += f / ((1 + r) ** yr)
             terminal = f * (1 + terminal_growth) / (r - terminal_growth)
             pv += terminal / ((1 + r) ** projection_years)
@@ -142,7 +174,7 @@ def get_dcf(ticker: str, market: str = "KR",
         scenarios = {
             "bear": _intrinsic(max(0.0, base_growth - 0.02), discount_base + 0.01),
             "base": _intrinsic(base_growth, discount_base),
-            "bull": _intrinsic(min(0.15, base_growth + 0.02), discount_base - 0.01),
+            "bull": _intrinsic(min(0.30, base_growth + 0.02), discount_base - 0.01),
         }
         base_iv = scenarios["base"]
         if base_iv is None:
@@ -167,21 +199,28 @@ def get_dcf(ticker: str, market: str = "KR",
             "assumptions": {
                 "fcf_ttm": fcf,
                 "fcf_source": fcf_source,
-                "growth_rate_pct": round(base_growth * 100, 2),
+                "stage1_growth_pct": round(base_growth * 100, 2),
                 "growth_source": growth_source,
+                "high_growth_years": n_high,
+                "fade_years": fade_steps,
+                "terminal_growth_pct": round(terminal_growth * 100, 2),
                 "discount_rate_pct": round(discount_base * 100, 2),
+                "discount_basis": "WACC" if total_debt > 0 else "cost of equity (no debt)",
+                "cost_of_equity_pct": round(cost_of_equity * 100, 2),
+                "after_tax_cost_of_debt_pct": round(after_tax_cost_of_debt * 100, 2),
                 "beta_used": round(beta_used, 2),
                 "beta_was_default": not (beta and beta > 0),
                 "risk_free_rate_pct": round(risk_free_rate * 100, 2),
                 "equity_risk_premium_pct": round(equity_risk_premium * 100, 2),
-                "terminal_growth_pct": round(terminal_growth * 100, 2),
                 "projection_years": projection_years,
                 "net_debt": net_debt,
                 "shares_outstanding": shares,
             },
-            "method": ("Lightweight FCFF DCF. Discount rate = CAPM cost of equity used as a "
-                       "WACC proxy. Model estimate — judge against the bear/bull range and the "
-                       "assumptions above, not as a precise target."),
+            "method": ("Lightweight two-stage FCFF DCF: stage-1 growth held for "
+                       "high_growth_years, then faded linearly to terminal growth over the "
+                       "remaining years; discounted at a WACC proxy (CAPM cost of equity + "
+                       "after-tax cost of debt, market-value weighted). Model estimate — judge "
+                       "against the bear/bull range and assumptions, not as a precise target."),
         })
     except Exception as e:
         return ToolResponse.error(str(e), {"ticker": ticker})
