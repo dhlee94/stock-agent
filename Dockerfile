@@ -18,8 +18,7 @@ RUN --mount=type=cache,target=/root/.cache/pip \
 RUN --mount=type=cache,target=/root/.cache/pip \
     pip install -r requirements.txt
 
-# web_crawl uses Playwright's headless Chromium.
- The pip package alone ships no
+# web_crawl uses Playwright's headless Chromium. The pip package alone ships no
 # browser binary, so crawl_url fails with "Executable doesn't exist" until we
 # install chromium + its OS-level deps here.
 RUN playwright install --with-deps chromium
