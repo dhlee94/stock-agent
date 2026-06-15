@@ -15,9 +15,7 @@ EMBEDDING_PROVIDER = os.environ.get("EMBEDDING_PROVIDER", "gemini").lower()
 # Keyword extraction in DriverMemory (defaults to the main LLM provider).
 KEYWORD_LLM_PROVIDER = os.environ.get("KEYWORD_LLM_PROVIDER", LLM_PROVIDER).lower()
 
-# Per-provider default model names per role. Override with LLM_MODEL /
-# KEYWORD_LLM_MODEL / EMBEDDING_MODEL env vars when you want a different
-# model on the same provider (e.g. Anthropic Haiku vs. Sonnet).
+# Per-provider default model names per role.
 DEFAULT_MAIN_MODELS = {
     "gemini": "gemini-2.5-flash",
     "openai": "gpt-4o",
@@ -45,7 +43,6 @@ EXECUTOR_MODEL            = os.environ.get("EXECUTOR_MODEL")            or LLM_M
 SUMMARIZER_MODEL          = os.environ.get("SUMMARIZER_MODEL")          or LLM_MODEL
 NEWS_ANALYST_MODEL        = os.environ.get("NEWS_ANALYST_MODEL")        or LLM_MODEL
 TECHNICAL_ANALYST_MODEL   = os.environ.get("TECHNICAL_ANALYST_MODEL")   or LLM_MODEL
-FORECAST_INTERPRETER_MODEL = os.environ.get("FORECAST_INTERPRETER_MODEL") or LLM_MODEL
 GLOBAL_PLANNER_MODEL      = os.environ.get("GLOBAL_PLANNER_MODEL")      or LLM_MODEL
 LOCAL_REFLECTOR_MODEL     = os.environ.get("LOCAL_REFLECTOR_MODEL")     or KEYWORD_LLM_MODEL
 GLOBAL_REFLECTOR_MODEL    = os.environ.get("GLOBAL_REFLECTOR_MODEL")    or LLM_MODEL
@@ -58,29 +55,16 @@ OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY")
 GROQ_API_KEY = os.environ.get("GROQ_API_KEY")
 ANTHROPIC_API_KEY = os.environ.get("ANTHROPIC_API_KEY")
 
-# News source — Naver Open API (free, 25k req/day per app)
-# Get keys at https://developers.naver.com/apps/#/list (register an app, enable 검색).
+# News source — Naver Open API
 NAVER_CLIENT_ID = os.environ.get("NAVER_CLIENT_ID", "")
 NAVER_CLIENT_SECRET = os.environ.get("NAVER_CLIENT_SECRET", "")
 
-# KRX (한국거래소) credentials — used by pykrx to enhance KR fundamentals
-# (PER/PBR/EPS/dividend) with authoritative exchange data. When unset, the
-# enhancement step is skipped silently and yfinance values are used instead.
+# KRX credentials
 KRX_ID = os.environ.get("KRX_ID", "")
 KRX_PW = os.environ.get("KRX_PW", "")
 
-# Torch compute device for forecasting models (Moirai / Chronos / FinBERT)
-# Options: auto (cuda→mps→cpu), cpu, mps, cuda
-# Note: mps works only when running natively on Apple Silicon — not inside Docker.
+# Torch compute device for sentiment models (FinBERT)
 TORCH_DEVICE = os.environ.get("TORCH_DEVICE", "auto")
-
-# Forecasting model selection
-# Moirai 2.0: primary forecaster (CC-BY-NC-4.0 — research/non-commercial only)
-MOIRAI_ENABLED = os.environ.get("MOIRAI_ENABLED", "true").lower() == "true"
-MOIRAI_MODEL = os.environ.get("MOIRAI_MODEL", "Salesforce/moirai-2.0-R-small")
-# Chronos-2: secondary signal, off by default (Apache 2.0 — commercial OK)
-CHRONOS_ENABLED = os.environ.get("CHRONOS_ENABLED", "false").lower() == "true"
-CHRONOS_MODEL = os.environ.get("CHRONOS_MODEL", "amazon/chronos-2")
 
 # Agent iteration limits
 MAX_GLOBAL_ITER = int(os.environ.get("MAX_GLOBAL_ITER", "3"))

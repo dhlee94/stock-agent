@@ -17,13 +17,9 @@ RUN --mount=type=cache,target=/root/.cache/pip \
     pip install --upgrade pip setuptools wheel
 RUN --mount=type=cache,target=/root/.cache/pip \
     pip install -r requirements.txt
-# uni2ts has conflicting pins (scipy, torch); install core deps first, then uni2ts --no-deps
-RUN --mount=type=cache,target=/root/.cache/pip \
-    pip install lightning gluonts hydra-core jaxtyping datasets tensorboard orjson multiprocess
-RUN --mount=type=cache,target=/root/.cache/pip \
-    pip install --no-deps uni2ts
 
-# web_crawl uses Playwright's headless Chromium. The pip package alone ships no
+# web_crawl uses Playwright's headless Chromium.
+ The pip package alone ships no
 # browser binary, so crawl_url fails with "Executable doesn't exist" until we
 # install chromium + its OS-level deps here.
 RUN playwright install --with-deps chromium

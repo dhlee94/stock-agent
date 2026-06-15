@@ -1,13 +1,12 @@
 # Memento AI Agent: Stock Expert Edition
 
-실시간 뉴스 감성 분석과 시계열 예측(Moirai 2.0)을 결합한 멀티-에이전트 주식 분석 시스템입니다.  
+실시간 뉴스 감성 분석과 정밀한 시장 데이터 분석을 결합한 멀티-에이전트 주식 분석 시스템입니다.  
 사용자의 자연어 질문을 받아 Intent Extraction → Planning → Execution → Reflection 파이프라인으로 전문가 수준의 한국어 투자 리포트를 생성합니다.
 
 ## Key Features
 
-- **Multi-Agent Pipeline**: Intent Extractor → Planner → Executor (뉴스/기술/예측 전문 Agent) → Summarizer → Reflector
-- **Moirai 2.0 Primary Forecaster**: Salesforce Moirai 2.0으로 가격 예측, Chronos-2는 보조 신호 (선택)
-- **Prediction Feedback Loop**: 단기 예측(≤10일)을 DB에 저장하고, 목표일 이후 실제 가격으로 자동 채점 → Planner가 적중률 기반으로 `context_period` 선택
+- **Multi-Agent Pipeline**: Intent Extractor → Planner → Executor (뉴스/기술 전문 Agent) → Summarizer → Reflector
+- **Real-time News Sentiment**: FinBERT을 활용한 시장 감성 분석
 - **Sector Top-Down Analysis**: "바이오주 어때?" 같은 섹터 쿼리 시 `stock_sector → stock_compare → winner` 집중 분석
 - **Peer Analysis**: 경쟁사 상관관계 분석으로 Reflector 신호 교차 검증
 - **Per-Agent Provider Mixing**: 에이전트별로 다른 LLM Provider 혼용 가능 (모델명에서 자동 감지)
@@ -28,7 +27,6 @@ Planner          — MCP 툴 호출 플랜 생성 (섹터 쿼리 시 Top-down �
 Executor Loop (MAX_GLOBAL_ITER=3, configurable via .env)
   ├─ stock_news / stock_news_sentiment  →  News Analyst
   ├─ stock_technical                    →  Technical Analyst
-  ├─ stock_moirai_forecast              →  Forecast Interpreter
   └─ 그 외                              →  Generic Executor
     ↓
 Summarizer  →  Reflector  →  최종 한국어 리포트
@@ -119,12 +117,12 @@ src/
 ├── mcp_server.py         # MCP 툴 서버 (주가/뉴스/예측/리스크 등)
 ├── config.py             # 환경변수 및 per-agent 모델/provider 설정
 ├── database.py           # SQLite (예측 로그, 메모리, 설정)
-├── stock_tool.py         # Moirai/Chronos/FinBERT 래퍼
+├── stock_tool.py         # FinBERT 래퍼
 ├── memory_store.py       # Episodic / Semantic / Procedural Memory
 ├── driver_memory.py      # 종목별 역사적 변동 주도 요인 분석
 ├── risk_manager.py       # 목표가 / 손절가 / 리스크-리워드 계산
 ├── prompts/              # 에이전트별 시스템 프롬프트
-│   ├── intent_extractor/ # 쿼리 구조화 (forecast_horizon 포함)
+│   ├── intent_extractor/ # 쿼리 구조화
 │   ├── planner/          # 툴 호출 플랜 생성
 │   ├── executor/         # 툴 결과 해석
 │   ├── news_analyst/     # 뉴스/감성 신호 전문 해석
@@ -141,18 +139,9 @@ src/
 ├── web/                  # FastAPI 웹 서버 (port 8000)
 ├── scheduler/            # 텔레그램 일일 다이제스트
 └── stock-price-predictor/
-    ├── main.py           # StockBrain (Moirai + Chronos + FinBERT)
+    ├── main.py           # StockBrain (FinBERT sentiment)
     └── predictor_src/    # 데이터 로더, 모델 유틸리티
 ```
-
-## Forecasting Models
-
-| 모델 | 역할 | 라이선스 | 기본값 |
-|------|------|---------|--------|
-| [Moirai 2.0-R-small](https://huggingface.co/Salesforce/moirai-2.0-R-small) | Primary — 가격 예측, 예측 피드백 루프 | CC-BY-NC-4.0 | 활성 |
-| [Chronos-2](https://huggingface.co/amazon/chronos-2) | Secondary — 보조 신호 | Apache 2.0 | 비활성 |
-
-> **Moirai 2.0**은 비상업적 연구 목적으로만 사용 가능합니다.
 
 ## Prediction Feedback Loop
 

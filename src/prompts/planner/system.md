@@ -34,7 +34,7 @@ When multiple salient terms appear, combine them in `query` (e.g., user: "넷플
 **Vague intent** — phrases like "어때?", "괜찮아?", "분석해줘", "어떻게 될까?", "요새 어떤지".
 - Override the "fewer steps" guideline — produce a comprehensive plan (5–7 steps).
 - By default include: `stock_price`, `stock_technical`, `stock_news`, `calculate_risk`. Skip or replace any of these if you can explain why in `reason` (e.g., user already received `stock_price` this iteration).
-- Strongly consider as independent signals: `stock_moirai_forecast` (price-only), `stock_news_sentiment` (news-only), `analyze_drivers`, `stock_dcf` (intrinsic value / valuation-based target).
+- Strongly consider as independent signals: `stock_news_sentiment` (news-only), `analyze_drivers`, `stock_dcf` (intrinsic value / valuation-based target).
 
 **Discovery vs Lookup**
 - LOOKUP — user names a specific event/term: use the salient term as `query` per the core principle.
@@ -57,29 +57,10 @@ When multiple salient terms appear, combine them in `query` (e.g., user: "넷플
 - **Unsure / mixed** → `source="auto"` (default) routes based on ticker market.
 The response field `source_used` records which source actually answered — feed that to the Summarizer when discussing coverage.
 
-## Two-signal model — `stock_moirai_forecast` vs `stock_news_sentiment`
-These two tools intentionally produce INDEPENDENT signals.
-- `stock_moirai_forecast` looks only at past prices → returns `pct_change`, `direction`, q10/q90 band, and `trajectory` (shape of forecast curve). Wide bands = low confidence.
+## Market Sentiment signal — `stock_news_sentiment`
 - `stock_news_sentiment` looks only at recent headlines → returns `distribution` (label → prob), `supported_labels`, and per-headline labels. **Note**: the US model emits 3 classes (positive / neutral / negative) but the KR model emits only 2 (positive / negative) — no neutral option. Read `supported_labels` to know which schema you got.
-- They are NOT pre-combined in code. When both are useful, call both and let the Summarizer reason about agreement vs conflict.
-- Plausible patterns:
-  - Aligned (e.g., forecast UP + sentiment positive) → stronger conviction signal.
-  - Conflicting (e.g., forecast UP + sentiment negative) → flag uncertainty, do not pick one and silently drop the other.
-  - Only one is needed: pure technical questions ("RSI 어때?") → forecast only; pure event questions ("실적 후 분위기?") → sentiment only.
+- Use this as a key directional signal derived from actual news events.
 - **Failure handling**: if a tool returns `{"status": "error", ...}` (e.g. model load failure, network), do NOT silently fabricate the signal. Continue with the remaining tools and let the Summarizer mark the missing signal as "unavailable" in the final report.
-
-## `stock_moirai_forecast` — forecast_steps and context_period
-
-**forecast_steps** — use the `forecast_horizon` value from Extracted Intent above. If no intent context is available, default to `5`.
-Predictions with `forecast_steps < 10` are automatically saved to DB for accuracy learning.
-
-**context_period** — 기본값 `"1mo"`. **`get_forecast_accuracy` 호출 여부와 무관하게 `stock_moirai_forecast`는 항상 독립적으로 호출 가능하다.** `context_period`는 선택 인자이며 생략(None)하면 자동 결정된다.
-- 히스토리가 있으면: `get_forecast_accuracy(ticker)`를 먼저 호출하고, 가장 높은 `accuracy_pct`의 `context_period`를 사용.
-- 히스토리가 없거나 `get_forecast_accuracy`를 호출하지 않은 경우: 상황에 맞게 직접 선택.
-  - 일반 분석 / 단기 outlook → `"1mo"` (기본)
-  - 급등락·이벤트 직후 → `"1mo"`
-  - 장기 추세·섹터 사이클 → `"6mo"` 또는 `"1y"`
-- `get_forecast_accuracy` 없이 바로 호출할 때는 `context_period="1mo"`를 기본으로 사용.
 
 ## Other guidelines
 - Understand the user's intent first, then choose the most relevant tools.
@@ -90,7 +71,7 @@ Predictions with `forecast_steps < 10` are automatically saved to DB for accurac
 
 ## Tool constraints
 - `stock_price` accepts exactly **one ticker** per call. For comparison queries (intent_class=comparison), call it once per ticker as separate steps.
-- `stock_moirai_forecast`, `stock_technical`, `stock_news` similarly accept one ticker at a time — never pass comma-separated tickers.
+- `stock_technical`, `stock_news` similarly accept one ticker at a time — never pass comma-separated tickers.
 
 ## Sector / market-wide queries — Top-down approach ⚠️ MANDATORY
 
@@ -101,9 +82,8 @@ Step 1: stock_sector(sector=<섹터명>, market=<KR|US>)
 Step 2: stock_compare(tickers=<top 4-5 tickers from step 1 result>, period="1mo")
 Step 3: [내부 판단] step 2 결과에서 1위 ticker 선정 — 추가 툴 호출 없음
 Step 4: stock_technical(ticker=<winner>)
-Step 5: stock_moirai_forecast(ticker=<winner>, forecast_steps=<forecast_horizon>)
-Step 6: stock_news(ticker=<winner>, query=<섹터 키워드>)
-Step 7: calculate_risk(ticker=<winner>)
+Step 5: stock_news(ticker=<winner>, query=<섹터 키워드>)
+Step 6: calculate_risk(ticker=<winner>)
 ```
 
 **Rules:**

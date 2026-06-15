@@ -1,10 +1,6 @@
 """
-Stock signal MCP wrappers — two independent tools:
+Stock signal MCP wrappers — now only news sentiment remains:
   - news_sentiment: FinBERT-based sentiment of recent headlines
-  - price_forecast: Chronos-based price forecast (median + q10/q90 bands)
-
-These wrap `stock_tool.get_news_sentiment` / `stock_tool.get_price_forecast`.
-The agent decides how to weigh the two signals.
 """
 import json
 import sys
@@ -16,8 +12,6 @@ sys.path.insert(0, SRC_DIR)
 
 from stock_tool import (
     get_news_sentiment as _get_news_sentiment,
-    get_price_forecast as _get_price_forecast,
-    get_price_forecast_moirai as _get_price_forecast_moirai,
 )
 
 
@@ -41,23 +35,11 @@ def news_sentiment(ticker: str, name: str, market: str = "KR") -> str:
 
 def price_forecast(ticker: str, name: str, market: str = "KR",
                    forecast_steps: int = 30, context_period: str = None) -> str:
-    print(f"🔮 [PriceForecast] {name} ({ticker}) — {forecast_steps} steps, ctx={context_period or 'auto'}")
-    try:
-        return json.dumps(
-            _get_price_forecast(ticker, name, market, forecast_steps, context_period),
-            ensure_ascii=False,
-        )
-    except Exception as e:
-        return json.dumps({"status": "error", "ticker": ticker, "error": str(e)})
+    """Legacy wrapper — forecasting models removed."""
+    return json.dumps({"status": "error", "error": "Price forecasting models (Chronos) removed for light mode."})
 
 
 def price_forecast_moirai(ticker: str, name: str, market: str = "KR",
                            forecast_steps: int = 30, context_period: str = None) -> str:
-    print(f"🔮 [MoiraiForecast] {name} ({ticker}) — {forecast_steps} steps, ctx={context_period or 'auto'}")
-    try:
-        return json.dumps(
-            _get_price_forecast_moirai(ticker, name, market, forecast_steps, context_period),
-            ensure_ascii=False,
-        )
-    except Exception as e:
-        return json.dumps({"status": "error", "ticker": ticker, "error": str(e)})
+    """Legacy wrapper — forecasting models removed."""
+    return json.dumps({"status": "error", "error": "Price forecasting models (Moirai) removed for light mode."})
