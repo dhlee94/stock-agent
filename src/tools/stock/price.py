@@ -43,7 +43,7 @@ def get_stock_price(ticker: str, market: str = "KR") -> str:
             day_high = float(df['High'].iloc[-1])
             day_low = float(df['Low'].iloc[-1])
             
-            from market_utils import get_company_name
+            from .market_utils import get_company_name
             stock_name = get_company_name(ticker) or ticker
 
             return ToolResponse.success({

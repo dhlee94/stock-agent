@@ -88,7 +88,7 @@ def _get_company_map_for_market(market: str) -> dict:
     """
     local = KR_COMPANY_TICKER_MAP if market == "KR" else US_COMPANY_TICKER_MAP
     try:
-        from market_utils import NAME_TO_TICKER as _mu
+        from .market_utils import NAME_TO_TICKER as _mu
         return {**_mu, **local}
     except ImportError:
         return local

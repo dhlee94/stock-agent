@@ -17,7 +17,7 @@ from config import (
     KEYWORD_LLM_PROVIDER, KEYWORD_LLM_MODEL,
     GROQ_API_KEY, GEMINI_API_KEY, OPENAI_API_KEY, ANTHROPIC_API_KEY,
 )
-from database import get_top_drivers, get_ticker_info, add_driver, add_ticker
+from database import get_drivers, get_ticker_info, add_driver, add_ticker
 
 try:
     from .prompts import load_prompt
@@ -93,9 +93,9 @@ class DriverMemory:
         Retrieve cached drivers for a ticker.
         Returns None if not found or older than 30 days.
         """
-        from database import get_top_drivers, get_ticker_info, get_connection
+        from database import get_drivers, get_ticker_info, get_connection
 
-        drivers = get_top_drivers(ticker)
+        drivers = get_drivers(ticker)
         if not drivers:
             return None
 

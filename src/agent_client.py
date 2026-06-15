@@ -629,7 +629,7 @@ class MementoAgent:
     async def _call_global_planner_defense(self, user_task: str, critique: Dict[str, Any], all_findings: str, tool_descriptions: str = "") -> Dict[str, Any]:
         print("\n🛡️ [Global Planner] Responding to critique...")
         prompt = [
-            {"role": "system", "content": load_prompt("global_planner/defense")},
+            {"role": "system", "content": load_prompt("global_planner/defense", tool_capabilities=tool_descriptions)},
             {"role": "user", "content": f"Query: {user_task}\n\nCritique: {critique.get('critique', '')}"},
         ]
         response = await self._call_llm(prompt, model=GLOBAL_PLANNER_MODEL)
@@ -638,7 +638,7 @@ class MementoAgent:
     async def _call_judge(self, user_task: str, critique: Dict[str, Any], defense: Dict[str, Any], tool_descriptions: str = "") -> Dict[str, Any]:
         print("\n⚖️ [Judge] Evaluating...")
         prompt = [
-            {"role": "system", "content": load_prompt("judge/system")},
+            {"role": "system", "content": load_prompt("judge/system", tool_capabilities=tool_descriptions)},
             {"role": "user", "content": f"Query: {user_task}"},
         ]
         response = await self._call_llm(prompt, model=JUDGE_MODEL)

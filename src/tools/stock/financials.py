@@ -6,7 +6,7 @@ import yfinance as yf
 
 from utils.response import ToolResponse
 from config import KRX_ID, KRX_PW
-from dcf import _reliable_fcf  # shared FCF sanitizer (rejects corrupted info.freeCashflow)
+from .dcf import _reliable_fcf  # shared FCF sanitizer (rejects corrupted info.freeCashflow)
 
 # pykrx has a bug in its logging call (logging.info(args, kwargs) instead of
 # logging.info("%s %s", args, kwargs)) that prints a noisy 50-line traceback.

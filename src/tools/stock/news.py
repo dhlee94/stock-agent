@@ -22,10 +22,10 @@ from datetime import datetime
 from typing import Optional, List, Dict, Tuple
 import pytz
 
-from market_utils import detect_market, get_company_name, get_english_name, TICKER_TO_NAME
+from .market_utils import detect_market, get_company_name, get_english_name, TICKER_TO_NAME
 from utils.response import ToolResponse
-from news_naver import search_news as _naver_search, naver_keys_present
-from news_filter import filter_news
+from .news_naver import search_news as _naver_search, naver_keys_present
+from .news_filter import filter_news
 
 
 _VALID_SOURCES = {"auto", "naver", "yfinance"}
