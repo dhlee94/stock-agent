@@ -837,7 +837,11 @@ Summarize the key findings from this tool output:"""}
         """Specialist: interprets news/sentiment tool output into a structured signal."""
         print("\n📰 [News Analyst] Interpreting news signal...")
         guardrail = self._sentiment_guardrail(tool_result)
-        user_content = f"다음 뉴스/감성 데이터를 분석하세요:\n\n{tool_result[:3000]}"
+        # 6000 (not 3000): news payloads now carry article bodies (snippet) and a
+        # per-item relevance tag, so a wider window keeps more articles' body + tags
+        # intact for the analyst. Technical/forecast inputs stay at 3000 — they are
+        # number-dense, not body-heavy.
+        user_content = f"다음 뉴스/감성 데이터를 분석하세요:\n\n{tool_result[:6000]}"
         if guardrail:
             user_content = f"{guardrail}\n\n{user_content}"
         prompt = [
