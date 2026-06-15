@@ -624,7 +624,10 @@ class MementoAgent:
             {"role": "user", "content": f"Query: {user_task}\n\nFindings:\n{all_findings}"},
         ]
         response = await self._call_llm(prompt, model=GLOBAL_REFLECTOR_MODEL, max_tokens=4096)
-        return _parse_llm_json(response) or {"approved": True}
+        critique = _parse_llm_json(response) or {"approved": True}
+        if not critique.get("approved") and critique.get("critique"):
+            print(f"   💡 Critique: {critique['critique']}")
+        return critique
 
     async def _call_global_planner_defense(self, user_task: str, critique: Dict[str, Any], all_findings: str, tool_descriptions: str = "") -> Dict[str, Any]:
         print("\n🛡️ [Global Planner] Responding to critique...")
@@ -633,7 +636,10 @@ class MementoAgent:
             {"role": "user", "content": f"Query: {user_task}\n\nCritique: {critique.get('critique', '')}"},
         ]
         response = await self._call_llm(prompt, model=GLOBAL_PLANNER_MODEL)
-        return _parse_llm_json(response) or {"new_subtasks": []}
+        defense = _parse_llm_json(response) or {"new_subtasks": []}
+        if defense.get("defense"):
+            print(f"   🛡️ Defense: {defense['defense']}")
+        return defense
 
     async def _call_judge(self, user_task: str, critique: Dict[str, Any], defense: Dict[str, Any], tool_descriptions: str = "") -> Dict[str, Any]:
         print("\n⚖️ [Judge] Evaluating...")
