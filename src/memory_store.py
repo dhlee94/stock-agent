@@ -83,6 +83,10 @@ class MemoryStore:
 
     REWRITE_SIMILARITY_THRESHOLD = 0.92
     REWRITE_MIN_IMPROVEMENT = 0.1
+    # Floor for retrieval: below this cosine similarity a past trajectory is more
+    # noise than signal, so it is NOT injected as a "past successful plan". Without
+    # this, top_k always returns up to 3 rows regardless of relevance. Tunable.
+    MIN_RETRIEVE_SIMILARITY = 0.5
 
     def save_trajectory(self, task: str, plan: str, result: str, feedback_score: float, lessons: List[str] = None):
         """Save task trajectory to episodic memory.
@@ -151,7 +155,9 @@ class MemoryStore:
                 traj_emb = np.array(json.loads(row['embedding_json']))
                 if traj_emb.shape != query_embedding.shape: continue
                 similarity = np.dot(query_embedding, traj_emb) / (np.linalg.norm(query_embedding) * np.linalg.norm(traj_emb) + 1e-9)
-                results.append({"task": row['task'], "plan": row['plan_json'], "result": row['result'], "score": row['score'], 
+                if similarity < self.MIN_RETRIEVE_SIMILARITY:
+                    continue
+                results.append({"task": row['task'], "plan": row['plan_json'], "result": row['result'], "score": row['score'],
                                 "lessons": json.loads(row['lessons_json']), "combined_score": 0.7 * similarity + 0.3 * row['score']})
             results.sort(key=lambda x: x['combined_score'], reverse=True)
             return results[:top_k]

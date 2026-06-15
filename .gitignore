@@ -58,6 +58,9 @@ driver_memory.json
 
 # Data Directory
 data/*.db
+data/*.db-wal
+data/*.db-shm
+data/*.db.bak*
 data/driver_memory.json
 data/procedural_memory.json
 data/kr_listing.csv

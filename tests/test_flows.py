@@ -110,7 +110,10 @@ for _k in ("GEMINI_API_KEY", "GOOGLE_API_KEY", "OPENAI_API_KEY",
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
 import config  # noqa: E402  (real module — keeps this test in sync with product)
 import agent_client  # noqa: E402
-from agent_client import MementoAgent  # noqa: E402
+from agent_client import (  # noqa: E402
+    MementoAgent, _findings_usable, _build_trajectory_meta,
+    _is_retryable_error, _parse_llm_json,
+)
 
 # ---------------------------------------------------------------------------
 # Data fixtures
@@ -229,7 +232,7 @@ class TestRunFlowSingle:
         agent._call_global_reflector = AsyncMock(return_value={"approved": True})
         agent._call_summarizer = AsyncMock(return_value="삼성전자 최종 분석: 보유 추천")
 
-        result = await agent._run_flow(
+        result, _meta = await agent._run_flow(
             user_task="삼성전자 어때?",
             global_plan=SINGLE_PLAN,
             session=session,
@@ -289,7 +292,7 @@ class TestRunFlowDomain:
         agent._call_global_reflector = AsyncMock(return_value={"approved": True})
         agent._call_summarizer = AsyncMock(return_value="바이오 섹터 최종 요약")
 
-        result = await agent._run_flow(
+        result, _meta = await agent._run_flow(
             user_task="바이오주 전망 어때?",
             global_plan=DOMAIN_PLAN,
             session=session,
@@ -329,7 +332,7 @@ class TestRunFlowDomain:
         })
         agent._call_summarizer = AsyncMock(return_value="최종 요약 (planner wins)")
 
-        result = await agent._run_flow(
+        result, _meta = await agent._run_flow(
             user_task="바이오주 전망 어때?",
             global_plan=DOMAIN_PLAN,
             session=session,
@@ -370,7 +373,7 @@ class TestRunFlowDomain:
         })
         agent._call_summarizer = AsyncMock(return_value="CMO 포함 최종 요약")
 
-        result = await agent._run_flow(
+        result, _meta = await agent._run_flow(
             user_task="바이오주 전망 어때?",
             global_plan=DOMAIN_PLAN,
             session=session,
@@ -503,3 +506,159 @@ class TestRunFlowToolCache:
         findings = agent._call_summarizer.call_args[0][1]
         assert findings.count("[원본 수치] {") == 1            # raw digest embedded once
         assert findings.count("이미 제시됨") == 2              # other two are references
+
+
+# ---------------------------------------------------------------------------
+# Episodic-trajectory metadata — the fix for the dead learning loop (A)
+# ---------------------------------------------------------------------------
+
+class TestTrajectoryMeta:
+    def test_findings_usable(self):
+        assert _findings_usable("\n### 가격\n현재가 70000원\n") is True
+        assert _findings_usable("\n### 뉴스: Failed - timeout\n") is False
+        # mixed: one failed section, one good → usable
+        assert _findings_usable("\n### 가격: Failed - x\n\n### 재무\nPER 12\n") is True
+        assert _findings_usable("") is False
+        assert _findings_usable("   ") is False
+
+    def test_score_varies_by_outcome(self):
+        fbf = {"가격": "### 가격\n70000"}
+        vbf = {"가격": True}
+        scores = {
+            o: _build_trajectory_meta(o, {}, fbf, vbf, {})["score"]
+            for o in ("approved_early", "approved_late", "judge_planner", "maxed")
+        }
+        # Must differ — a constant score is what froze the overwrite gate.
+        assert len(set(scores.values())) == 4
+        assert scores["approved_early"] > scores["maxed"]
+
+    def test_plan_prunes_dead_focuses(self):
+        fbf = {
+            "가격": "### 가격\n70000",
+            "뉴스": "### 뉴스: Failed - x",   # failed → drop
+            "재무": "### 재무\nPER 12",
+            "빈것": "",                        # empty → drop
+        }
+        vbf = {"가격": True, "뉴스": False, "재무": True, "빈것": True}
+        meta = _build_trajectory_meta("approved_early", {}, fbf, vbf, {})
+        kept = json.loads(meta["plan"])
+        assert kept == ["가격", "재무"]
+
+    def test_lessons_only_on_unapproved_with_gaps(self):
+        fbf = {"가격": "### 가격\n70000"}
+        vbf = {"가격": True}
+        crit = {"missing_coverage": ["CMO 분석"], "weak_points": ["밸류 근거 약함"]}
+        assert _build_trajectory_meta("approved_early", crit, fbf, vbf, {})["lessons"] == []
+        maxed = _build_trajectory_meta("maxed", crit, fbf, vbf, {})["lessons"]
+        assert any("CMO" in l for l in maxed)
+        assert all(l.startswith("보완 필요:") for l in maxed)
+
+
+# ---------------------------------------------------------------------------
+# LLM-call robustness — retry/backoff (B), atomic rate limit (C), parse (D)
+# ---------------------------------------------------------------------------
+
+class TestRetryableError:
+    def test_status_codes(self):
+        e = type("E", (Exception,), {})()
+        e.status_code = 429
+        assert _is_retryable_error(e) is True
+        e.status_code = 400
+        assert _is_retryable_error(e) is False
+
+    def test_by_class_name(self):
+        assert _is_retryable_error(type("RateLimitError", (Exception,), {})())
+        assert _is_retryable_error(type("APITimeoutError", (Exception,), {})())
+        assert not _is_retryable_error(type("AuthenticationError", (Exception,), {})("bad key"))
+
+    def test_by_message(self):
+        assert _is_retryable_error(Exception("Error code: 503 temporarily unavailable"))
+        assert not _is_retryable_error(Exception("invalid api key"))
+
+
+class TestParseLlmJson:
+    def test_plain(self):
+        assert _parse_llm_json('{"approved": true}') == {"approved": True}
+
+    def test_with_prose_and_fences(self):
+        txt = 'Here:\n```json\n{"valid": false, "issues": ["x"]}\n```\nDone.'
+        assert _parse_llm_json(txt) == {"valid": False, "issues": ["x"]}
+
+    def test_unparseable_returns_none(self):
+        assert _parse_llm_json("no json here") is None
+        assert _parse_llm_json("") is None
+        assert _parse_llm_json("{broken: ,}") is None
+
+
+class TestCallLlmRetry:
+    @pytest.mark.asyncio
+    async def test_retries_transient_then_succeeds(self, monkeypatch):
+        agent = _make_agent()
+        monkeypatch.setattr(agent_client, "MOCK_MODE", False)
+        monkeypatch.setattr(agent_client, "_MIN_WAIT", {"groq": 0})
+
+        calls = {"n": 0}
+
+        def _create(**kw):
+            calls["n"] += 1
+            if calls["n"] == 1:
+                raise type("RateLimitError", (Exception,), {})("429 rate limit")
+            resp = MagicMock()
+            resp.choices = [MagicMock(message=MagicMock(content="OK"))]
+            return resp
+
+        fake = MagicMock()
+        fake.chat.completions.create = _create
+        monkeypatch.setitem(agent_client._provider_clients, "groq", fake)
+
+        with patch("agent_client.asyncio.sleep", AsyncMock()):
+            out = await agent._call_llm([{"role": "user", "content": "hi"}], model="llama-3.1")
+
+        assert out == "OK"
+        assert calls["n"] == 2          # one retry happened
+
+    @pytest.mark.asyncio
+    async def test_non_retryable_raises_immediately(self, monkeypatch):
+        agent = _make_agent()
+        monkeypatch.setattr(agent_client, "MOCK_MODE", False)
+        monkeypatch.setattr(agent_client, "_MIN_WAIT", {"groq": 0})
+
+        calls = {"n": 0}
+
+        def _create(**kw):
+            calls["n"] += 1
+            raise type("AuthenticationError", (Exception,), {})("invalid api key")
+
+        fake = MagicMock()
+        fake.chat.completions.create = _create
+        monkeypatch.setitem(agent_client._provider_clients, "groq", fake)
+
+        with patch("agent_client.asyncio.sleep", AsyncMock()):
+            with pytest.raises(Exception):
+                await agent._call_llm([{"role": "user", "content": "hi"}], model="llama-3.1")
+
+        assert calls["n"] == 1          # no retry on auth error
+
+
+class TestRateLimitGateAtomic:
+    @pytest.mark.asyncio
+    async def test_concurrent_calls_are_serialized_not_bursted(self, monkeypatch):
+        """The gate must stamp slots one-at-a-time. With the old non-atomic read→
+        sleep→write, concurrent coroutines all read the same stale timestamp; here
+        we assert each observes the previous one's stamp (strictly increasing)."""
+        agent = _make_agent()
+        monkeypatch.setattr(agent_client, "_MIN_WAIT", {"groq": 0})
+        agent_client._PROVIDER_LOCKS.pop("groq", None)
+        agent_client._LAST_API_CALL.pop("groq", None)
+
+        seen = []
+        orig = agent._rate_limit_gate
+
+        async def _spy(provider):
+            await orig(provider)
+            seen.append(agent_client._LAST_API_CALL[provider])
+
+        await asyncio.gather(*[_spy("groq") for _ in range(5)])
+        # Each gate pass writes a fresh monotonic stamp under the lock → no two
+        # coroutines share a timestamp (the burst bug would produce duplicates).
+        assert len(set(seen)) == len(seen)

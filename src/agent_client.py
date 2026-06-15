@@ -4,6 +4,7 @@ import sys
 import json
 import re
 import time
+import random
 from typing import List, Dict, Any, Optional
 
 # Use centralized config
@@ -42,8 +43,57 @@ from tools.stock.market_utils import NAME_TO_TICKER
 # Provider setup — initialize every provider that has an API key so
 # per-agent model overrides can freely mix providers.
 _provider_clients: dict = {}
-_LAST_API_CALL: dict = {}   # per-provider rate limiting
+_LAST_API_CALL: dict = {}   # per-provider rate limiting (monotonic timestamps)
+_PROVIDER_LOCKS: dict = {}  # per-provider asyncio.Lock — serializes the spacing gate
 _MIN_WAIT = {"groq": 0.5, "anthropic": 0.5, "gemini": 2.0, "openai": 2.0}
+_LLM_MAX_RETRIES = int(os.environ.get("LLM_MAX_RETRIES", "3"))
+
+
+def _provider_lock(provider: str) -> "asyncio.Lock":
+    """Lazily create a per-provider lock. The get-then-set has no await, so it is
+    atomic under asyncio's single-threaded scheduling."""
+    lock = _PROVIDER_LOCKS.get(provider)
+    if lock is None:
+        lock = asyncio.Lock()
+        _PROVIDER_LOCKS[provider] = lock
+    return lock
+
+
+def _is_retryable_error(e: Exception) -> bool:
+    """True for transient API failures worth retrying (rate limits, 5xx, timeouts,
+    connection drops). Provider-agnostic — each SDK raises its own exception types,
+    so we sniff status codes, class names, and message text rather than isinstance."""
+    status = (getattr(e, "status_code", None) or getattr(e, "code", None)
+              or getattr(getattr(e, "response", None), "status_code", None))
+    if status in (408, 409, 429, 500, 502, 503, 504):
+        return True
+    name = type(e).__name__.lower()
+    if any(k in name for k in ("ratelimit", "timeout", "connection", "serviceunavailable",
+                               "internalserver", "overloaded", "apiconnection", "unavailable")):
+        return True
+    msg = str(e).lower()
+    return any(k in msg for k in ("rate limit", "429", "timed out", "timeout",
+                                  "temporarily unavailable", "overloaded", "503",
+                                  "502", "500", "connection reset", "connection error"))
+
+
+def _parse_llm_json(text: str) -> Optional[Dict[str, Any]]:
+    """Best-effort extraction of a JSON object from an LLM response.
+
+    Strips ```json fences, then takes the outermost {...}. Returns None when nothing
+    parses — callers decide (and flag) the fallback instead of silently treating a
+    parse failure as a real verdict, which is how the quality gates used to collapse
+    toward 'pass'."""
+    if not text:
+        return None
+    cleaned = re.sub(r"```(?:json)?", "", text)
+    m = re.search(r"\{[\s\S]*\}", cleaned)
+    if not m:
+        return None
+    try:
+        return json.loads(m.group(0))
+    except (ValueError, TypeError):
+        return None
 
 try:
     from google import genai as _gemini_genai
@@ -260,6 +310,64 @@ def _budget_findings(findings_by_focus: Dict[str, str], total_budget: int = 1800
     return "\n\n".join(parts)
 
 
+def _findings_usable(findings: str) -> bool:
+    """True if a subtask produced at least one non-failed section with content.
+
+    Findings sections are '### {reason}\\n{block}' on success and
+    '### {reason}: Failed - {err}' on failure. A focus is worth keeping in the
+    stored trajectory plan only if some section actually yielded data — this is the
+    deterministic prune signal (the Local Reflector still drives the retry that
+    produces these findings, but the stored signal does not depend on its
+    parse-fragile JSON verdict).
+    """
+    if not findings or not findings.strip():
+        return False
+    for sec in findings.split("\n### "):
+        sec = sec.strip()
+        if not sec:
+            continue
+        header = sec.split("\n", 1)[0]
+        if "Failed -" not in header:
+            return True
+    return False
+
+
+# Episodic-trajectory score by how the global debate loop ended. A *varying* score
+# (not the old constant 0.8) is what lets save_trajectory's overwrite gate fire and
+# lets retrieval rank better runs higher.
+_TRAJ_SCORE_BY_OUTCOME = {
+    "approved_early":   0.9,   # Global Reflector approved on the first pass
+    "approved_late":    0.8,   # approved after ≥1 gap-filling iteration
+    "judge_planner":    0.75,  # debate: planner successfully defended the analysis
+    "no_new_subtasks":  0.6,   # reflector unhappy but nothing actionable proposed
+    "maxed":            0.5,   # hit MAX_GLOBAL_ITER still unapproved
+    "incomplete":       0.6,   # loop never ran (MAX_GLOBAL_ITER == 0)
+}
+
+
+def _build_trajectory_meta(outcome: str, critique: Dict[str, Any],
+                           findings_by_focus: Dict[str, str],
+                           valid_by_focus: Dict[str, bool],
+                           global_plan: Dict[str, Any]) -> Dict[str, Any]:
+    """Derive (plan, score, lessons) for episodic memory from one run's outcome.
+
+    - plan:    only focuses that produced usable output (prune dead/​tangential-failed
+               subtasks so they aren't replayed as a "successful plan").
+    - score:   from how the global debate ended — see _TRAJ_SCORE_BY_OUTCOME.
+    - lessons: when the run ended unapproved with concrete gaps, store them so the
+               next similar query's planner covers them proactively.
+    """
+    score = _TRAJ_SCORE_BY_OUTCOME.get(outcome, 0.6)
+    kept = [f for f, fnd in findings_by_focus.items()
+            if valid_by_focus.get(f, True) and (fnd or "").strip()]
+    plan = json.dumps(kept, ensure_ascii=False)
+    lessons: List[str] = []
+    if outcome in ("maxed", "no_new_subtasks"):
+        gaps = (critique.get("missing_coverage") or []) + (critique.get("weak_points") or [])
+        lessons = [f"보완 필요: {g}" for g in gaps if g][:5]
+    return {"plan": plan, "score": score, "lessons": lessons}
+
+
 def _market_consistency_anchor(ticker: str) -> str:
     """Deterministic GROUND-TRUTH block that defuses the 'fetched data must be wrong'
     hallucination — e.g. the Reflector insisting NFLX is ~$1,000/~430M shares and
@@ -276,7 +384,8 @@ def _market_consistency_anchor(ticker: str) -> str:
     try:
         import yfinance as yf
         from datetime import datetime
-        info = yf.Ticker(ticker).info
+        tk = yf.Ticker(ticker)
+        info = tk.info
         price = info.get("currentPrice") or info.get("regularMarketPrice")
         shares = info.get("sharesOutstanding")
         mktcap = info.get("marketCap")
@@ -302,7 +411,7 @@ def _market_consistency_anchor(ticker: str) -> str:
             lines.append(f"- 52-week range ${lo:,.2f}–${hi:,.2f}; current price ${price:,.2f} is {note}.")
         try:
             cutoff = datetime.now().year - 3
-            sp = yf.Ticker(ticker).splits
+            sp = tk.splits
             recent = [(d.strftime("%Y-%m-%d"), float(r)) for d, r in sp.items() if d.year >= cutoff]
             if recent:
                 s = ", ".join(f"{d} {r:.0f}:1" for d, r in recent)
@@ -331,6 +440,7 @@ class MementoAgent:
         self._mcp_exit_stack = None
         self._mcp_tools_desc = ""
         self._mcp_lock = None  # lazy: 이벤트 루프 없이 __init__에서 생성 불가
+        self._bg_tasks: set = set()  # strong refs for fire-and-forget background tasks
         
         if MOCK_MODE:
             print(f"[Agent] Running in MOCK mode (no API key for {LLM_PROVIDER}).")
@@ -408,85 +518,117 @@ class MementoAgent:
                 f"(model='{effective_model}'). Add the key to .env."
             )
 
-        # Per-provider rate limiting
-        min_wait = _MIN_WAIT.get(provider, 2.0)
-        elapsed = time.time() - _LAST_API_CALL.get(provider, 0)
-        if elapsed < min_wait:
-            wait_time = min_wait - elapsed
-            print(f"   ⏳ Rate limiting ({provider}): waiting {wait_time:.1f}s...")
-            await asyncio.sleep(wait_time)
-        _LAST_API_CALL[provider] = time.time()
+        loop = asyncio.get_running_loop()
 
-        loop = asyncio.get_event_loop()
-
-        if provider in ("openai", "groq"):
-            response = await loop.run_in_executor(
-                None,
-                lambda: client.chat.completions.create(
-                    model=effective_model,
-                    messages=messages,
-                    temperature=0.3,
-                    max_tokens=max_tokens,
+        # The actual provider call, isolated so the retry loop can re-invoke it.
+        async def _do_call():
+            if provider in ("openai", "groq"):
+                response = await loop.run_in_executor(
+                    None,
+                    lambda: client.chat.completions.create(
+                        model=effective_model,
+                        messages=messages,
+                        temperature=0.3,
+                        max_tokens=max_tokens,
+                    )
                 )
-            )
-            return response.choices[0].message.content
+                return response.choices[0].message.content
 
-        if provider == "anthropic":
-            system_parts = [m["content"] for m in messages if m["role"] == "system"]
-            chat_messages = [
-                {"role": m["role"], "content": m["content"]}
-                for m in messages if m["role"] in ("user", "assistant")
-            ]
-            kwargs = {
-                "model": effective_model,
-                "max_tokens": max_tokens,
-                "temperature": 0.3,
-                "messages": chat_messages,
-            }
-            if system_parts:
-                # Cache the (large, mostly-static) system prompt. Repeated agent
-                # calls within a run reuse the cached prefix at ~0.1x input cost.
-                # Prefixes shorter than the model minimum silently skip caching.
-                kwargs["system"] = [{
-                    "type": "text",
-                    "text": "\n\n".join(system_parts),
-                    "cache_control": {"type": "ephemeral"},
-                }]
-            response = await loop.run_in_executor(
-                None,
-                lambda: client.messages.create(**kwargs),
-            )
-            usage = getattr(response, "usage", None)
-            if usage and getattr(usage, "cache_read_input_tokens", 0):
-                print(f"   💾 cache hit: {usage.cache_read_input_tokens} tok "
-                      f"({effective_model})")
-            return response.content[0].text
+            if provider == "anthropic":
+                system_parts = [m["content"] for m in messages if m["role"] == "system"]
+                chat_messages = [
+                    {"role": m["role"], "content": m["content"]}
+                    for m in messages if m["role"] in ("user", "assistant")
+                ]
+                kwargs = {
+                    "model": effective_model,
+                    "max_tokens": max_tokens,
+                    "temperature": 0.3,
+                    "messages": chat_messages,
+                }
+                if system_parts:
+                    # Cache the (large, mostly-static) system prompt. Repeated agent
+                    # calls within a run reuse the cached prefix at ~0.1x input cost.
+                    # Prefixes shorter than the model minimum silently skip caching.
+                    kwargs["system"] = [{
+                        "type": "text",
+                        "text": "\n\n".join(system_parts),
+                        "cache_control": {"type": "ephemeral"},
+                    }]
+                response = await loop.run_in_executor(
+                    None,
+                    lambda: client.messages.create(**kwargs),
+                )
+                usage = getattr(response, "usage", None)
+                if usage and getattr(usage, "cache_read_input_tokens", 0):
+                    print(f"   💾 cache hit: {usage.cache_read_input_tokens} tok "
+                          f"({effective_model})")
+                return response.content[0].text
 
-        # Gemini (google-genai SDK)
-        prompt = ""
-        for msg in messages:
-            role = msg["role"]
-            content = msg["content"]
-            if role == "system":
-                prompt += f"[System Instructions]\n{content}\n\n"
-            elif role == "user":
-                prompt += f"User: {content}\n\n"
-            elif role == "assistant":
-                prompt += f"Assistant: {content}\n\n"
-        gen_kwargs = {"model": effective_model, "contents": prompt}
-        # Gemini 2.5 Flash enables "thinking" by default — unnecessary cost and
-        # latency for these throughput agents. Disable it (budget=0) where the
-        # SDK/model supports it; fall back to defaults otherwise.
-        if "2.5" in effective_model and "flash" in effective_model:
+            # Gemini (google-genai SDK)
+            prompt = ""
+            for msg in messages:
+                role = msg["role"]
+                content = msg["content"]
+                if role == "system":
+                    prompt += f"[System Instructions]\n{content}\n\n"
+                elif role == "user":
+                    prompt += f"User: {content}\n\n"
+                elif role == "assistant":
+                    prompt += f"Assistant: {content}\n\n"
+            gen_kwargs = {"model": effective_model, "contents": prompt}
+            # Gemini 2.5 Flash enables "thinking" by default — unnecessary cost and
+            # latency for these throughput agents. Disable it (budget=0) where the
+            # SDK/model supports it; fall back to defaults otherwise.
+            if "2.5" in effective_model and "flash" in effective_model:
+                try:
+                    gen_kwargs["config"] = _gemini_genai.types.GenerateContentConfig(
+                        temperature=0.3,
+                        thinking_config=_gemini_genai.types.ThinkingConfig(thinking_budget=0),
+                    )
+                except Exception:
+                    pass  # older SDK without ThinkingConfig — use defaults
+            response = await client.aio.models.generate_content(**gen_kwargs)
+            return response.text
+
+        # Retry transient API failures (429 / 5xx / timeouts) with exponential
+        # backoff + jitter. Each attempt re-passes the rate-limit gate so retries
+        # are spaced too. Non-retryable errors (auth, bad request) raise immediately.
+        last_err = None
+        for attempt in range(_LLM_MAX_RETRIES + 1):
+            await self._rate_limit_gate(provider)
             try:
-                gen_kwargs["config"] = _gemini_genai.types.GenerateContentConfig(
-                    temperature=0.3,
-                    thinking_config=_gemini_genai.types.ThinkingConfig(thinking_budget=0),
-                )
-            except Exception:
-                pass  # older SDK without ThinkingConfig — use defaults
-        response = await client.aio.models.generate_content(**gen_kwargs)
-        return response.text
+                return await _do_call()
+            except Exception as e:
+                last_err = e
+                if attempt >= _LLM_MAX_RETRIES or not _is_retryable_error(e):
+                    raise
+                backoff = min(2.0 ** attempt, 8.0) + random.uniform(0, 0.5)
+                print(f"   🔁 [{provider}] transient error "
+                      f"(attempt {attempt + 1}/{_LLM_MAX_RETRIES}): "
+                      f"{type(e).__name__}: {e} — retrying in {backoff:.1f}s")
+                await asyncio.sleep(backoff)
+        raise last_err  # defensive: loop always returns or raises above
+
+    async def _rate_limit_gate(self, provider: str):
+        """Atomic per-provider spacing gate.
+
+        The old gate read `_LAST_API_CALL`, slept, then wrote — with no mutual
+        exclusion, so N concurrent coroutines all read the same stale timestamp and
+        fired at once, defeating the limit (and risking 429s). Holding a per-provider
+        lock across the short reserve-a-slot window serializes the *scheduling*:
+        each coroutine waits until min_wait after the previous one's slot, then
+        stamps its own. The actual API call runs OUTSIDE the lock, so calls still
+        overlap in flight while their starts stay ≥ min_wait apart.
+        """
+        min_wait = _MIN_WAIT.get(provider, 2.0)
+        loop = asyncio.get_running_loop()
+        async with _provider_lock(provider):
+            wait = _LAST_API_CALL.get(provider, 0.0) + min_wait - loop.time()
+            if wait > 0:
+                print(f"   ⏳ Rate limiting ({provider}): waiting {wait:.1f}s...")
+                await asyncio.sleep(wait)
+            _LAST_API_CALL[provider] = loop.time()
 
     async def _call_global_planner(self, user_task: str) -> Dict[str, Any]:
         """
@@ -749,18 +891,17 @@ Provide your final analysis and recommendation (include Target Price, Stop-loss,
             {"role": "user", "content": f"Subtask: {focus}\n\nFindings:\n{findings[:2000]}"},
         ]
         response = await self._call_llm(prompt, model=LOCAL_REFLECTOR_MODEL)
-        try:
-            m = re.search(r"\{[\s\S]*\}", response)
-            if m:
-                result = json.loads(m.group(0))
-                valid = result.get("valid", True)
-                if not valid:
-                    print(f"   ⚠️ Invalid: {result.get('issues', [])}")
-                else:
-                    print("   ✅ Valid")
-                return result
-        except json.JSONDecodeError:
-            pass
+        result = _parse_llm_json(response)
+        if result is not None:
+            valid = result.get("valid", True)
+            if not valid:
+                print(f"   ⚠️ Invalid: {result.get('issues', [])}")
+            else:
+                print("   ✅ Valid")
+            return result
+        # Parse failure here only governs whether to retry the subtask; the stored
+        # trajectory signal is the deterministic _findings_usable, so defaulting to
+        # valid=True (no needless retry) is safe.
         return {"valid": True, "issues": []}
 
     async def _call_global_reflector(self, user_task: str, all_findings: str) -> Dict[str, Any]:
@@ -771,16 +912,26 @@ Provide your final analysis and recommendation (include Target Price, Stop-loss,
             {"role": "user", "content": f"User query: {user_task}\n\nCombined findings:\n{all_findings}"},
         ]
         response = await self._call_llm(prompt, model=GLOBAL_REFLECTOR_MODEL, max_tokens=4096)
-        try:
-            m = re.search(r"\{[\s\S]*\}", response)
-            if m:
-                result = json.loads(m.group(0))
-                approved = result.get("approved", False)
-                print(f"   {'✅ Approved' if approved else '❌ Rejected'}: {result.get('critique', '')}")
-                return result
-        except json.JSONDecodeError:
-            pass
-        return {"approved": True, "critique": "parse error — defaulting to approved", "missing_coverage": [], "weak_points": []}
+        result = _parse_llm_json(response)
+        if result is None:
+            # One reparse attempt — ask explicitly for JSON-only before giving up,
+            # so a formatting slip doesn't silently waive the quality gate.
+            retry = await self._call_llm(
+                prompt + [{"role": "user", "content": "Return ONLY the JSON object, no prose, no code fences."}],
+                model=GLOBAL_REFLECTOR_MODEL, max_tokens=4096,
+            )
+            result = _parse_llm_json(retry)
+        if result is not None:
+            approved = result.get("approved", False)
+            print(f"   {'✅ Approved' if approved else '❌ Rejected'}: {result.get('critique', '')}")
+            return result
+        # Still unparseable: let the report through (don't block the user on a critic
+        # hiccup) but flag it so the trajectory score does NOT count this as a genuine
+        # approval — otherwise a parse failure inflates the episodic-memory signal.
+        print("   ⚠️ Global Reflector unparseable — passing report through, flagged as non-verdict")
+        return {"approved": True, "_parse_failed": True,
+                "critique": "parse error — defaulting to approved (not a real verdict)",
+                "missing_coverage": [], "weak_points": []}
 
     async def _call_global_planner_defense(self, user_task: str, critique: Dict[str, Any], all_findings: str, tool_descriptions: str = "") -> Dict[str, Any]:
         """Global Planner defends its analysis and proposes new subtasks for valid critique points."""
@@ -953,7 +1104,9 @@ Provide your final analysis and recommendation (include Target Price, Stop-loss,
                 )
                 findings = await _execute_plan(plan)
 
-            return {"focus": focus, "findings": findings}
+            # Deterministic usability of the FINAL findings (post-retry), used to
+            # prune dead focuses from the stored trajectory plan.
+            return {"focus": focus, "findings": findings, "valid": _findings_usable(findings)}
 
     async def _compress_if_needed(self):
         """Background task: compress semantic memory when week/month/year rolls over."""
@@ -1024,9 +1177,12 @@ Provide your final analysis and recommendation (include Target Price, Stop-loss,
         # full picture and each iter only fills what's missing instead of replacing
         # everything with the latest narrow slice.
         findings_by_focus: Dict[str, str] = {}
+        valid_by_focus: Dict[str, bool] = {}              # per-focus usability for trajectory prune
         all_findings = ""  # defined even if MAX_GLOBAL_ITER == 0 (loop never runs)
         pending_critique: Optional[Dict[str, Any]] = None  # Reflector/Judge feedback for next iter
         prior_findings = ""                                # accumulated findings handed to next iter
+        outcome = "incomplete"          # how the debate loop ended → trajectory score
+        last_critique: Dict[str, Any] = {}  # last Global Reflector verdict → trajectory lessons
 
         for global_iter in range(MAX_GLOBAL_ITER):
             print(f"\n🌐 [Domain] Global iteration {global_iter + 1}/{MAX_GLOBAL_ITER} — {len(subtasks)} subtasks")
@@ -1042,6 +1198,7 @@ Provide your final analysis and recommendation (include Target Price, Stop-loss,
             # refreshed. Focuses not re-run this iter keep their prior findings.
             for r in results:
                 findings_by_focus[r["focus"]] = r["findings"]
+                valid_by_focus[r["focus"]] = r.get("valid", True)
 
             all_findings = "\n\n".join(
                 f"## [{focus}]\n{findings}" for focus, findings in findings_by_focus.items()
@@ -1053,13 +1210,22 @@ Provide your final analysis and recommendation (include Target Price, Stop-loss,
             critic_view = f"{anchor}\n\n{critic_findings}" if anchor else critic_findings
 
             global_critique = await self._call_global_reflector(user_task, critic_view)
+            last_critique = global_critique
 
             if global_critique.get("approved"):
-                print("   ✅ Global Reflector approved — proceeding to summary")
+                if global_critique.get("_parse_failed"):
+                    # Approved only because the verdict was unparseable — proceed, but
+                    # score it neutral so a parse failure can't fake a high-quality run.
+                    print("   ⚠️ Approval is a parse-failure default — scoring as incomplete, not a genuine pass")
+                    outcome = "incomplete"
+                else:
+                    print("   ✅ Global Reflector approved — proceeding to summary")
+                    outcome = "approved_early" if global_iter == 0 else "approved_late"
                 break
 
             if global_iter >= MAX_GLOBAL_ITER - 1:
                 print("   ⚠️ Max global iterations reached — using current findings")
+                outcome = "maxed"
                 break
 
             defense = await self._call_global_planner_defense(user_task, global_critique, critic_view, tool_descriptions)
@@ -1067,11 +1233,13 @@ Provide your final analysis and recommendation (include Target Price, Stop-loss,
 
             if judge_verdict.get("verdict") == "planner":
                 print("   ⚖️ Judge: Planner wins — proceeding to summary")
+                outcome = "judge_planner"
                 break
 
             new_subtasks = defense.get("new_subtasks", [])
             if not new_subtasks:
                 print("   ⚠️ Reflector wins but no new subtasks proposed — proceeding")
+                outcome = "no_new_subtasks"
                 break
 
             subtasks = new_subtasks
@@ -1089,7 +1257,10 @@ Provide your final analysis and recommendation (include Target Price, Stop-loss,
             print(f"   🔁 Reflector wins — {len(subtasks)} new subtasks queued | "
                   f"critique→planner: {len(valid_points)} gaps")
 
-        return await self._call_summarizer(user_task, all_findings)
+        summary = await self._call_summarizer(user_task, all_findings)
+        meta = _build_trajectory_meta(outcome, last_critique, findings_by_focus,
+                                      valid_by_focus, global_plan)
+        return summary, meta
 
 
     async def run_for_web(self, user_task: str) -> str:
@@ -1114,8 +1285,11 @@ Provide your final analysis and recommendation (include Target Price, Stop-loss,
         if semantic_knowledge:
             print(f"🧠 Retrieved {len(semantic_knowledge)} generalized lessons from Semantic Memory")
 
-        # 2. Memory compression (fire-and-forget background task)
-        asyncio.create_task(self._compress_if_needed())
+        # 2. Memory compression (background task). Keep a strong reference so the
+        # task isn't garbage-collected mid-flight — asyncio holds only a weak ref.
+        _bg = asyncio.create_task(self._compress_if_needed())
+        self._bg_tasks.add(_bg)
+        _bg.add_done_callback(self._bg_tasks.discard)
 
         # 3. MCP 세션 획득 (싱글톤 — Moirai 콜드 스타트 최초 1회)
         try:
@@ -1128,11 +1302,13 @@ Provide your final analysis and recommendation (include Target Price, Stop-loss,
             global_plan = await self._call_global_planner(user_task)
 
             # 5. Fan-out flow: 1 subtask for single queries, N for domain
-            saved_result = await self._run_flow(
+            saved_result, meta = await self._run_flow(
                 user_task, global_plan, session, tool_descriptions,
                 context_examples, semantic_knowledge,
             )
-            self.memory.save_trajectory(user_task, "", saved_result, 0.8, [])
+            self.memory.save_trajectory(
+                user_task, meta["plan"], saved_result, meta["score"], meta["lessons"]
+            )
             return saved_result
 
         except asyncio.CancelledError:
