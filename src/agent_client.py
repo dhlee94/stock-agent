@@ -627,11 +627,28 @@ class MementoAgent:
         ]
         return await self._call_llm(prompt, model=TECHNICAL_ANALYST_MODEL)
 
-    async def _call_summarizer(self, user_task: str, all_findings: str) -> str:
+    async def _call_summarizer(self, user_task: str, all_findings: str, unresolved_points: Optional[List[str]] = None) -> str:
         print("\n📊 [Summarizer] Generating final report...")
+        user_content = f"Task: {user_task}\n\nFindings:\n{all_findings}"
+        if unresolved_points:
+            # De-dup while preserving order, then hand the analyst the open gaps
+            # so the report states them as limitations instead of overstating
+            # conviction. These are points the loop could not resolve.
+            seen, gaps = set(), []
+            for p in unresolved_points:
+                if p and p not in seen:
+                    seen.add(p); gaps.append(p)
+            if gaps:
+                gap_text = "\n".join(f"- {g}" for g in gaps)
+                user_content += (
+                    "\n\n[UNRESOLVED GAPS — could not be filled despite refinement attempts]\n"
+                    f"{gap_text}\n"
+                    "Acknowledge these explicitly in [투자의견] as limitations that lower "
+                    "conviction. Do NOT fabricate data to cover them, and do NOT silently omit them."
+                )
         prompt = [
             {"role": "system", "content": load_prompt("summarizer/system")},
-            {"role": "user", "content": f"Task: {user_task}\n\nFindings:\n{all_findings}"}
+            {"role": "user", "content": user_content}
         ]
         return await self._call_llm(prompt, model=SUMMARIZER_MODEL, max_tokens=8192)
 
@@ -757,11 +774,46 @@ class MementoAgent:
         pending_critique: Optional[Dict[str, Any]] = None
         pending_findings: str = ""
 
+        # OUT-edge of the loop. The Reflector re-judges from scratch each round,
+        # so on its own a refinement that adds nothing would just be re-rejected
+        # and re-spawned — the "identical results across runs" failure. We track
+        # which focuses have already produced usable data (seen_valid_focuses),
+        # drop re-proposed work, and stop the moment a refinement round yields no
+        # NEW usable data. Whatever the Reflector flagged but we could not resolve
+        # is recorded in unresolved_points and reported honestly by the Summarizer
+        # rather than silently repeated or papered over.
+        seen_valid_focuses: set = {f for f, ok in valid_by_focus.items() if ok}
+        unresolved_points: List[str] = []
+        conceded_last_round: List[str] = []
+
+        def _critique_points(c: Dict[str, Any]) -> List[str]:
+            return (c.get("weak_points") or []) + (c.get("missing_coverage") or [])
+
         for global_iter in range(MAX_GLOBAL_ITER):
+            if global_iter > 0:
+                # Drop refinement subtasks that merely re-propose work whose focus
+                # already yielded usable data — that is the duplicate-block churn.
+                subtasks = [st for st in subtasks
+                            if st.get("focus") not in seen_valid_focuses]
+                if not subtasks:
+                    unresolved_points.extend(conceded_last_round)
+                    outcome = "no_new_subtasks"
+                    break
+
             results = await asyncio.gather(*[self._run_subtask(st, session, tool_descriptions, semaphore, user_task, global_plan, critique=pending_critique, previous_findings=pending_findings, tool_cache=tool_cache) for st in subtasks])
             for r in results:
                 findings_by_focus[r["focus"]] = r["findings"]
                 valid_by_focus[r["focus"]] = r.get("valid", True)
+
+            new_valid = {r["focus"] for r in results if r.get("valid", True)} - seen_valid_focuses
+            if global_iter > 0 and not new_valid:
+                # Refinement produced no new usable data — stop spinning and flag
+                # what this round was supposed to fix as unresolved.
+                unresolved_points.extend(conceded_last_round)
+                outcome = "no_progress"
+                all_findings = _assemble_findings()
+                break
+            seen_valid_focuses |= new_valid
 
             all_findings = _assemble_findings()
             global_critique = await self._call_global_reflector(user_task, all_findings, market_facts)
@@ -769,16 +821,19 @@ class MementoAgent:
                 outcome = "approved_early" if global_iter == 0 else "approved_late"
                 break
             if global_iter >= MAX_GLOBAL_ITER - 1:
+                unresolved_points.extend(_critique_points(global_critique))
                 outcome = "maxed"
                 break
             defense = await self._call_global_planner_defense(user_task, global_critique, all_findings, tool_descriptions)
             subtasks = defense.get("new_subtasks", [])
-            if not subtasks: break
+            conceded_last_round = defense.get("concede") or _critique_points(global_critique)
+            if not subtasks:
+                break
             # Hand this round's critique + findings to next round's planners.
             pending_critique = global_critique
             pending_findings = all_findings
 
-        summary = await self._call_summarizer(user_task, all_findings)
+        summary = await self._call_summarizer(user_task, all_findings, unresolved_points)
         return summary, {"plan": json.dumps(list(findings_by_focus.keys())), "score": 0.8, "lessons": []}
 
     async def run_for_web(self, user_task: str) -> str:
