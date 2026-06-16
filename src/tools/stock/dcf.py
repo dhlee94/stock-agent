@@ -109,6 +109,30 @@ def get_dcf(ticker: str, market: str = "KR",
                 {"ticker": ticker, "shares_outstanding": shares, "current_price": price},
             )
 
+        # Share-count integrity check. marketCap and price are the two most
+        # reliably-quoted fields, and marketCap / price is definitionally the
+        # share count; sharesOutstanding is the field most prone to unit/stale
+        # glitches. When sharesOutstanding diverges materially from marketCap /
+        # price, trust the latter and flag it — an unflagged share-count error
+        # corrupts every per-share output (intrinsic value, buy-below price).
+        # NOTE: this only catches a *lone* corrupt share count. If price and
+        # shares are both off by the same factor they cancel in marketCap and
+        # pass this check; that class is caught instead by the 52-week-range
+        # sanity check in _market_consistency_anchor (agent_client.py).
+        shares_note = None
+        mktcap = info.get("marketCap")
+        if mktcap and price:
+            implied_shares = mktcap / price
+            if abs(shares - implied_shares) > 0.05 * implied_shares:
+                shares_note = (
+                    f"발행주식수 정합성 경고: 보고된 sharesOutstanding {shares:,.0f}이 "
+                    f"marketCap/price로 역산한 {implied_shares:,.0f}와 "
+                    f"{abs(shares - implied_shares) / implied_shares:.0%} 괴리. "
+                    f"시가총액 기준값으로 대체함."
+                )
+                print(f"   🔧 [DCF] {shares_note}")
+                shares = implied_shares
+
         beta = info.get("beta")
         beta_used = beta if (beta and beta > 0) else 1.0
         net_debt = (info.get("totalDebt") or 0) - (info.get("totalCash") or 0)
@@ -246,6 +270,7 @@ def get_dcf(ticker: str, market: str = "KR",
                 "projection_years": projection_years,
                 "net_debt": net_debt,
                 "shares_outstanding": shares,
+                "shares_note": shares_note,
             },
             "method": ("Lightweight two-stage FCFF DCF: stage-1 growth held for "
                        "high_growth_years, then faded linearly to terminal growth over the "

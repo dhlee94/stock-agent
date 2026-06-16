@@ -312,12 +312,33 @@ def _market_consistency_anchor(ticker: str) -> str:
         lines = [ f"[VERIFIED MARKET FACTS — {ticker}]" ]
         if consistent:
             lines.append(f"- Price ${price:,.2f} × shares {shares/1e9:.3f}B = ${implied/1e9:.1f}B ≈ market cap ${mktcap/1e9:.1f}B")
+        else:
+            lines.append(f"- ⚠️ INCONSISTENT: price ${price:,.2f} × shares {shares/1e9:.3f}B = ${implied/1e9:.1f}B "
+                         f"≠ reported market cap ${mktcap/1e9:.1f}B. One of these figures is corrupt — "
+                         f"flag any per-share valuation built on them as unreliable.")
         lo, hi = info.get("fiftyTwoWeekLow"), info.get("fiftyTwoWeekHigh")
         if lo and hi:
             lines.append(f"- 52-week range ${lo:,.2f}–${hi:,.2f}; current price ${price:,.2f}")
+            if price < lo or price > hi:
+                lines.append(f"- ⚠️ INCONSISTENT: current price ${price:,.2f} falls outside its own "
+                             f"52-week range ${lo:,.2f}–${hi:,.2f} — the price feed is likely corrupt "
+                             f"(stale, split-adjusted mismatch, or wrong listing).")
         return "\n".join(lines)
     except Exception:
         return ""
+
+
+def _ticker_from_subject(subject: str) -> str:
+    """Extract a ticker from a global-plan subject like '넷플릭스 (NFLX)' or '삼성전자 (005930.KS)'."""
+    if not subject:
+        return ""
+    m = _KR_TICKER_RE.search(subject)
+    if m:
+        return f"{m.group(1)}.{m.group(2)}"
+    m = _US_TICKER_RE.search(subject)
+    if m:
+        return m.group(1)
+    return ""
 
 
 class MementoAgent:
@@ -509,15 +530,21 @@ class MementoAgent:
 
         critique_context = ""
         if critique:
-            issues = critique.get("logical_issues") or []
-            missing = critique.get("missing_data") or []
+            # Keys must match the Global Reflector's output schema
+            # (global_reflector/system.md): weak_points / missing_coverage.
+            # Fall back to the prose critique so a point is never silently lost.
+            issues = critique.get("weak_points") or []
+            missing = critique.get("missing_coverage") or []
+            if not issues and not missing and critique.get("critique"):
+                issues = [critique["critique"]]
             prior = (previous_findings or "").strip()
             if len(prior) > 18000:
                 prior = prior[:18000] + "..."
+            _bullets = lambda xs: "\n".join(f"- {x}" for x in xs) if xs else "none"
             critique_context = load_prompt(
                 "planner/critique_context",
-                issues=issues if issues else "none",
-                missing=missing if missing else "none",
+                issues=_bullets(issues),
+                missing=_bullets(missing),
                 suggested="none",
                 prior=prior if prior else "none",
             )
@@ -617,11 +644,14 @@ class MementoAgent:
         response = await self._call_llm(prompt, model=LOCAL_REFLECTOR_MODEL)
         return _parse_llm_json(response) or {"valid": True}
 
-    async def _call_global_reflector(self, user_task: str, all_findings: str) -> Dict[str, Any]:
+    async def _call_global_reflector(self, user_task: str, all_findings: str, market_facts: str = "") -> Dict[str, Any]:
         print("\n🔍 [Global Reflector] Critiquing...")
+        user_content = f"Query: {user_task}\n\nFindings:\n{all_findings}"
+        if market_facts:
+            user_content = f"{market_facts}\n\n{user_content}"
         prompt = [
             {"role": "system", "content": load_prompt("global_reflector/system")},
-            {"role": "user", "content": f"Query: {user_task}\n\nFindings:\n{all_findings}"},
+            {"role": "user", "content": user_content},
         ]
         response = await self._call_llm(prompt, model=GLOBAL_REFLECTOR_MODEL, max_tokens=4096)
         critique = _parse_llm_json(response) or {"approved": True}
@@ -700,14 +730,41 @@ class MementoAgent:
         valid_by_focus: Dict[str, bool] = {}
         outcome = "incomplete"
 
+        # Deterministic market-fact anchor: price × shares ≈ market cap, 52-week
+        # range. Fed to the Reflector as authoritative ground truth so it can flag
+        # internal inconsistencies (e.g. a corrupt share count) instead of relying
+        # on stale prior knowledge it is otherwise told to distrust.
+        ticker = _ticker_from_subject(global_plan.get("subject", ""))
+        market_facts = _market_consistency_anchor(ticker) if ticker else ""
+
+        def _assemble_findings() -> str:
+            blocks = []
+            for focus, f in findings_by_focus.items():
+                if valid_by_focus.get(focus, True):
+                    blocks.append(f"## [{focus}]\n{f}")
+                else:
+                    # Surface empty/failed blocks as explicit coverage gaps rather
+                    # than letting a zero-data subtask read as a neutral signal.
+                    blocks.append(f"## [{focus}] ⚠️ INCOMPLETE — no usable data retrieved; "
+                                  f"treat as a coverage gap that weakens conviction, "
+                                  f"not as a neutral/negative finding\n{f}")
+            return "\n\n".join(blocks)
+
+        # Carry the prior round's critique + accumulated findings into the next
+        # round's subtask planners. On iter 0 these are empty (fresh analysis);
+        # from iter 1 on, the planner sees what was wrong and what was already
+        # collected so it closes the gap instead of re-deriving from scratch.
+        pending_critique: Optional[Dict[str, Any]] = None
+        pending_findings: str = ""
+
         for global_iter in range(MAX_GLOBAL_ITER):
-            results = await asyncio.gather(*[self._run_subtask(st, session, tool_descriptions, semaphore, user_task, global_plan, tool_cache=tool_cache) for st in subtasks])
+            results = await asyncio.gather(*[self._run_subtask(st, session, tool_descriptions, semaphore, user_task, global_plan, critique=pending_critique, previous_findings=pending_findings, tool_cache=tool_cache) for st in subtasks])
             for r in results:
                 findings_by_focus[r["focus"]] = r["findings"]
                 valid_by_focus[r["focus"]] = r.get("valid", True)
 
-            all_findings = "\n\n".join(f"## [{focus}]\n{f}" for focus, f in findings_by_focus.items())
-            global_critique = await self._call_global_reflector(user_task, all_findings)
+            all_findings = _assemble_findings()
+            global_critique = await self._call_global_reflector(user_task, all_findings, market_facts)
             if global_critique.get("approved"):
                 outcome = "approved_early" if global_iter == 0 else "approved_late"
                 break
@@ -717,6 +774,9 @@ class MementoAgent:
             defense = await self._call_global_planner_defense(user_task, global_critique, all_findings, tool_descriptions)
             subtasks = defense.get("new_subtasks", [])
             if not subtasks: break
+            # Hand this round's critique + findings to next round's planners.
+            pending_critique = global_critique
+            pending_findings = all_findings
 
         summary = await self._call_summarizer(user_task, all_findings)
         return summary, {"plan": json.dumps(list(findings_by_focus.keys())), "score": 0.8, "lessons": []}
