@@ -95,11 +95,18 @@ def stock_dcf(ticker: str, market: str = "KR", margin_of_safety: float = 0.25,
               growth_override: float = None) -> str:
     """
     Estimate intrinsic value per share via a lightweight two-stage DCF.
+
+    By default the base case anchors to revenue growth when the FCF-history CAGR
+    diverges high, and the output is a hedged range (see growth_consistency).
+    Pass growth_override to force a specific, justified stage-1 rate — e.g. when
+    you have a thesis-driven growth estimate, set growth_override=0.17 for 17%.
+
     Args:
         ticker: Stock ticker
         market: "KR" or "US"
         margin_of_safety: haircut on base intrinsic value
-        growth_override: optional stage-1 annual growth
+        growth_override: explicit stage-1 annual growth as a decimal (0.17 = 17%);
+            omit to use the model's revenue/FCF-derived rate
     """
     return get_dcf(ticker, market=market, margin_of_safety=margin_of_safety,
                    growth_override=growth_override)
@@ -203,16 +210,20 @@ def calculate_risk(ticker: str, market: str = "KR") -> str:
     """
     import json
     from risk_manager import calculate_risk_levels
+    from tools.stock import detect_market
 
     try:
+        # Route by the ticker's actual shape — a US ticker left at the default
+        # market="KR" otherwise lands in the Korean price path and returns NaN.
+        market = detect_market(ticker, market)
         price_data = json.loads(get_stock_price(ticker, market))
         if price_data.get("status") == "error":
-            return json.dumps({"error": f"Failed to get price: {price_data.get('error')}"})
+            return json.dumps({"error": f"Failed to get price: {price_data.get('message') or price_data.get('error')}"})
         current_price = price_data.get("current_price", 0)
 
         tech_data = json.loads(technical_analysis(ticker))
         if tech_data.get("status") == "error":
-            return json.dumps({"error": f"Failed to get technical data: {tech_data.get('error')}"})
+            return json.dumps({"error": f"Failed to get technical data: {tech_data.get('message') or tech_data.get('error')}"})
 
         # AI prediction consult removed to keep codebase light
         result = calculate_risk_levels(current_price, tech_data, None)

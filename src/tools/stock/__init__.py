@@ -1,4 +1,4 @@
-from .price import get_stock_price
+from .price import get_stock_price, detect_market
 from .chart import get_stock_chart
 from .financials import get_financials
 from .dcf import get_dcf
@@ -11,6 +11,7 @@ from .peer_analysis import analyze_peer_group
 
 __all__ = [
     'get_stock_price',
+    'detect_market',
     'get_stock_chart',
     'get_financials',
     'get_dcf',

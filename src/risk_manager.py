@@ -2,6 +2,7 @@
 Risk Manager - Calculate Target Price, Stop-loss, and Risk/Reward Ratio
 """
 import json
+import math
 from typing import Dict, Any, Optional
 
 
@@ -23,9 +24,14 @@ def calculate_risk_levels(
     Returns:
         dict with target_price, stop_loss, risk_reward_ratio, and reasoning
     """
-    if current_price <= 0:
-        return {"error": "Invalid current price"}
-    
+    # A NaN price (e.g. a US ticker mis-routed through the KR price path) sails
+    # through every comparison below and silently yields NaN risk levels — the
+    # "calculate_risk returned NaN" symptom. Reject it up front with an
+    # actionable message instead of emitting NaN.
+    if current_price is None or not math.isfinite(current_price) or current_price <= 0:
+        return {"error": f"Invalid current price: {current_price!r}. "
+                         "Check the ticker and market (US tickers must not use the KR price path)."}
+
     # Extract Bollinger Bands for support/resistance
     bollinger = technical_data.get('indicators', {}).get('bollinger_bands', {})
     upper_band = bollinger.get('upper', current_price * 1.1)  # Default: +10%
@@ -83,6 +89,12 @@ def calculate_risk_levels(
     else:
         entry_rating = "POOR"
     
+    # Defensive: if any level came through non-finite (a corrupt band value),
+    # fail loudly rather than returning NaN to the analyst.
+    if not all(math.isfinite(x) for x in (target_price, stop_loss, risk_reward_ratio)):
+        return {"error": "Computed risk levels are non-finite (corrupt technical data); "
+                         "cannot produce a reliable target/stop."}
+
     # Calculate percentages
     target_pct = round((target_price / current_price - 1) * 100, 2)
     stop_pct = round((stop_loss / current_price - 1) * 100, 2)

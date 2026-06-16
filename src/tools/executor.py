@@ -2,6 +2,8 @@
 Code Tool - Python code execution in sandboxed environment
 """
 import builtins as _builtins
+import contextlib
+import io
 import math
 import numpy as np
 
@@ -65,16 +67,39 @@ def execute_python(code: str) -> str:
             "numpy": np,
         }
 
-        exec(code, globals_scope, local_scope)
-        
-        # Filter local_scope to only include JSON serializable types for the response
+        # Capture stdout — without this the agent's print() output goes to the
+        # server console and the tool returns an empty result, which the agent
+        # reads as a silent failure (the actual symptom: "run_python failed every
+        # time"). The printed text is usually the whole point of the call.
+        stdout_buf = io.StringIO()
+        with contextlib.redirect_stdout(stdout_buf):
+            exec(code, globals_scope, local_scope)
+        stdout = stdout_buf.getvalue()
+
+        # Filter local_scope to JSON-serializable types for the response. numpy
+        # scalars (np.float64 etc.) are the common result type after any numeric
+        # work and are NOT Python int/float, so they must be coerced explicitly —
+        # otherwise computed answers silently vanish from the output.
         serializable_vars = {}
         for k, v in local_scope.items():
-            if isinstance(v, (int, float, str, bool, list, dict, type(None))):
+            if k.startswith("__"):
+                continue
+            if isinstance(v, bool):
                 serializable_vars[k] = v
+            elif isinstance(v, (int, float, str, list, dict, type(None))):
+                serializable_vars[k] = v
+            elif isinstance(v, np.bool_):
+                serializable_vars[k] = bool(v)
+            elif isinstance(v, np.integer):
+                serializable_vars[k] = int(v)
+            elif isinstance(v, np.floating):
+                serializable_vars[k] = float(v)
             elif isinstance(v, np.ndarray):
                 serializable_vars[k] = v.tolist()[:10]
-        
-        return ToolResponse.success({"variables": str(serializable_vars)})
+
+        return ToolResponse.success({
+            "stdout": stdout,
+            "variables": str(serializable_vars),
+        })
     except Exception as e:
         return ToolResponse.error(str(e))

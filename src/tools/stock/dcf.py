@@ -147,11 +147,21 @@ def get_dcf(ticker: str, market: str = "KR",
         def _cap_growth(g):
             return max(0.0, min(g, 0.25))  # sane stage-1 band
 
-        # Base stage-1 rate: override > FCF CAGR > revenue/earnings > default. The
-        # rate is held for high_growth_years then faded toward terminal, so the cap
-        # can sit higher than a single-stage model would tolerate.
+        DIVERGENCE_THRESHOLD_PP = 0.05
+
+        # Base stage-1 rate selection. Prefer an explicit override; otherwise the
+        # FCF-history CAGR — UNLESS it diverges materially ABOVE revenue growth, in
+        # which case the FCF CAGR is treated as an unjustified transient swing (not
+        # a durable growth rate) and the more conservative revenue growth anchors
+        # the base case. Without this, a one-off FCF surge capped at 25% becomes the
+        # headline base case (e.g. NFLX 25% vs ~16% revenue), overstating intrinsic
+        # value; the FCF-synced figure is still surfaced as the optimistic end of
+        # the range in growth_consistency below.
         if growth_override is not None:
             base_growth, growth_source = growth_override, "override"
+        elif (fcf_cagr is not None and rev_growth is not None
+              and _cap_growth(fcf_cagr) - _cap_growth(rev_growth) > DIVERGENCE_THRESHOLD_PP):
+            base_growth, growth_source = rev_growth, "revenue growth (FCF CAGR diverged high — discounted)"
         elif fcf_cagr is not None:
             base_growth, growth_source = fcf_cagr, "FCF history CAGR"
         elif rev_growth is not None:
@@ -210,31 +220,34 @@ def get_dcf(ticker: str, market: str = "KR",
                 {"ticker": ticker, "net_debt": net_debt},
             )
 
-        # Recalculation loop / consistency guard: a base case driven by FCF-history
-        # growth can diverge sharply from revenue growth (e.g. NFLX FCF CAGR capped at
-        # 25% vs ~16% revenue). When the gap exceeds the threshold, ALSO run a
-        # conservative DCF with stage-1 growth synced to revenue growth and surface
-        # the divergence — so the optimistic figure is never reported alone, and the
-        # critic sees a hedged range instead of having to object to a single number.
-        DIVERGENCE_THRESHOLD_PP = 0.05
+        # Consistency guard: when FCF-history growth and revenue growth diverge
+        # sharply (e.g. NFLX FCF CAGR capped at 25% vs ~16% revenue), report BOTH
+        # the revenue-synced (conservative) and FCF-synced (optimistic) intrinsic
+        # values so the output is always a hedged RANGE, never a lone number. The
+        # base case is anchored to the conservative rate above; this surfaces the
+        # other end explicitly. Skipped when the caller passed an explicit override.
         growth_consistency = None
-        if rev_growth is not None and growth_source in ("FCF history CAGR", "override"):
+        if fcf_cagr is not None and rev_growth is not None and growth_override is None:
+            fcf_capped = _cap_growth(fcf_cagr)
             rev_capped = _cap_growth(rev_growth)
-            divergence = base_growth - rev_capped
+            divergence = fcf_capped - rev_capped
             if abs(divergence) > DIVERGENCE_THRESHOLD_PP:
-                cons_iv = _intrinsic(rev_capped, discount_base)
+                conservative_iv = _intrinsic(rev_capped, discount_base)
+                optimistic_iv = _intrinsic(fcf_capped, discount_base)
                 growth_consistency = {
                     "diverged": True,
-                    "fcf_cagr_pct": round(fcf_cagr * 100, 2) if fcf_cagr is not None else None,
-                    "base_growth_used_pct": round(base_growth * 100, 2),
+                    "fcf_cagr_pct": round(fcf_cagr * 100, 2),
                     "revenue_growth_pct": round(rev_growth * 100, 2),
                     "divergence_pp": round(divergence * 100, 2),
-                    "conservative_iv_revenue_synced": round(cons_iv, 2) if cons_iv is not None else None,
-                    "conservative_buy_below": (round(cons_iv * (1 - margin_of_safety), 2)
-                                               if cons_iv is not None else None),
-                    "note": ("Base growth (FCF history) exceeds revenue growth by >5pp. Treat "
-                             "intrinsic value as a RANGE between the base case and the "
-                             "revenue-synced conservative value — not the optimistic figure alone."),
+                    "base_growth_used_pct": round(base_growth * 100, 2),
+                    "base_growth_source": growth_source,
+                    "conservative_iv_revenue_synced": round(conservative_iv, 2) if conservative_iv is not None else None,
+                    "optimistic_iv_fcf_synced": round(optimistic_iv, 2) if optimistic_iv is not None else None,
+                    "conservative_buy_below": (round(conservative_iv * (1 - margin_of_safety), 2)
+                                               if conservative_iv is not None else None),
+                    "note": ("FCF-history CAGR and revenue growth diverge by >5pp. Intrinsic value "
+                             "is a RANGE between the revenue-synced (conservative) and FCF-synced "
+                             "(optimistic) values; the base case is anchored to the conservative rate."),
                 }
 
         # Margin of safety: conservative buy price = base intrinsic × (1 - MOS)

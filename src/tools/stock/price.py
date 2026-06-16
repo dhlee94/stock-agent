@@ -2,10 +2,31 @@
 Stock Price Tool - Real-time stock price retrieval
 """
 import json
+import re
 import yfinance as yf
 from datetime import datetime, timedelta
 import pytz
 from utils.response import ToolResponse
+
+
+def detect_market(ticker: str, declared: str = "KR") -> str:
+    """Infer the correct market from the ticker's shape, overriding a wrong
+    `declared` value.
+
+    `market` defaults to "KR" everywhere, so when the agent omits it for a US
+    ticker (e.g. NFLX) the request is routed into the Korean FinanceDataReader
+    path, which returns NaN/garbage prices that then propagate silently through
+    DCF and risk calculations. KR tickers are numeric, optionally suffixed
+    .KS/.KQ; anything alphabetic is a US ticker regardless of what was declared.
+    """
+    t = ticker.strip().upper()
+    base = t.split(".")[0]
+    if t.endswith(".KS") or t.endswith(".KQ") or base.isdigit():
+        return "KR"
+    if re.fullmatch(r"[A-Z][A-Z.\-]*", base):
+        return "US"
+    return declared
+
 
 def get_stock_price(ticker: str, market: str = "KR") -> str:
     """
@@ -16,8 +37,10 @@ def get_stock_price(ticker: str, market: str = "KR") -> str:
     Returns:
         Standardized JSON response
     """
-    print(f"💰 [Price] Getting price for: {ticker}")
-    
+    # Route by the ticker's actual shape, not just the (often-defaulted) market arg.
+    market = detect_market(ticker, market)
+    print(f"💰 [Price] Getting price for: {ticker} (market={market})")
+
     try:
         # Korea Market: Use FinanceDataReader
         if market == "KR":
@@ -64,12 +87,18 @@ def get_stock_price(ticker: str, market: str = "KR") -> str:
         # US Market: Use yfinance
         stock = yf.Ticker(ticker)
         info = stock.info
-        hist = stock.history(period="2d")
-        
+        # Fetch a few extra sessions: the most recent bar is often a partial/empty
+        # row with a NaN Close (today's session not yet settled). Taking .iloc[-1]
+        # blindly propagates that NaN downstream — that is the "invalid price: nan"
+        # that breaks the risk/reward calc. Drop NaN closes and use the last valid bar.
+        hist = stock.history(period="5d")
+        hist = hist.dropna(subset=['Close'])
+
         if hist.empty:
             return ToolResponse.error(f"Failed to fetch price data for {ticker}. Check ticker symbol.")
-        
-        current_price = hist['Close'].iloc[-1]
+
+        last = hist.iloc[-1]
+        current_price = last['Close']
         prev_close = hist['Close'].iloc[-2] if len(hist) > 1 else current_price
         change = current_price - prev_close
         change_pct = (change / prev_close) * 100 if prev_close != 0 else 0.0
@@ -85,9 +114,9 @@ def get_stock_price(ticker: str, market: str = "KR") -> str:
             "change": round(change, 2),
             "change_percent": round(change_pct, 2),
             "currency": currency,
-            "volume": int(hist['Volume'].iloc[-1]),
-            "day_high": round(hist['High'].iloc[-1], 2),
-            "day_low": round(hist['Low'].iloc[-1], 2),
+            "volume": int(last['Volume']),
+            "day_high": round(last['High'], 2),
+            "day_low": round(last['Low'], 2),
             "market_cap": info.get('marketCap'),
             "52_week_high": info.get('fiftyTwoWeekHigh'),
             "52_week_low": info.get('fiftyTwoWeekLow'),
