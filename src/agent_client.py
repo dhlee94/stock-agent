@@ -833,6 +833,41 @@ class MementoAgent:
             pending_critique = global_critique
             pending_findings = all_findings
 
+        # Tier 2 — integration slot. Tier-1 subtasks run in parallel and never
+        # see each other's output, so cross-cutting facts (a news catalyst that
+        # should move the growth assumption, a resistance level that bounds the
+        # upside) never reach the valuation. Here we run ONE more subtask seeded
+        # with the converged Tier-1 findings and a synthetic critique that asks
+        # for exactly that integration — reusing the critique wiring so the
+        # planner sees the prior findings and can, e.g., re-run stock_dcf with a
+        # catalyst-informed growth_override. Single-company queries only (a lone
+        # subject with a resolved ticker); sectors/comparisons have no single
+        # valuation to integrate into.
+        if ticker and len(global_plan.get("subtasks", [])) == 1:
+            synth_critique = {
+                "weak_points": [
+                    "수집된 뉴스·촉매가 밸류에이션에 정량 반영되지 않음 — 성장 전망을 "
+                    "의미있게 바꾸는 촉매가 있으면 stock_dcf를 growth_override로 재실행해 "
+                    "촉매 반영 내재가치를 산출",
+                    "기술적 저항선/지지선이 리스크·리워드 시나리오에 반영되지 않음",
+                    "센티먼트·뉴스 커버리지 공백이 컨빅션 평가에 반영되지 않음",
+                ],
+            }
+            synth_subtask = {
+                "focus": "통합 밸류에이션 및 시나리오",
+                "context": ("1단계에서 이미 수집된 데이터를 교차 통합하는 단계. 새 원자료를 "
+                            "폭넓게 재수집하지 말고, 모인 findings를 정량 종합하라."),
+                "search_hints": [],
+            }
+            synth_result = await self._run_subtask(
+                synth_subtask, session, tool_descriptions, semaphore, user_task,
+                global_plan, critique=synth_critique, previous_findings=all_findings,
+                tool_cache=tool_cache)
+            if synth_result.get("valid"):
+                findings_by_focus[synth_result["focus"]] = synth_result["findings"]
+                valid_by_focus[synth_result["focus"]] = True
+                all_findings = _assemble_findings()
+
         summary = await self._call_summarizer(user_task, all_findings, unresolved_points)
         return summary, {"plan": json.dumps(list(findings_by_focus.keys())), "score": 0.8, "lessons": []}
 
