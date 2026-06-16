@@ -35,7 +35,6 @@ from tools.stock import (
     get_financials,
     get_market_news,
     technical_analysis,
-    news_sentiment,
 )
 
 app = FastAPI(title="Stock Expert AI", description="AI 주식 전문가")
@@ -135,11 +134,6 @@ async def api_analyze(ticker: str = Form(...), name: str = Form(...),
         except Exception:
             news_data = {"status": "error", "news": []}
 
-        try:
-            sentiment_data = json.loads(news_sentiment(ticker, name, market))
-        except Exception:
-            sentiment_data = {"status": "unavailable"}
-
         response = {
             "status": "success",
             "ticker": ticker,
@@ -147,7 +141,6 @@ async def api_analyze(ticker: str = Form(...), name: str = Form(...),
             "price": price_data,
             "technical": tech_data,
             "news": news_data,
-            "news_sentiment": sentiment_data,
         }
 
         return JSONResponse(content=response)

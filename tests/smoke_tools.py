@@ -53,13 +53,12 @@ def main():
     check("calc_math", lambda: calculate_math("4+4"))
     check("read_file", lambda: read_document("/app/requirements.txt"))
 
-    from tools.stock import (get_stock_price, get_stock_chart, get_financials, get_dcf, get_market_news, technical_analysis, compare_stocks, get_sector_analysis, news_sentiment)
+    from tools.stock import (get_stock_price, get_stock_chart, get_financials, get_dcf, get_market_news, technical_analysis, compare_stocks, get_sector_analysis)
     check("stock_price (KR)", lambda: get_stock_price(KR, "KR"))
     check("stock_chart", lambda: get_stock_chart(KR))
     check("stock_financials", lambda: get_financials(KR))
     check("stock_news", lambda: get_market_news(ticker=KR))
     check("stock_technical", lambda: technical_analysis(KR))
-    check("stock_news_sentiment", lambda: news_sentiment(KR, KR_NAME, "KR"))
 
     from database import get_forecast_accuracy
     check("get_accuracy", lambda: get_forecast_accuracy(KR))

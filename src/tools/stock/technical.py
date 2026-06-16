@@ -120,6 +120,50 @@ def _calculate_moving_averages(prices: List[float]) -> dict:
     }
 
 
+def _calculate_support_resistance(highs: List[float], lows: List[float],
+                                  current: float, lookback: int = 5) -> dict:
+    """Derive support/resistance from real swing pivots in the OHLCV window.
+
+    A swing high is a High that is the maximum within ±`lookback` bars (a local
+    top → resistance); a swing low is the symmetric local bottom → support. From
+    those pivots we return the nearest support at/below the current price and the
+    nearest resistance at/above it, plus the absolute window range as a guaranteed
+    fallback. Every number here is an actual traded price from the data — this is
+    the field that stops the analyst from inventing levels (e.g. a phantom $72.31)
+    when none were ever computed."""
+    highs = np.asarray(highs, dtype=float)
+    lows = np.asarray(lows, dtype=float)
+    n = len(highs)
+
+    swing_highs: List[float] = []
+    swing_lows: List[float] = []
+    for i in range(lookback, n - lookback):
+        window_h = highs[i - lookback:i + lookback + 1]
+        window_l = lows[i - lookback:i + lookback + 1]
+        if highs[i] == window_h.max():
+            swing_highs.append(float(highs[i]))
+        if lows[i] == window_l.min():
+            swing_lows.append(float(lows[i]))
+
+    window_low = round(float(lows.min()), 2)
+    window_high = round(float(highs.max()), 2)
+
+    supports_below = [p for p in swing_lows if p <= current]
+    resists_above = [p for p in swing_highs if p >= current]
+    support = round(max(supports_below), 2) if supports_below else window_low
+    resistance = round(min(resists_above), 2) if resists_above else window_high
+
+    return {
+        "support": support,
+        "resistance": resistance,
+        "window_low": window_low,
+        "window_high": window_high,
+        "current": round(float(current), 2),
+        "pivot_count": {"support": len(swing_lows), "resistance": len(swing_highs)},
+        "method": "swing pivots (±%d bars) over the analyzed window" % lookback,
+    }
+
+
 def technical_analysis(ticker: str, period: str = "6mo") -> str:
     """
     Perform comprehensive technical analysis on a stock.
@@ -150,12 +194,15 @@ def technical_analysis(ticker: str, period: str = "6mo") -> str:
         
         prices = hist['Close'].tolist()
         volumes = hist['Volume'].tolist()
-        
+        highs = hist['High'].tolist()
+        lows = hist['Low'].tolist()
+
         # Calculate all indicators
         rsi = _calculate_rsi(prices)
         macd = _calculate_macd(prices)
         bollinger = _calculate_bollinger_bands(prices)
         moving_avgs = _calculate_moving_averages(prices)
+        support_resistance = _calculate_support_resistance(highs, lows, prices[-1])
         
         # Volume analysis
         avg_volume = np.mean(volumes[-20:])
@@ -209,6 +256,7 @@ def technical_analysis(ticker: str, period: str = "6mo") -> str:
                 "macd": macd,
                 "bollinger_bands": bollinger,
                 "moving_averages": moving_avgs,
+                "support_resistance": support_resistance,
             },
             "volume": {
                 "current": int(current_volume),

@@ -7,8 +7,8 @@ Your output must cover:
    - MACD crossover direction and histogram trend
 3. **Volatility**: Bollinger Band width and position (price near upper/lower band = stretched; near middle = neutral)
 4. **Overall technical signal**: BUY / HOLD / SELL — must be consistent with the above signals. If RSI < 30 and MACD is turning up, do NOT output SELL.
-5. **Key level to watch**: The most important support or resistance price level from the data.
+5. **Key level to watch**: Report the support/resistance from the data's `support_resistance` field — `support` (nearest floor at/below price) and `resistance` (nearest ceiling at/above price), derived from real swing pivots. State these exact numbers. **Use ONLY the provided figures — never invent a level or recall one from memory.** If `support_resistance` is absent, write "지지/저항 레벨 데이터 없음" rather than guessing. Note `pivot_count`: if it is 0, the level is the window low/high fallback, so say it is a range bound, not a confirmed pivot.
 
 **Tool error handling**: If the input contains `"status": "error"` or clearly has no indicator data, output a single line: "기술적 지표 데이터를 불러오지 못했습니다 (툴 오류). 가격 추세와 타 신호로 보완 판단이 필요합니다." — do NOT fabricate signals.
 
-Output in concise Korean (~합니다, ~입니다). 5-7 lines max. Do NOT repeat raw numbers verbatim — interpret their meaning.
+Output in concise Korean (~합니다, ~입니다). 5-7 lines max. Do NOT repeat raw numbers verbatim — interpret their meaning. (Exception: the support/resistance price levels MUST be stated exactly as given — those are the actionable figures, not to be paraphrased.)

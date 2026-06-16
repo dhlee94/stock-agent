@@ -4,7 +4,7 @@ Memento is a sophisticated multi-agent system designed for professional-grade st
 
 ### Key Capabilities
 
-- 🤖 **Market Sentiment Analysis**: FinBERT sentiment classification of recent news.
+- 📰 **Market News Analysis**: Real-time news retrieval (Naver for KR, yfinance/Google News for US) with recency and relevance filtering, interpreted in context by the News analyst.
 - 📉 **Technical Analysis specialist**: Interprets RSI, MACD, Bollinger Bands, and support/resistance levels.
 - 🏢 **Fundamental Deep Dive**: Sector-specific valuation (DCF), competitive landscape, and key price driver analysis.
 - 🛡️ **Risk Management**: Automated target price, stop-loss, and risk/reward ratio calculation.

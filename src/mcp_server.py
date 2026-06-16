@@ -27,7 +27,6 @@ from tools.stock import (
     technical_analysis,
     compare_stocks,
     get_sector_analysis,
-    news_sentiment,
     analyze_peer_group,
 )
 
@@ -113,7 +112,8 @@ def stock_dcf(ticker: str, market: str = "KR", margin_of_safety: float = 0.25,
 
 
 @mcp.tool()
-def stock_news(ticker: str = None, query: str = None, limit: int = 10, source: str = "auto") -> str:
+def stock_news(ticker: str = None, query: str = None, limit: int = 10, source: str = "auto",
+               max_age_days: int = 30) -> str:
     """
     Get latest stock or market news.
     Args:
@@ -121,9 +121,12 @@ def stock_news(ticker: str = None, query: str = None, limit: int = 10, source: s
         query: Search query
         limit: Max number of articles (default 10).
         source: News source selection ("auto", "naver", "yfinance").
+        max_age_days: Only return articles newer than this many days (default 30),
+            so stale news cannot be read as current. Widen it only when the query
+            is explicitly about an older, dated event.
     """
     try:
-        return get_market_news(ticker, query, limit, source)
+        return get_market_news(ticker, query, limit, source, max_age_days=max_age_days)
     except Exception as e:
         return f'{{"error": "Stock News Error: {str(e)}"}}'
 
@@ -160,18 +163,6 @@ def stock_sector(sector: str = None, market: str = "KR") -> str:
         market: "KR" or "US"
     """
     return get_sector_analysis(sector, market)
-
-
-@mcp.tool()
-def stock_news_sentiment(ticker: str, name: str, market: str = "KR") -> str:
-    """
-    FinBERT sentiment of recent news for the ticker.
-    Args:
-        ticker: Stock ticker symbol
-        name: Company name
-        market: "KR" or "US"
-    """
-    return news_sentiment(ticker, name, market)
 
 
 @mcp.tool()

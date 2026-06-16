@@ -18,9 +18,12 @@ import re
 import html
 import json
 import yfinance as yf
-from datetime import datetime
+from datetime import datetime, timedelta
+from email.utils import parsedate_to_datetime
 from typing import Optional, List, Dict, Tuple
 import pytz
+
+_KST = pytz.timezone("Asia/Seoul")
 
 from .market_utils import detect_market, get_company_name, get_english_name, TICKER_TO_NAME
 from utils.response import ToolResponse
@@ -39,6 +42,57 @@ def _strip_html(text) -> Optional[str]:
     s = html.unescape(_HTML_TAG_RE.sub("", str(text)))
     s = re.sub(r"\s+", " ", s).strip()  # collapse whitespace incl. &nbsp; (\xa0)
     return s or None
+
+
+def _parse_published(value) -> Optional[datetime]:
+    """Best-effort parse of the heterogeneous `published` strings into a tz-aware
+    KST datetime. Handles RFC822/1123 (Google News RSS, Naver pubDate, e.g.
+    "Mon, 26 Aug 2024 14:35:00 +0900") and the yfinance-normalized "%Y-%m-%d %H:%M"
+    form. Returns None when unparseable — callers must not punish missing dates,
+    only clearly-old ones."""
+    if not value:
+        return None
+    s = str(value).strip()
+    try:
+        dt = parsedate_to_datetime(s)
+        if dt is not None:
+            if dt.tzinfo is None:
+                dt = dt.replace(tzinfo=pytz.UTC)
+            return dt.astimezone(_KST)
+    except (TypeError, ValueError):
+        pass
+    for length, fmt in ((16, "%Y-%m-%d %H:%M"), (10, "%Y-%m-%d")):
+        try:
+            return _KST.localize(datetime.strptime(s[:length], fmt))
+        except ValueError:
+            continue
+    return None
+
+
+def _filter_stale(items: List[Dict], max_age_days: int,
+                  now: datetime) -> Tuple[List[Dict], int]:
+    """Drop articles older than `max_age_days` and stamp each survivor with an
+    epoch `_ts` so downstream ranking can float the freshest to the top (and keep
+    them through truncation). This is the deterministic guard against stale news
+    (e.g. 2-year-old guidance) leaking in as if current — the fetch layer carries
+    no time window on its own. Items with an unparseable date are kept but get
+    ts=0 so they sink within their tier rather than being silently dropped."""
+    if not max_age_days or max_age_days <= 0:
+        for it in items:
+            dt = _parse_published(it.get("published"))
+            it["_ts"] = dt.timestamp() if dt else 0.0
+        return items, 0
+    cutoff = now - timedelta(days=max_age_days)
+    kept: List[Dict] = []
+    dropped = 0
+    for it in items:
+        dt = _parse_published(it.get("published"))
+        if dt is not None and dt < cutoff:
+            dropped += 1
+            continue
+        it["_ts"] = dt.timestamp() if dt else 0.0
+        kept.append(it)
+    return kept, dropped
 
 
 def _tag_and_rank_relevance(items: List[Dict], ticker: Optional[str],
@@ -67,7 +121,9 @@ def _tag_and_rank_relevance(items: List[Dict], ticker: Optional[str],
         is_direct = any(tok in hay for tok in tokens) if tokens else True
         it["relevance"] = "direct" if is_direct else "contextual"
         direct += is_direct
-    items.sort(key=lambda x: 0 if x.get("relevance") == "direct" else 1)  # stable: keeps date order within tier
+    # Direct-first, then freshest-first within each tier (recency from _filter_stale's
+    # _ts stamp), so truncation keeps subject-naming AND recent articles.
+    items.sort(key=lambda x: (0 if x.get("relevance") == "direct" else 1, -x.get("_ts", 0.0)))
     return items, direct
 
 
@@ -85,7 +141,8 @@ def _resolve_source(source: str, market: str) -> str:
 
 
 def _yfinance_news(ticker: Optional[str], query: Optional[str], limit: int, market: str,
-                   search_name: Optional[str], english_name: Optional[str]) -> List[Dict]:
+                   search_name: Optional[str], english_name: Optional[str],
+                   max_age_days: int = 30) -> List[Dict]:
     """Existing logic: yfinance.Ticker.news + Google News fallback."""
     news_items: List[Dict] = []
 
@@ -144,6 +201,10 @@ def _yfinance_news(ticker: Optional[str], query: Optional[str], limit: int, mark
                 else:
                     search_query = effective_query or search_name or ""
 
+            # Google News RSS honors a `when:Nd` recency operator in the query —
+            # constrain at the source so stale articles never enter the candidate set.
+            if search_query and max_age_days and max_age_days > 0:
+                search_query = f"{search_query} when:{max_age_days}d"
             print(f"   🔎 Google News search: '{search_query}'")
             search = gn.search(search_query) if search_query else {"entries": []}
             seen_titles = {(item.get("title") or "").strip().lower() for item in news_items}
@@ -185,7 +246,7 @@ def _naver_news(ticker: Optional[str], query: Optional[str], limit: int,
 
 
 def get_market_news(ticker: str = None, query: str = None, limit: int = 10,
-                    source: str = "auto") -> str:
+                    source: str = "auto", max_age_days: int = 30) -> str:
     """
     Get latest market or stock news. Dispatches across sources.
 
@@ -195,6 +256,9 @@ def get_market_news(ticker: str = None, query: str = None, limit: int = 10,
         limit: Max items returned (default 10).
         source: "auto" | "naver" | "yfinance".
                 "auto" routes KR tickers to Naver (if keys present) and US to yfinance.
+        max_age_days: Drop articles older than this many days so stale news (e.g.
+                last year's guidance) cannot enter the analysis as if current.
+                Set <= 0 to disable the recency filter. Default 30.
 
     Returns:
         Standardized JSON response with `source_used` recorded.
@@ -210,13 +274,23 @@ def get_market_news(ticker: str = None, query: str = None, limit: int = 10,
         if resolved == "naver":
             news_items = _naver_news(ticker, query, limit, search_name)
         else:
-            news_items = _yfinance_news(ticker, query, limit, market, search_name, english_name)
+            news_items = _yfinance_news(ticker, query, limit, market, search_name,
+                                        english_name, max_age_days=max_age_days)
 
         # Drop ad / pump-and-dump spam before truncation so the kept items are the
         # real signal (filtering after [:limit] would waste slots on spam).
         news_items, dropped = filter_news(news_items)
         if dropped:
             print(f"   🧹 [News] 광고/스팸 {dropped}건 제외")
+
+        # Deterministic recency gate: drop articles older than max_age_days and
+        # stamp survivors with _ts so the relevance ranker can float the freshest up.
+        # The fetch layer carries no time window of its own (yfinance.news is a flat
+        # list; Naver sort=date is best-effort), so without this a stale article can
+        # be summarized as if it were today's news.
+        news_items, stale = _filter_stale(news_items, max_age_days, datetime.now(_KST))
+        if stale:
+            print(f"   ⏳ [News] {max_age_days}일 초과 오래된 기사 {stale}건 제외")
 
         # Tag relevance (direct vs contextual/domain) and rank direct-first so the
         # truncation below keeps subject-naming articles, while domain news survives
@@ -226,7 +300,15 @@ def get_market_news(ticker: str = None, query: str = None, limit: int = 10,
         if len(news_items) > limit:
             news_items = news_items[:limit]
         if not news_items:
+            if stale:
+                raise RuntimeError(
+                    f"No news within {max_age_days} days for '{search_name or query}' "
+                    f"via {resolved} ({stale} older articles dropped as stale)")
             raise RuntimeError(f"No news found for '{search_name or query}' via {resolved}")
+
+        # Strip the internal recency-ranking stamp before returning to callers.
+        for it in news_items:
+            it.pop("_ts", None)
 
         direct_count = sum(1 for it in news_items if it.get("relevance") == "direct")
         print(f"   🔎 [News] 관련성: direct {direct_count} / contextual {len(news_items) - direct_count}")

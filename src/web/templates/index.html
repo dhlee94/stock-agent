@@ -257,14 +257,13 @@
             }
 
             const aiEl = document.getElementById('aiResult');
-            const sentiment = data.news_sentiment;
+            const news = data.news?.news || [];
             aiEl.innerHTML = `
-                <div class="ai-sentiment">뉴스 감성: <b>${sentiment?.dominant || '-'}</b></div>
-                <div class="ai-note">※ 현재 확정 데이터(가격/기술/감성) 중심으로 분석을 제공합니다.</div>
+                <div class="ai-sentiment">관련 뉴스: <b>${news.length}</b>건</div>
+                <div class="ai-note">※ 현재 확정 데이터(가격/기술/뉴스) 중심으로 분석을 제공합니다.</div>
             `;
 
             const newsEl = document.getElementById('newsList');
-            const news = data.news?.news || [];
             newsEl.innerHTML = news.length ? news.map(n =>
                 `<li><a href="${n.link}" target="_blank">${n.title}</a><span class="news-source">${n.publisher || ''}</span></li>`
             ).join('') : '<li>뉴스가 없습니다.</li>';

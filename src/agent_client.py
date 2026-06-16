@@ -31,6 +31,16 @@ def _resolve_active_embedding_model() -> str:
 from tools.stock.us_listing import lookup_us_ticker, is_valid_us_ticker
 from tools.stock.market_utils import NAME_TO_TICKER
 
+
+def _today_str() -> str:
+    """Current date anchor (KST) injected into analysis prompts. Without it the
+    LLMs resolve "as of today" against their training cutoff and treat stale
+    fetched data (e.g. last year's guidance) as current — see news_analyst /
+    global_reflector / summarizer / planner system prompts."""
+    import pytz
+    from datetime import datetime
+    return datetime.now(pytz.timezone("Asia/Seoul")).strftime("%Y-%m-%d (%a)")
+
 # Provider setup
 _provider_clients: dict = {}
 _LAST_API_CALL: dict = {}
@@ -557,6 +567,7 @@ class MementoAgent:
             memory_context=memory_context,
             semantic_context=semantic_context,
             critique_context=critique_context,
+            current_date=_today_str(),
         )
         if subtask_focus:
             hints = subtask_search_hints or []
@@ -614,7 +625,7 @@ class MementoAgent:
         user_content = f"Analyze:\n\n{tool_result[:6000]}"
         if guardrail: user_content = f"{guardrail}\n\n{user_content}"
         prompt = [
-            {"role": "system", "content": load_prompt("news_analyst/system")},
+            {"role": "system", "content": load_prompt("news_analyst/system", current_date=_today_str())},
             {"role": "user", "content": user_content},
         ]
         return await self._call_llm(prompt, model=NEWS_ANALYST_MODEL)
@@ -647,7 +658,7 @@ class MementoAgent:
                     "conviction. Do NOT fabricate data to cover them, and do NOT silently omit them."
                 )
         prompt = [
-            {"role": "system", "content": load_prompt("summarizer/system")},
+            {"role": "system", "content": load_prompt("summarizer/system", current_date=_today_str())},
             {"role": "user", "content": user_content}
         ]
         return await self._call_llm(prompt, model=SUMMARIZER_MODEL, max_tokens=8192)
@@ -667,7 +678,7 @@ class MementoAgent:
         if market_facts:
             user_content = f"{market_facts}\n\n{user_content}"
         prompt = [
-            {"role": "system", "content": load_prompt("global_reflector/system")},
+            {"role": "system", "content": load_prompt("global_reflector/system", current_date=_today_str())},
             {"role": "user", "content": user_content},
         ]
         response = await self._call_llm(prompt, model=GLOBAL_REFLECTOR_MODEL, max_tokens=4096)
@@ -720,7 +731,7 @@ class MementoAgent:
                     try:
                         result = await _cached_call_tool(tool_name, args, key)
                         tool_output = result.content[0].text
-                        if tool_name in ("stock_news", "stock_news_sentiment"):
+                        if tool_name == "stock_news":
                             interpretation = await self._call_news_analyst(tool_output)
                         elif tool_name == "stock_technical":
                             interpretation = await self._call_technical_analyst(tool_output)

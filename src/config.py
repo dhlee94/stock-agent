@@ -63,7 +63,7 @@ NAVER_CLIENT_SECRET = os.environ.get("NAVER_CLIENT_SECRET", "")
 KRX_ID = os.environ.get("KRX_ID", "")
 KRX_PW = os.environ.get("KRX_PW", "")
 
-# Torch compute device for sentiment models (FinBERT)
+# Torch compute device for the local embedding fallback (memory_store)
 TORCH_DEVICE = os.environ.get("TORCH_DEVICE", "auto")
 
 # Agent iteration limits
