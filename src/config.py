@@ -69,6 +69,13 @@ TORCH_DEVICE = os.environ.get("TORCH_DEVICE", "auto")
 # Agent iteration limits
 MAX_GLOBAL_ITER = int(os.environ.get("MAX_GLOBAL_ITER", "3"))
 
+# Wall-clock budget (seconds) for the analysis flow. Must stay under the
+# web layer's hard request timeout (web/app.py = 600s) with margin for the
+# final summarizer. When the budget is exceeded, the flow stops launching
+# new refinement rounds / the integration step and returns a partial report
+# instead of letting the request hard-time-out with no result.
+FLOW_TIME_BUDGET_SEC = int(os.environ.get("FLOW_TIME_BUDGET_SEC", "480"))
+
 # App Settings
 DEFAULT_MARKET = os.environ.get("DEFAULT_MARKET", "KR")
 RISK_TOLERANCE = os.environ.get("RISK_TOLERANCE", "Medium")

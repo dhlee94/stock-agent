@@ -14,7 +14,7 @@ from config import (
     PLANNER_MODEL, EXECUTOR_MODEL, SUMMARIZER_MODEL,
     NEWS_ANALYST_MODEL, TECHNICAL_ANALYST_MODEL,
     GLOBAL_PLANNER_MODEL, LOCAL_REFLECTOR_MODEL, GLOBAL_REFLECTOR_MODEL, JUDGE_MODEL,
-    MEMORY_COMPRESSOR_MODEL, MAX_GLOBAL_ITER,
+    MEMORY_COMPRESSOR_MODEL, MAX_GLOBAL_ITER, FLOW_TIME_BUDGET_SEC,
 )
 from database import get_setting, reembed_if_model_changed
 from tools.stock.kr_listing import lookup_kr_ticker
@@ -786,11 +786,25 @@ class MementoAgent:
         unresolved_points: List[str] = []
         conceded_last_round: List[str] = []
 
+        # Wall-clock deadline. Each refinement round spawns fresh subtasks with
+        # their own tool calls + retries and can take minutes; left unbounded the
+        # cumulative time blows past the web layer's request timeout and the user
+        # gets nothing. Past the deadline we stop launching new work and fall
+        # through to the Summarizer with whatever was collected.
+        loop = asyncio.get_running_loop()
+        deadline = loop.time() + FLOW_TIME_BUDGET_SEC
+
         def _critique_points(c: Dict[str, Any]) -> List[str]:
             return (c.get("weak_points") or []) + (c.get("missing_coverage") or [])
 
         for global_iter in range(MAX_GLOBAL_ITER):
             if global_iter > 0:
+                if loop.time() > deadline:
+                    # Out of time — keep the collected findings, flag the open
+                    # gaps, and stop refining rather than risk a hard timeout.
+                    unresolved_points.extend(conceded_last_round)
+                    outcome = "deadline"
+                    break
                 # Drop refinement subtasks that merely re-propose work whose focus
                 # already yielded usable data — that is the duplicate-block churn.
                 subtasks = [st for st in subtasks
@@ -800,7 +814,25 @@ class MementoAgent:
                     outcome = "no_new_subtasks"
                     break
 
-            results = await asyncio.gather(*[self._run_subtask(st, session, tool_descriptions, semaphore, user_task, global_plan, critique=pending_critique, previous_findings=pending_findings, tool_cache=tool_cache) for st in subtasks])
+            gather_coro = asyncio.gather(*[self._run_subtask(st, session, tool_descriptions, semaphore, user_task, global_plan, critique=pending_critique, previous_findings=pending_findings, tool_cache=tool_cache) for st in subtasks])
+            if global_iter == 0:
+                # Core pass — must complete; the report is built on it.
+                results = await gather_coro
+            else:
+                # A single refinement round can itself run for minutes (fresh
+                # subtasks, tool retries with backoff), so the round-boundary
+                # check above is not enough — time-box the round to the remaining
+                # budget and keep prior findings if it overruns.
+                try:
+                    results = await asyncio.wait_for(gather_coro, timeout=max(1.0, deadline - loop.time()))
+                except Exception as e:
+                    # Timed out or the refinement round failed. The core Tier-1
+                    # report is already collected, so degrade gracefully: keep
+                    # prior findings, flag the open gaps, and summarize.
+                    print(f"   ⏱️ Refinement round stopped ({type(e).__name__}); shipping collected findings.")
+                    unresolved_points.extend(conceded_last_round)
+                    outcome = "deadline"
+                    break
             for r in results:
                 findings_by_focus[r["focus"]] = r["findings"]
                 valid_by_focus[r["focus"]] = r.get("valid", True)
@@ -843,7 +875,7 @@ class MementoAgent:
         # catalyst-informed growth_override. Single-company queries only (a lone
         # subject with a resolved ticker); sectors/comparisons have no single
         # valuation to integrate into.
-        if ticker and len(global_plan.get("subtasks", [])) == 1:
+        if ticker and len(global_plan.get("subtasks", [])) == 1 and loop.time() < deadline:
             synth_critique = {
                 "weak_points": [
                     "수집된 뉴스·촉매가 밸류에이션에 정량 반영되지 않음 — 성장 전망을 "
@@ -859,14 +891,20 @@ class MementoAgent:
                             "폭넓게 재수집하지 말고, 모인 findings를 정량 종합하라."),
                 "search_hints": [],
             }
-            synth_result = await self._run_subtask(
-                synth_subtask, session, tool_descriptions, semaphore, user_task,
-                global_plan, critique=synth_critique, previous_findings=all_findings,
-                tool_cache=tool_cache)
-            if synth_result.get("valid"):
-                findings_by_focus[synth_result["focus"]] = synth_result["findings"]
-                valid_by_focus[synth_result["focus"]] = True
-                all_findings = _assemble_findings()
+            try:
+                synth_result = await asyncio.wait_for(
+                    self._run_subtask(
+                        synth_subtask, session, tool_descriptions, semaphore, user_task,
+                        global_plan, critique=synth_critique, previous_findings=all_findings,
+                        tool_cache=tool_cache),
+                    timeout=max(1.0, deadline - loop.time()))
+                if synth_result.get("valid"):
+                    findings_by_focus[synth_result["focus"]] = synth_result["findings"]
+                    valid_by_focus[synth_result["focus"]] = True
+                    all_findings = _assemble_findings()
+            except Exception as e:
+                # Integration ran out of budget or failed; ship Tier-1 as-is.
+                print(f"   ⏱️ Integration step skipped ({type(e).__name__}); shipping Tier-1 report.")
 
         summary = await self._call_summarizer(user_task, all_findings, unresolved_points)
         return summary, {"plan": json.dumps(list(findings_by_focus.keys())), "score": 0.8, "lessons": []}
