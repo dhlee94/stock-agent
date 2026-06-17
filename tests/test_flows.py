@@ -243,7 +243,8 @@ class TestRunFlowSingle:
 
         assert result == "삼성전자 최종 분석: 보유 추천"
         agent._call_summarizer.assert_awaited_once()
-        assert agent._call_planner.await_count == 1
+        # Single-ticker query: Tier-1 subtask (1) + Tier-2 integration slot (1).
+        assert agent._call_planner.await_count == 2
 
     @pytest.mark.asyncio
     async def test_single_subtask_retries_on_invalid_local_check(self):
@@ -288,7 +289,6 @@ class TestRunFlowDomain:
             {"step": 1, "tool": "search_web", "args": {"query": "바이오"}, "reason": "뉴스"}
         ])
         agent._call_executor = AsyncMock(return_value="섹터 동향 분석 완료")
-        agent._call_local_reflector = AsyncMock(return_value={"valid": True, "issues": []})
         agent._call_global_reflector = AsyncMock(return_value={"approved": True})
         agent._call_summarizer = AsyncMock(return_value="바이오 섹터 최종 요약")
 
@@ -302,9 +302,9 @@ class TestRunFlowDomain:
         )
 
         assert result == "바이오 섹터 최종 요약"
-        # One planner call per subtask (3), no retry
+        # One planner call per subtask (3); multi-subtask domain query, so no
+        # Tier-2 integration slot and no retry.
         assert agent._call_planner.await_count == 3
-        assert agent._call_local_reflector.await_count == 3
 
     @pytest.mark.asyncio
     async def test_domain_global_reflector_rejection_triggers_judge(self):
@@ -386,6 +386,121 @@ class TestRunFlowDomain:
         # Two global iterations — second pass with new subtask
         assert agent._call_global_reflector.await_count == 2
         assert "CMO" in result
+
+
+# ---------------------------------------------------------------------------
+# _run_flow — per-focus revision (re-run an existing focus in place)
+# ---------------------------------------------------------------------------
+
+class TestRunFlowRevision:
+    @pytest.mark.asyncio
+    async def test_insufficient_focus_is_rerun_in_place(self):
+        """A valid-but-insufficient focus must be RE-RUN (same focus) and its
+        block OVERWRITTEN — not frozen with only a new-focus block appended."""
+        agent = _make_agent()
+        session = _tool_session()
+
+        # iter0 produces a shallow block; iter1 (re-run) a deeper one.
+        agent._call_planner = AsyncMock(side_effect=[
+            [{"tool": "search_web", "args": {}, "reason": "초안"}],          # iter0 subtask
+            [{"tool": "stock_dcf", "args": {}, "reason": "밸류 보강"}],       # iter1 revise
+        ])
+        agent._call_executor = AsyncMock(side_effect=["얕은 분석", "보강된 밸류에이션"])
+        agent._call_global_reflector = AsyncMock(side_effect=[
+            {"approved": False, "critique": "밸류 근거 약함",
+             "subtask_verdicts": [{"focus": "제약", "sufficient": False,
+                                   "issues": ["DCF 가정 미검증"]}],
+             "missing_coverage": [], "weak_points": ["DCF 약함"]},
+            {"approved": True},
+        ])
+        agent._call_global_planner_defense = AsyncMock(return_value={
+            "defense": "", "concede": ["DCF 가정 미검증"],
+            "revise": [{"focus": "제약", "context": "DCF 재실행"}],
+            "new_subtasks": [],
+        })
+        agent._call_judge = AsyncMock(return_value={"verdict": "reflector",
+                                                    "reason": "보강 필요"})
+
+        captured = {}
+
+        async def _summ(task, all_findings, unresolved=None):
+            captured["findings"] = all_findings
+            captured["unresolved"] = unresolved
+            return "최종"
+
+        agent._call_summarizer = AsyncMock(side_effect=_summ)
+
+        plan = {"subject": "제약섹터", "subtasks": [
+            {"focus": "제약", "search_hints": [], "context": "x"}]}
+        await agent._run_flow("제약 어때?", plan, session, "", "", [])
+
+        # Re-planned the SAME focus a second time (revision), not a new focus.
+        assert agent._call_planner.await_count == 2
+        # The overwritten (deeper) block survived; the shallow draft did not.
+        assert "보강된 밸류에이션" in captured["findings"]
+        assert "얕은 분석" not in captured["findings"]
+        # Exactly one block for the focus — overwrite, not duplicate.
+        assert captured["findings"].count("## [제약]") == 1
+
+    @pytest.mark.asyncio
+    async def test_revision_capped_then_frozen_as_unresolved(self):
+        """A focus the Reflector keeps rejecting is re-run at most
+        MAX_FOCUS_REVISIONS times, then frozen with its issues reported."""
+        agent = _make_agent()
+        session = _tool_session()
+        monkey_cap = 1
+
+        with patch.object(agent_client, "MAX_FOCUS_REVISIONS", monkey_cap), \
+             patch.object(agent_client, "MAX_GLOBAL_ITER", 5):
+            agent._call_planner = AsyncMock(return_value=[
+                {"tool": "search_web", "args": {}, "reason": "분석"}])
+            agent._call_executor = AsyncMock(return_value="분석 결과")
+            # Always insufficient on the same focus.
+            agent._call_global_reflector = AsyncMock(return_value={
+                "approved": False, "critique": "여전히 약함",
+                "subtask_verdicts": [{"focus": "제약", "sufficient": False,
+                                      "issues": ["근거 부족"]}],
+                "missing_coverage": [], "weak_points": ["약함"]})
+            agent._call_global_planner_defense = AsyncMock(return_value={
+                "defense": "", "concede": ["근거 부족"],
+                "revise": [{"focus": "제약", "context": "보강"}],
+                "new_subtasks": []})
+            agent._call_judge = AsyncMock(return_value={"verdict": "reflector",
+                                                        "reason": "보강"})
+
+            captured = {}
+
+            async def _summ(task, all_findings, unresolved=None):
+                captured["unresolved"] = unresolved or []
+                return "최종"
+
+            agent._call_summarizer = AsyncMock(side_effect=_summ)
+
+            plan = {"subject": "제약섹터", "subtasks": [
+                {"focus": "제약", "search_hints": [], "context": "x"}]}
+            await agent._run_flow("제약 어때?", plan, session, "", "", [])
+
+        # iter0 + exactly MAX_FOCUS_REVISIONS re-runs, then stop.
+        assert agent._call_planner.await_count == 1 + monkey_cap
+        # The unfixable issue is surfaced honestly, not silently dropped.
+        assert any("근거 부족" in u for u in captured["unresolved"])
+
+    @pytest.mark.asyncio
+    async def test_sufficient_focus_is_not_rerun(self):
+        """If the Reflector marks the focus sufficient (approved), no re-run."""
+        agent = _make_agent()
+        session = _tool_session()
+        agent._call_planner = AsyncMock(return_value=[
+            {"tool": "search_web", "args": {}, "reason": "분석"}])
+        agent._call_executor = AsyncMock(return_value="충분한 분석")
+        agent._call_global_reflector = AsyncMock(return_value={"approved": True})
+        agent._call_summarizer = AsyncMock(return_value="최종")
+
+        plan = {"subject": "제약섹터", "subtasks": [
+            {"focus": "제약", "search_hints": [], "context": "x"}]}
+        await agent._run_flow("제약 어때?", plan, session, "", "", [])
+
+        agent._call_planner.assert_awaited_once()
 
 
 # ---------------------------------------------------------------------------
@@ -479,33 +594,80 @@ class TestRunFlowToolCache:
 
         assert session.call_tool.await_count == 3
 
-    @pytest.mark.asyncio
-    async def test_identical_raw_block_embedded_once(self):
-        """The raw [원본 수치] digest is embedded once per run; repeats become a reference
-        so the same block isn't copy-pasted verbatim across subtasks (Reflector padding)."""
-        agent = _make_agent()
-        session = _tool_session('{"price": 70000}')
 
-        same_step = [{"tool": "stock_price", "args": {"ticker": "005930.KS"}, "reason": "price"}]
-        agent._call_planner = AsyncMock(return_value=same_step)
-        agent._call_executor = AsyncMock(return_value="현재가 70,000원.")
-        agent._call_local_reflector = AsyncMock(return_value={"valid": True})
+# ---------------------------------------------------------------------------
+# Memory loop revival — recall feeds the planner; real meta is written back
+# ---------------------------------------------------------------------------
+
+class TestMemoryLoop:
+    def test_recall_memory_formats_and_degrades(self):
+        agent = _make_agent()
+        agent.memory.retrieve_similar = MagicMock(return_value=[
+            {"task": "삼성 분석", "plan": '["가격"]', "score": 0.9,
+             "lessons": ["뉴스 날짜 확인"]}])
+        agent.semantic_memory.retrieve_relevant = MagicMock(return_value=["섹터 폭넓게"])
+
+        ctx, lessons = agent._recall_memory("삼성 어때?")
+        assert "Past run" in ctx and "뉴스 날짜 확인" in ctx
+        assert lessons == ["섹터 폭넓게"]
+
+        # Embedding/DB failure must degrade to no-recall, not crash the run.
+        agent.memory.retrieve_similar = MagicMock(side_effect=RuntimeError("emb down"))
+        agent.semantic_memory.retrieve_relevant = MagicMock(side_effect=RuntimeError("db down"))
+        ctx2, lessons2 = agent._recall_memory("x")
+        assert ctx2 == "" and lessons2 == []
+
+    @pytest.mark.asyncio
+    async def test_recall_threads_into_planner(self):
+        agent = _make_agent()
+        session = _tool_session()
+        agent._call_planner = AsyncMock(return_value=[])
         agent._call_global_reflector = AsyncMock(return_value={"approved": True})
         agent._call_summarizer = AsyncMock(return_value="요약")
 
         await agent._run_flow(
-            user_task="바이오주 전망 어때?",
-            global_plan=DOMAIN_PLAN,            # 3 subtasks, identical tool+args
-            session=session,
-            tool_descriptions="",
-            context_examples="",
-            semantic_knowledge=[],
-        )
+            "바이오 어때?", DOMAIN_PLAN, session, "tools",
+            context_examples="### Past run: 바이오\n- score: 0.9",
+            semantic_knowledge=["섹터는 CMO 포함하라"])
 
-        # The summarizer receives the full combined findings — inspect dedup there.
-        findings = agent._call_summarizer.call_args[0][1]
-        assert findings.count("[원본 수치] {") == 1            # raw digest embedded once
-        assert findings.count("이미 제시됨") == 2              # other two are references
+        args = agent._call_planner.call_args.args
+        kwargs = agent._call_planner.call_args.kwargs
+        assert "Past run" in args[2]                       # context_examples positional
+        assert kwargs.get("semantic_knowledge") == ["섹터는 CMO 포함하라"]
+
+    @pytest.mark.asyncio
+    async def test_meta_score_reflects_outcome(self):
+        """_run_flow must return outcome-derived score, not the old constant 0.8."""
+        agent = _make_agent()
+        session = _tool_session()
+        agent._call_planner = AsyncMock(return_value=[
+            {"tool": "search_web", "args": {}, "reason": "x"}])
+        agent._call_executor = AsyncMock(return_value="분석 결과 있음")
+        agent._call_global_reflector = AsyncMock(return_value={"approved": True})
+        agent._call_summarizer = AsyncMock(return_value="요약")
+
+        _result, meta = await agent._run_flow(
+            "바이오 어때?", DOMAIN_PLAN, session, "", "", [])
+
+        assert meta["score"] == 0.9                        # approved_early
+        assert isinstance(meta["lessons"], list)
+
+    @pytest.mark.asyncio
+    async def test_tool_tips_passed_to_executor(self):
+        agent = _make_agent()
+        session = _tool_session('{"price": 1}')
+        agent.procedural_memory.get_tool_tips = MagicMock(
+            return_value=[{"result_summary": "과거 팁"}])
+        agent._call_planner = AsyncMock(return_value=[
+            {"tool": "stock_price", "args": {}, "reason": "price"}])
+        agent._call_executor = AsyncMock(return_value="해석")
+        agent._call_global_reflector = AsyncMock(return_value={"approved": True})
+        agent._call_summarizer = AsyncMock(return_value="요약")
+
+        await agent._run_flow("삼성 어때?", SINGLE_PLAN, session, "", "", [])
+
+        agent.procedural_memory.get_tool_tips.assert_called_with("stock_price")
+        assert any(c.kwargs.get("tips") for c in agent._call_executor.call_args_list)
 
 
 # ---------------------------------------------------------------------------

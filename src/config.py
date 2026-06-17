@@ -44,7 +44,6 @@ SUMMARIZER_MODEL          = os.environ.get("SUMMARIZER_MODEL")          or LLM_M
 NEWS_ANALYST_MODEL        = os.environ.get("NEWS_ANALYST_MODEL")        or LLM_MODEL
 TECHNICAL_ANALYST_MODEL   = os.environ.get("TECHNICAL_ANALYST_MODEL")   or LLM_MODEL
 GLOBAL_PLANNER_MODEL      = os.environ.get("GLOBAL_PLANNER_MODEL")      or LLM_MODEL
-LOCAL_REFLECTOR_MODEL     = os.environ.get("LOCAL_REFLECTOR_MODEL")     or KEYWORD_LLM_MODEL
 GLOBAL_REFLECTOR_MODEL    = os.environ.get("GLOBAL_REFLECTOR_MODEL")    or LLM_MODEL
 JUDGE_MODEL               = os.environ.get("JUDGE_MODEL")               or LLM_MODEL
 MEMORY_COMPRESSOR_MODEL   = os.environ.get("MEMORY_COMPRESSOR_MODEL")   or KEYWORD_LLM_MODEL
@@ -68,6 +67,12 @@ TORCH_DEVICE = os.environ.get("TORCH_DEVICE", "auto")
 
 # Agent iteration limits
 MAX_GLOBAL_ITER = int(os.environ.get("MAX_GLOBAL_ITER", "3"))
+
+# Per-focus revision cap. A subtask the Reflector keeps flagging as insufficient
+# is re-run (same focus, overwriting its prior findings) at most this many times
+# before it is frozen and its open issues reported as unresolved gaps. Prevents a
+# single focus from looping forever on a problem the tools cannot actually fix.
+MAX_FOCUS_REVISIONS = int(os.environ.get("MAX_FOCUS_REVISIONS", "2"))
 
 # Wall-clock budget (seconds) for the analysis flow. Must stay under the
 # web layer's hard request timeout (web/app.py = 600s) with margin for the

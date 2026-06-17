@@ -13,8 +13,9 @@ from config import (
     GEMINI_API_KEY, OPENAI_API_KEY, GROQ_API_KEY, ANTHROPIC_API_KEY,
     PLANNER_MODEL, EXECUTOR_MODEL, SUMMARIZER_MODEL,
     NEWS_ANALYST_MODEL, TECHNICAL_ANALYST_MODEL,
-    GLOBAL_PLANNER_MODEL, LOCAL_REFLECTOR_MODEL, GLOBAL_REFLECTOR_MODEL, JUDGE_MODEL,
+    GLOBAL_PLANNER_MODEL, GLOBAL_REFLECTOR_MODEL, JUDGE_MODEL,
     MEMORY_COMPRESSOR_MODEL, MAX_GLOBAL_ITER, FLOW_TIME_BUDGET_SEC,
+    MAX_FOCUS_REVISIONS,
 )
 from database import get_setting, reembed_if_model_changed
 from tools.stock.kr_listing import lookup_kr_ticker
@@ -274,8 +275,14 @@ def _findings_usable(findings: str) -> bool:
         sec = sec.strip()
         if not sec:
             continue
-        header = sec.split("\n", 1)[0]
-        if "Failed -" not in header:
+        parts = sec.split("\n", 1)
+        header = parts[0]
+        body = parts[1].strip() if len(parts) > 1 else ""
+        # A section counts as usable only if the tool didn't fail AND it actually
+        # produced body content. A clean header with an empty body is the one gap
+        # the deleted LLM local-validator used to cover; checking the body here
+        # closes it deterministically instead.
+        if "Failed -" not in header and body:
             return True
     return False
 
@@ -663,15 +670,6 @@ class MementoAgent:
         ]
         return await self._call_llm(prompt, model=SUMMARIZER_MODEL, max_tokens=8192)
 
-    async def _call_local_reflector(self, focus: str, findings: str) -> Dict[str, Any]:
-        print(f"\n🔎 [Local Reflector] Validating: {focus}")
-        prompt = [
-            {"role": "system", "content": load_prompt("local_reflector/system")},
-            {"role": "user", "content": f"Subtask: {focus}\n\nFindings:\n{findings[:2000]}"},
-        ]
-        response = await self._call_llm(prompt, model=LOCAL_REFLECTOR_MODEL)
-        return _parse_llm_json(response) or {"valid": True}
-
     async def _call_global_reflector(self, user_task: str, all_findings: str, market_facts: str = "") -> Dict[str, Any]:
         print("\n🔍 [Global Reflector] Critiquing...")
         user_content = f"Query: {user_task}\n\nFindings:\n{all_findings}"
@@ -689,12 +687,32 @@ class MementoAgent:
 
     async def _call_global_planner_defense(self, user_task: str, critique: Dict[str, Any], all_findings: str, tool_descriptions: str = "") -> Dict[str, Any]:
         print("\n🛡️ [Global Planner] Responding to critique...")
+        # The defense decides which subtasks to re-run / add, so it must see what
+        # was already collected — otherwise it re-proposes work the findings
+        # already contain. Truncate to stay within context budget.
+        findings_excerpt = (all_findings or "").strip()
+        if len(findings_excerpt) > 12000:
+            findings_excerpt = findings_excerpt[:12000] + "..."
+        verdicts = critique.get("subtask_verdicts") or []
+        verdict_lines = "\n".join(
+            f"- [{v.get('focus','')}] sufficient={v.get('sufficient')} "
+            f"issues={v.get('issues') or []}"
+            for v in verdicts
+        ) or "(none)"
+        user_content = (
+            f"Query: {user_task}\n\n"
+            f"Critique: {critique.get('critique', '')}\n\n"
+            f"Per-subtask verdicts:\n{verdict_lines}\n\n"
+            f"Current findings:\n{findings_excerpt or '(none)'}"
+        )
         prompt = [
             {"role": "system", "content": load_prompt("global_planner/defense", tool_capabilities=tool_descriptions)},
-            {"role": "user", "content": f"Query: {user_task}\n\nCritique: {critique.get('critique', '')}"},
+            {"role": "user", "content": user_content},
         ]
         response = await self._call_llm(prompt, model=GLOBAL_PLANNER_MODEL)
-        defense = _parse_llm_json(response) or {"new_subtasks": []}
+        defense = _parse_llm_json(response) or {"revise": [], "new_subtasks": []}
+        defense.setdefault("revise", [])
+        defense.setdefault("new_subtasks", [])
         if defense.get("defense"):
             print(f"   🛡️ Defense: {defense['defense']}")
         return defense
@@ -706,9 +724,19 @@ class MementoAgent:
             {"role": "user", "content": f"Query: {user_task}"},
         ]
         response = await self._call_llm(prompt, model=JUDGE_MODEL)
-        return _parse_llm_json(response) or {"verdict": "planner"}
+        verdict = _parse_llm_json(response) or {"verdict": "planner"}
+        winner = verdict.get("verdict", "planner")
+        icon = "🛡️" if winner == "planner" else "🔍"
+        print(f"   {icon} Verdict: {winner.upper()}")
+        if verdict.get("reason"):
+            print(f"   ⚖️ Reason: {verdict['reason']}")
+        if verdict.get("valid_critique_points"):
+            print(f"   ✅ Valid points: {verdict['valid_critique_points']}")
+        if verdict.get("invalid_critique_points"):
+            print(f"   ❌ Dismissed/out-of-scope: {verdict['invalid_critique_points']}")
+        return verdict
 
-    async def _run_subtask(self, subtask: Dict[str, Any], session, tool_descriptions: str, semaphore: asyncio.Semaphore, user_task: str, global_plan: Dict[str, Any], critique: Optional[Dict[str, Any]] = None, previous_findings: str = "", tool_cache: Optional[Dict] = None, embedded_raw: Optional[set] = None) -> Dict[str, Any]:
+    async def _run_subtask(self, subtask: Dict[str, Any], session, tool_descriptions: str, semaphore: asyncio.Semaphore, user_task: str, global_plan: Dict[str, Any], critique: Optional[Dict[str, Any]] = None, previous_findings: str = "", tool_cache: Optional[Dict] = None, embedded_raw: Optional[set] = None, context_examples: str = "", semantic_knowledge: Optional[List[str]] = None) -> Dict[str, Any]:
         async with semaphore:
             focus = subtask.get("focus", "")
             print(f"\n📌 [Subtask] Starting: {focus}")
@@ -736,13 +764,19 @@ class MementoAgent:
                         elif tool_name == "stock_technical":
                             interpretation = await self._call_technical_analyst(tool_output)
                         else:
-                            interpretation = await self._call_executor(step, tool_output, findings)
+                            # Procedural memory: prior successful runs of this tool
+                            # become hints for interpreting its output. Best-effort.
+                            try:
+                                tips = self.procedural_memory.get_tool_tips(tool_name)
+                            except Exception:
+                                tips = []
+                            interpretation = await self._call_executor(step, tool_output, findings, tips=tips)
                         findings += f"\n### {step.get('reason', tool_name)}\n{interpretation}\n"
                     except Exception as e:
                         findings += f"\n### {tool_name}: Failed - {e}\n"
                 return findings
 
-            plan = await self._call_planner(user_task, tool_descriptions, "", extracted_intent=global_plan, subtask_focus=focus, subtask_context=subtask.get("context", ""), subtask_search_hints=subtask.get("search_hints", []), critique=critique, previous_findings=previous_findings)
+            plan = await self._call_planner(user_task, tool_descriptions, context_examples, semantic_knowledge=semantic_knowledge, extracted_intent=global_plan, subtask_focus=focus, subtask_context=subtask.get("context", ""), subtask_search_hints=subtask.get("search_hints", []), critique=critique, previous_findings=previous_findings)
             findings = await _execute_plan(plan)
             return {"focus": focus, "findings": findings, "valid": _findings_usable(findings)}
 
@@ -778,24 +812,26 @@ class MementoAgent:
                                   f"not as a neutral/negative finding\n{f}")
             return "\n\n".join(blocks)
 
-        # Carry the prior round's critique + accumulated findings into the next
-        # round's subtask planners. On iter 0 these are empty (fresh analysis);
-        # from iter 1 on, the planner sees what was wrong and what was already
-        # collected so it closes the gap instead of re-deriving from scratch.
-        pending_critique: Optional[Dict[str, Any]] = None
-        pending_findings: str = ""
-
-        # OUT-edge of the loop. The Reflector re-judges from scratch each round,
-        # so on its own a refinement that adds nothing would just be re-rejected
-        # and re-spawned — the "identical results across runs" failure. We track
-        # which focuses have already produced usable data (seen_valid_focuses),
-        # drop re-proposed work, and stop the moment a refinement round yields no
-        # NEW usable data. Whatever the Reflector flagged but we could not resolve
-        # is recorded in unresolved_points and reported honestly by the Summarizer
-        # rather than silently repeated or papered over.
-        seen_valid_focuses: set = {f for f, ok in valid_by_focus.items() if ok}
+        # Per-focus revision model. Each round runs a list of work items, where a
+        # work item carries its OWN critique + prior findings so a re-run focus
+        # re-plans against exactly its own issues (not a global blob). A focus is
+        # FROZEN once the Reflector marks it sufficient or it hits its revision
+        # cap; insufficient focuses are RE-RUN in place (overwriting their block);
+        # genuinely-absent angles are ADDED as new focuses. Whatever cannot be
+        # resolved is recorded in unresolved_points and reported honestly by the
+        # Summarizer instead of being silently repeated or papered over.
         unresolved_points: List[str] = []
-        conceded_last_round: List[str] = []
+        revision_count: Dict[str, int] = {}
+        # (subtask, critique_for_it, previous_findings_for_it). iter 0 = original
+        # plan with no critique / prior context.
+        work_items: List[tuple] = [(st, None, "") for st in subtasks]
+        # Critique points the CURRENT round is attempting to resolve — promoted to
+        # unresolved if the round is cut short (deadline / refinement failure).
+        attempting_issues: List[str] = []
+        all_findings = ""
+        # Most recent Reflector critique — fed to _build_trajectory_meta so the
+        # episodic memory records real lessons on unresolved/maxed runs.
+        last_critique: Dict[str, Any] = {}
 
         # Wall-clock deadline. Each refinement round spawns fresh subtasks with
         # their own tool calls + retries and can take minutes; left unbounded the
@@ -813,19 +849,21 @@ class MementoAgent:
                 if loop.time() > deadline:
                     # Out of time — keep the collected findings, flag the open
                     # gaps, and stop refining rather than risk a hard timeout.
-                    unresolved_points.extend(conceded_last_round)
+                    unresolved_points.extend(attempting_issues)
                     outcome = "deadline"
                     break
-                # Drop refinement subtasks that merely re-propose work whose focus
-                # already yielded usable data — that is the duplicate-block churn.
-                subtasks = [st for st in subtasks
-                            if st.get("focus") not in seen_valid_focuses]
-                if not subtasks:
-                    unresolved_points.extend(conceded_last_round)
+                if not work_items:
+                    # Nothing left to revise or add this round.
+                    unresolved_points.extend(attempting_issues)
                     outcome = "no_new_subtasks"
                     break
 
-            gather_coro = asyncio.gather(*[self._run_subtask(st, session, tool_descriptions, semaphore, user_task, global_plan, critique=pending_critique, previous_findings=pending_findings, tool_cache=tool_cache) for st in subtasks])
+            gather_coro = asyncio.gather(*[
+                self._run_subtask(st, session, tool_descriptions, semaphore, user_task,
+                                  global_plan, critique=crit, previous_findings=prev,
+                                  tool_cache=tool_cache, context_examples=context_examples,
+                                  semantic_knowledge=semantic_knowledge)
+                for (st, crit, prev) in work_items])
             if global_iter == 0:
                 # Core pass — must complete; the report is built on it.
                 results = await gather_coro
@@ -837,29 +875,22 @@ class MementoAgent:
                 try:
                     results = await asyncio.wait_for(gather_coro, timeout=max(1.0, deadline - loop.time()))
                 except Exception as e:
-                    # Timed out or the refinement round failed. The core Tier-1
-                    # report is already collected, so degrade gracefully: keep
-                    # prior findings, flag the open gaps, and summarize.
+                    # Timed out or the refinement round failed. The core report is
+                    # already collected, so degrade gracefully: keep prior
+                    # findings, flag the open gaps, and summarize.
                     print(f"   ⏱️ Refinement round stopped ({type(e).__name__}); shipping collected findings.")
-                    unresolved_points.extend(conceded_last_round)
+                    unresolved_points.extend(attempting_issues)
                     outcome = "deadline"
                     break
+            # Overwrite by focus — a re-run focus replaces its prior block in place
+            # (true revision); a new focus is added.
             for r in results:
                 findings_by_focus[r["focus"]] = r["findings"]
                 valid_by_focus[r["focus"]] = r.get("valid", True)
 
-            new_valid = {r["focus"] for r in results if r.get("valid", True)} - seen_valid_focuses
-            if global_iter > 0 and not new_valid:
-                # Refinement produced no new usable data — stop spinning and flag
-                # what this round was supposed to fix as unresolved.
-                unresolved_points.extend(conceded_last_round)
-                outcome = "no_progress"
-                all_findings = _assemble_findings()
-                break
-            seen_valid_focuses |= new_valid
-
             all_findings = _assemble_findings()
             global_critique = await self._call_global_reflector(user_task, all_findings, market_facts)
+            last_critique = global_critique
             if global_critique.get("approved"):
                 outcome = "approved_early" if global_iter == 0 else "approved_late"
                 break
@@ -867,14 +898,70 @@ class MementoAgent:
                 unresolved_points.extend(_critique_points(global_critique))
                 outcome = "maxed"
                 break
+
             defense = await self._call_global_planner_defense(user_task, global_critique, all_findings, tool_descriptions)
-            subtasks = defense.get("new_subtasks", [])
-            conceded_last_round = defense.get("concede") or _critique_points(global_critique)
-            if not subtasks:
+            # Independent arbiter of the Critic↔Planner debate. Without it the
+            # Planner is both defendant and judge: any round it proposes work the
+            # loop continues, any round it concedes the loop stops — its own call
+            # either way. The Judge weighs the Critic's points against the
+            # Planner's defense and decides whether another round is warranted.
+            verdict = await self._call_judge(user_task, global_critique, defense, tool_descriptions)
+            revise = defense.get("revise") or []
+            new_subtasks = defense.get("new_subtasks") or []
+            if verdict.get("verdict") == "planner" or (not revise and not new_subtasks):
+                # Planner prevails (good enough / remaining gaps out of scope), or
+                # there is no concrete follow-up work. Stop and report whatever the
+                # Judge still considered valid as unresolved.
+                unresolved_points.extend(
+                    verdict.get("valid_critique_points")
+                    or defense.get("concede")
+                    or _critique_points(global_critique))
+                outcome = "judge_planner"
                 break
-            # Hand this round's critique + findings to next round's planners.
-            pending_critique = global_critique
-            pending_findings = all_findings
+
+            # Build next round's work. Each revised focus carries its OWN issues
+            # (from the Reflector's per-subtask verdict) and its OWN current block
+            # as prior context, so its planner re-plans to fix exactly that focus.
+            verdict_by_focus = {v.get("focus"): v
+                                for v in (global_critique.get("subtask_verdicts") or [])}
+            next_items: List[tuple] = []
+            for item in revise:
+                focus = item.get("focus")
+                if not focus:
+                    continue
+                if focus not in findings_by_focus:
+                    # Defense named a focus that doesn't exist — run it as new work.
+                    next_items.append(({"focus": focus, "context": item.get("context", ""),
+                                        "search_hints": item.get("search_hints", [])},
+                                       global_critique, all_findings))
+                    continue
+                if revision_count.get(focus, 0) >= MAX_FOCUS_REVISIONS:
+                    # Exhausted this focus's revision budget — freeze it and report
+                    # its open issues rather than looping on an unfixable problem.
+                    unresolved_points.extend(verdict_by_focus.get(focus, {}).get("issues") or [])
+                    continue
+                revision_count[focus] = revision_count.get(focus, 0) + 1
+                issues = verdict_by_focus.get(focus, {}).get("issues") or [item.get("context", "")]
+                focus_critique = {
+                    "critique": item.get("context", ""),
+                    "weak_points": issues,
+                    "missing_coverage": [],
+                }
+                prev = f"## [{focus}]\n{findings_by_focus.get(focus, '')}"
+                next_items.append(({"focus": focus, "context": item.get("context", ""),
+                                    "search_hints": item.get("search_hints", [])},
+                                   focus_critique, prev))
+            for st in new_subtasks:
+                next_items.append((st, global_critique, all_findings))
+
+            if not next_items:
+                # Everything the defense proposed was capped/invalid — stop.
+                unresolved_points.extend(
+                    verdict.get("valid_critique_points") or _critique_points(global_critique))
+                outcome = "no_new_subtasks"
+                break
+            work_items = next_items
+            attempting_issues = verdict.get("valid_critique_points") or _critique_points(global_critique)
 
         # Tier 2 — integration slot. Tier-1 subtasks run in parallel and never
         # see each other's output, so cross-cutting facts (a news catalyst that
@@ -907,7 +994,8 @@ class MementoAgent:
                     self._run_subtask(
                         synth_subtask, session, tool_descriptions, semaphore, user_task,
                         global_plan, critique=synth_critique, previous_findings=all_findings,
-                        tool_cache=tool_cache),
+                        tool_cache=tool_cache, context_examples=context_examples,
+                        semantic_knowledge=semantic_knowledge),
                     timeout=max(1.0, deadline - loop.time()))
                 if synth_result.get("valid"):
                     findings_by_focus[synth_result["focus"]] = synth_result["findings"]
@@ -918,13 +1006,52 @@ class MementoAgent:
                 print(f"   ⏱️ Integration step skipped ({type(e).__name__}); shipping Tier-1 report.")
 
         summary = await self._call_summarizer(user_task, all_findings, unresolved_points)
-        return summary, {"plan": json.dumps(list(findings_by_focus.keys())), "score": 0.8, "lessons": []}
+        # Real outcome-derived score + lessons (was hardcoded 0.8/[], which froze
+        # the episodic dedup/overwrite gate and starved semantic memory of lessons).
+        meta = _build_trajectory_meta(outcome, last_critique, findings_by_focus,
+                                      valid_by_focus, global_plan)
+        return summary, meta
+
+    @staticmethod
+    def _format_trajectory_examples(trajectories: List[Dict[str, Any]]) -> str:
+        """Render recalled past runs as compact priming context for the planner."""
+        blocks = []
+        for t in trajectories or []:
+            lessons = t.get("lessons") or []
+            lesson_txt = "; ".join(lessons) if lessons else "(none)"
+            blocks.append(
+                f"### Past run: {t.get('task','')}\n"
+                f"- focuses: {t.get('plan','')}\n"
+                f"- score: {t.get('score','?')}\n"
+                f"- lessons: {lesson_txt}"
+            )
+        return "\n\n".join(blocks)
+
+    def _recall_memory(self, user_task: str) -> tuple:
+        """Pull similar past trajectories + generalized lessons to prime planning.
+        Best-effort: an embedding/DB failure must degrade to no-recall, not crash
+        the run."""
+        context_examples, lessons = "", []
+        try:
+            trajectories = self.memory.retrieve_similar(user_task, top_k=3)
+            context_examples = self._format_trajectory_examples(trajectories)
+        except Exception as e:
+            print(f"   ⚠️ Episodic recall skipped: {e}")
+        try:
+            lessons = self.semantic_memory.retrieve_relevant(user_task, top_k=5) or []
+        except Exception as e:
+            print(f"   ⚠️ Semantic recall skipped: {e}")
+        if context_examples or lessons:
+            print(f"   🧠 Recalled {len(context_examples.split('### Past run:')) - 1} "
+                  f"past run(s), {len(lessons)} lesson(s)")
+        return context_examples, lessons
 
     async def run_for_web(self, user_task: str) -> str:
         try:
             session, tool_descriptions = await self._ensure_mcp_session()
             global_plan = await self._call_global_planner(user_task)
-            saved_result, meta = await self._run_flow(user_task, global_plan, session, tool_descriptions, "", [])
+            context_examples, semantic_knowledge = self._recall_memory(user_task)
+            saved_result, meta = await self._run_flow(user_task, global_plan, session, tool_descriptions, context_examples, semantic_knowledge)
             self.memory.save_trajectory(user_task, meta["plan"], saved_result, meta["score"], meta["lessons"])
             return saved_result
         except Exception as e:
