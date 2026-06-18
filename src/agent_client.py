@@ -670,8 +670,8 @@ class MementoAgent:
         ]
         return await self._call_llm(prompt, model=SUMMARIZER_MODEL, max_tokens=8192)
 
-    async def _call_global_replan(self, user_task: str, all_findings: str,
-                                  executed_focuses: List[str], market_facts: str = "",
+    async def _call_global_replan(self, user_task: str, findings_by_focus: Dict[str, str],
+                                  market_facts: str = "",
                                   tool_descriptions: str = "") -> Dict[str, Any]:
         """Rolling-horizon self-assessment by the Global Planner.
 
@@ -683,15 +683,20 @@ class MementoAgent:
         their quantitative data) BEFORE the expensive Reflector/Judge ever look at
         it. Because it now sees the findings, it can name concrete tickers a
         discovery pass just revealed — impossible at the up-front plan. Bounded by
-        MAX_REPLAN_ITER + the wall-clock deadline."""
+        MAX_REPLAN_ITER + the wall-clock deadline.
+
+        Findings are assembled with _budget_findings (PER-FOCUS fair share, not a
+        single tail-truncation). A naive all_findings[:N] dropped whichever block
+        sat at the end — typically a just-added drilldown focus — so the planner
+        couldn't see its own freshly-run subtask and re-requested it (wasted
+        rounds). Fair budgeting guarantees every focus is represented."""
         print("\n🌐 [Global Planner · Self-check] Did the plan execute enough?")
-        findings_excerpt = (all_findings or "").strip()
-        if len(findings_excerpt) > 14000:
-            findings_excerpt = findings_excerpt[:14000] + "..."
+        executed_focuses = list(findings_by_focus.keys())
+        digest = _budget_findings(findings_by_focus, total_budget=14000) or "(none)"
         user_content = (
             f"Query: {user_task}\n\n"
             f"Subtasks already run: {executed_focuses}\n\n"
-            f"Findings produced so far:\n{findings_excerpt or '(none)'}"
+            f"Findings produced so far (focus별 분량 균등 배분):\n{digest}"
         )
         if market_facts:
             user_content = f"{market_facts}\n\n{user_content}"
@@ -970,7 +975,7 @@ class MementoAgent:
 
                 # Self-assess execution completeness and re-plan if short.
                 replan = await self._call_global_replan(
-                    user_task, all_findings, list(findings_by_focus.keys()),
+                    user_task, findings_by_focus,
                     market_facts=market_facts, tool_descriptions=tool_descriptions)
                 if replan.get("complete"):
                     break
