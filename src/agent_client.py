@@ -15,7 +15,7 @@ from config import (
     NEWS_ANALYST_MODEL, TECHNICAL_ANALYST_MODEL,
     GLOBAL_PLANNER_MODEL, GLOBAL_REFLECTOR_MODEL, JUDGE_MODEL,
     MEMORY_COMPRESSOR_MODEL, MAX_GLOBAL_ITER, FLOW_TIME_BUDGET_SEC,
-    MAX_FOCUS_REVISIONS,
+    MAX_FOCUS_REVISIONS, MAX_REPLAN_ITER,
 )
 from database import get_setting, reembed_if_model_changed
 from tools.stock.kr_listing import lookup_kr_ticker
@@ -670,6 +670,45 @@ class MementoAgent:
         ]
         return await self._call_llm(prompt, model=SUMMARIZER_MODEL, max_tokens=8192)
 
+    async def _call_global_replan(self, user_task: str, all_findings: str,
+                                  executed_focuses: List[str], market_facts: str = "",
+                                  tool_descriptions: str = "") -> Dict[str, Any]:
+        """Rolling-horizon self-assessment by the Global Planner.
+
+        Inspects what its own plan actually produced and decides whether the plan
+        executed *enough to answer the query* (`complete`) or which subtasks to
+        run next. This is an EXECUTION-completeness check, not a quality critique
+        — its job is to drive the plan to a fully-executed state (e.g. a no-ticker
+        screening pass that only surfaced candidate names must still go fetch
+        their quantitative data) BEFORE the expensive Reflector/Judge ever look at
+        it. Because it now sees the findings, it can name concrete tickers a
+        discovery pass just revealed — impossible at the up-front plan. Bounded by
+        MAX_REPLAN_ITER + the wall-clock deadline."""
+        print("\n🌐 [Global Planner · Self-check] Did the plan execute enough?")
+        findings_excerpt = (all_findings or "").strip()
+        if len(findings_excerpt) > 14000:
+            findings_excerpt = findings_excerpt[:14000] + "..."
+        user_content = (
+            f"Query: {user_task}\n\n"
+            f"Subtasks already run: {executed_focuses}\n\n"
+            f"Findings produced so far:\n{findings_excerpt or '(none)'}"
+        )
+        if market_facts:
+            user_content = f"{market_facts}\n\n{user_content}"
+        prompt = [
+            {"role": "system", "content": load_prompt("global_planner/replan",
+                                                       current_date=_today_str(),
+                                                       tool_capabilities=tool_descriptions)},
+            {"role": "user", "content": user_content},
+        ]
+        response = await self._call_llm(prompt, model=GLOBAL_PLANNER_MODEL, max_tokens=4096)
+        replan = _parse_llm_json(response) or {"complete": True}
+        if replan.get("assessment"):
+            print(f"   📋 {replan['assessment']}")
+        nxt = replan.get("next_subtasks") or []
+        print(f"   {'✅ execution complete' if replan.get('complete') else f'🔁 {len(nxt)} more subtask(s): ' + str([s.get('focus') for s in nxt])}")
+        return replan
+
     async def _call_global_reflector(self, user_task: str, all_findings: str, market_facts: str = "") -> Dict[str, Any]:
         print("\n🔍 [Global Reflector] Critiquing...")
         user_content = f"Query: {user_task}\n\nFindings:\n{all_findings}"
@@ -784,6 +823,41 @@ class MementoAgent:
         # Background task for memory compression
         pass
 
+    async def _gather_subtasks_bounded(self, work_items, session, tool_descriptions,
+                                       semaphore, user_task, global_plan, tool_cache,
+                                       context_examples, semantic_knowledge, timeout):
+        """Run a round's subtasks concurrently, bounded by a wall-clock `timeout`.
+
+        Returns (results, unfinished_focuses). Subtasks that finish within the
+        budget are KEPT even if siblings overrun: the unfinished ones are
+        cancelled and their focuses returned so the caller can flag them as
+        unresolved gaps. A plain asyncio.wait_for over an asyncio.gather can't do
+        this — on timeout it cancels the whole gather, discarding completed work
+        too — which is why we drive the tasks via asyncio.wait instead.
+        """
+        if not work_items:
+            return [], []
+        task_focus = {
+            asyncio.ensure_future(
+                self._run_subtask(st, session, tool_descriptions, semaphore, user_task,
+                                  global_plan, critique=crit, previous_findings=prev,
+                                  tool_cache=tool_cache, context_examples=context_examples,
+                                  semantic_knowledge=semantic_knowledge)): st.get("focus", "")
+            for (st, crit, prev) in work_items}
+        done, pending = await asyncio.wait(task_focus.keys(), timeout=max(1.0, timeout))
+        unfinished = [task_focus[t] for t in pending]
+        for t in pending:
+            t.cancel()
+        results = []
+        for t in done:
+            try:
+                results.append(t.result())
+            except Exception:
+                # Subtask raised before producing findings (e.g. its planner call
+                # failed) — treat its focus as unfinished, don't crash the round.
+                unfinished.append(task_focus[t])
+        return results, [f for f in unfinished if f]
+
     async def _run_flow(self, user_task: str, global_plan: Dict[str, Any], session, tool_descriptions: str, context_examples: str, semantic_knowledge: List[str]) -> str:
         semaphore = asyncio.Semaphore(3)
         tool_cache: Dict[str, "asyncio.Future"] = {}
@@ -858,37 +932,79 @@ class MementoAgent:
                     outcome = "no_new_subtasks"
                     break
 
-            gather_coro = asyncio.gather(*[
-                self._run_subtask(st, session, tool_descriptions, semaphore, user_task,
-                                  global_plan, critique=crit, previous_findings=prev,
-                                  tool_cache=tool_cache, context_examples=context_examples,
-                                  semantic_knowledge=semantic_knowledge)
-                for (st, crit, prev) in work_items])
-            if global_iter == 0:
-                # Core pass — must complete; the report is built on it.
-                results = await gather_coro
-            else:
-                # A single refinement round can itself run for minutes (fresh
-                # subtasks, tool retries with backoff), so the round-boundary
-                # check above is not enough — time-box the round to the remaining
-                # budget and keep prior findings if it overruns.
-                try:
-                    results = await asyncio.wait_for(gather_coro, timeout=max(1.0, deadline - loop.time()))
-                except Exception as e:
-                    # Timed out or the refinement round failed. The core report is
-                    # already collected, so degrade gracefully: keep prior
-                    # findings, flag the open gaps, and summarize.
-                    print(f"   ⏱️ Refinement round stopped ({type(e).__name__}); shipping collected findings.")
-                    unresolved_points.extend(attempting_issues)
-                    outcome = "deadline"
-                    break
-            # Overwrite by focus — a re-run focus replaces its prior block in place
-            # (true revision); a new focus is added.
-            for r in results:
-                findings_by_focus[r["focus"]] = r["findings"]
-                valid_by_focus[r["focus"]] = r.get("valid", True)
+            # ── Inner EXECUTION-COMPLETION loop (own budget: MAX_REPLAN_ITER) ──
+            # Run the current work items, then let the Global Planner self-assess
+            # whether its plan executed *enough to answer the query*. If short
+            # (e.g. a no-ticker screen that only surfaced candidate names), it
+            # re-plans the next subtasks and we run again — all WITHOUT touching
+            # the expensive Reflector/Judge, which only ever critique a
+            # fully-executed result. Bounded by MAX_REPLAN_ITER + the deadline.
+            deadline_hit = False
+            for replan_iter in range(MAX_REPLAN_ITER):
+                # Time-box every round to the remaining wall-clock budget. A round
+                # can run for minutes (fresh subtasks, tool retries); left
+                # unbounded it blows past the web timeout and the user gets a hard
+                # error with NO result. Subtasks that finish are kept; the rest are
+                # flagged below.
+                results, unfinished = await self._gather_subtasks_bounded(
+                    work_items, session, tool_descriptions, semaphore, user_task,
+                    global_plan, tool_cache, context_examples, semantic_knowledge,
+                    timeout=deadline - loop.time())
+                # Overwrite by focus — a re-run focus replaces its prior block in
+                # place (true revision); a new focus is added.
+                for r in results:
+                    findings_by_focus[r["focus"]] = r["findings"]
+                    valid_by_focus[r["focus"]] = r.get("valid", True)
+                all_findings = _assemble_findings()
 
-            all_findings = _assemble_findings()
+                if unfinished:
+                    # Ran past the budget mid-round. Keep whatever completed, flag
+                    # the unfinished work, and bail to the Summarizer.
+                    if global_iter == 0 and replan_iter == 0:
+                        unresolved_points.extend(f"{f} (시간 초과로 미완료)" for f in unfinished)
+                    else:
+                        unresolved_points.extend(attempting_issues)
+                    print(f"   ⏱️ Cut at deadline; {len(unfinished)} focus(es) unfinished.")
+                    deadline_hit = True
+                    break
+
+                # Self-assess execution completeness and re-plan if short.
+                replan = await self._call_global_replan(
+                    user_task, all_findings, list(findings_by_focus.keys()),
+                    market_facts=market_facts, tool_descriptions=tool_descriptions)
+                if replan.get("complete"):
+                    break
+                comp_subtasks = replan.get("next_subtasks") or []
+                comp_items: List[tuple] = []
+                for st in comp_subtasks:
+                    focus = st.get("focus")
+                    if not focus:
+                        continue
+                    st_norm = {"focus": focus, "context": st.get("context", ""),
+                               "search_hints": st.get("search_hints", [])}
+                    issues = st.get("issues") or ([st["context"]] if st.get("context") else [])
+                    if focus in findings_by_focus:
+                        if revision_count.get(focus, 0) >= MAX_FOCUS_REVISIONS:
+                            unresolved_points.extend(issues)
+                            continue
+                        revision_count[focus] = revision_count.get(focus, 0) + 1
+                        crit = {"critique": st.get("context", ""), "weak_points": issues, "missing_coverage": []}
+                        prev = f"## [{focus}]\n{findings_by_focus.get(focus, '')}"
+                        comp_items.append((st_norm, crit, prev))
+                    else:
+                        crit = {"critique": st.get("context", ""), "weak_points": issues, "missing_coverage": []}
+                        comp_items.append((st_norm, crit, all_findings))
+                if not comp_items or loop.time() > deadline:
+                    break
+                work_items = comp_items
+                attempting_issues = [s.get("focus", "") for s in comp_subtasks]
+
+            if deadline_hit:
+                outcome = "deadline"
+                break
+
+            # ── Outer QUALITY gate: Reflector → Judge → defense (unchanged) ────
+            # Reaches here only on a plan the planner deems fully executed.
             global_critique = await self._call_global_reflector(user_task, all_findings, market_facts)
             last_critique = global_critique
             if global_critique.get("approved"):

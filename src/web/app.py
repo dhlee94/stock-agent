@@ -28,6 +28,7 @@ async def _require_api_key(x_api_key: str = Header(default="")) -> None:
 
 # Import agent
 from agent_client import MementoAgent
+from config import WEB_REQUEST_TIMEOUT_SEC
 
 # Import stock tools
 from tools.stock import (
@@ -53,12 +54,12 @@ _jobs: Dict[str, dict] = {}
 async def _run_chat_job(job_id: str, message: str):
     """Background task that runs the agent and stores the result."""
     try:
-        result = await asyncio.wait_for(agent.run_for_web(message), timeout=600)
+        result = await asyncio.wait_for(agent.run_for_web(message), timeout=WEB_REQUEST_TIMEOUT_SEC)
         _jobs[job_id] = {"status": "done", "response": result}
     except (asyncio.TimeoutError, TimeoutError):
         _jobs[job_id] = {
             "status": "error",
-            "error": "분석 시간이 초과되었습니다 (10분).",
+            "error": f"분석 시간이 초과되었습니다 ({WEB_REQUEST_TIMEOUT_SEC // 60}분).",
         }
     except asyncio.CancelledError:
         _jobs[job_id] = {"status": "error", "error": "요청이 취소되었습니다."}

@@ -228,7 +228,7 @@ class TestRunFlowSingle:
             {"step": 1, "tool": "stock_price", "args": {"ticker": "005930.KS"}, "reason": "Get price"}
         ])
         agent._call_executor = AsyncMock(return_value="현재가 70,000원. 안정적.")
-        agent._call_local_reflector = AsyncMock(return_value={"valid": True, "issues": []})
+        agent._call_global_replan = AsyncMock(return_value={"complete": True})
         agent._call_global_reflector = AsyncMock(return_value={"approved": True})
         agent._call_summarizer = AsyncMock(return_value="삼성전자 최종 분석: 보유 추천")
 
@@ -247,32 +247,35 @@ class TestRunFlowSingle:
         assert agent._call_planner.await_count == 2
 
     @pytest.mark.asyncio
-    async def test_single_subtask_retries_on_invalid_local_check(self):
+    async def test_incomplete_execution_reruns_before_quality_gate(self):
+        """The inner completion loop: when the Global Planner self-check says the
+        plan did not execute enough, it re-plans and re-runs the focus — WITHOUT
+        invoking the (expensive) Reflector — until it reports complete."""
         agent = _make_agent()
         session = _tool_session()
 
         agent._call_planner = AsyncMock(return_value=[
             {"step": 1, "tool": "stock_price", "args": {}, "reason": "price"}
         ])
-        agent._call_executor = AsyncMock(return_value="empty result")
-        agent._call_local_reflector = AsyncMock(side_effect=[
-            {"valid": False, "issues": ["No data"]},
-            {"valid": True, "issues": []},
+        agent._call_executor = AsyncMock(return_value="분석")
+        # First self-check: incomplete → re-run the same focus. Second: complete.
+        agent._call_global_replan = AsyncMock(side_effect=[
+            {"complete": False, "next_subtasks": [{"focus": "제약", "issues": ["정량 데이터 보강"]}]},
+            {"complete": True},
         ])
         agent._call_global_reflector = AsyncMock(return_value={"approved": True})
         agent._call_summarizer = AsyncMock(return_value="요약 완료")
 
-        await agent._run_flow(
-            user_task="삼성전자 어때?",
-            global_plan=SINGLE_PLAN,
-            session=session,
-            tool_descriptions="",
-            context_examples="",
-            semantic_knowledge=[],
-        )
+        # No-ticker subject → no Tier-2 slot, so planner calls come only from the
+        # completion loop: initial run + one re-run = 2.
+        plan = {"subject": "제약 섹터", "subtasks": [
+            {"focus": "제약", "search_hints": [], "context": "x"}]}
+        await agent._run_flow("제약 어때?", plan, session, "", "", [])
 
-        # Planner called twice: initial + retry
         assert agent._call_planner.await_count == 2
+        # The Reflector only ran AFTER the planner declared execution complete.
+        assert agent._call_global_replan.await_count == 2
+        agent._call_global_reflector.assert_awaited_once()
 
 
 # ---------------------------------------------------------------------------
@@ -289,6 +292,7 @@ class TestRunFlowDomain:
             {"step": 1, "tool": "search_web", "args": {"query": "바이오"}, "reason": "뉴스"}
         ])
         agent._call_executor = AsyncMock(return_value="섹터 동향 분석 완료")
+        agent._call_global_replan = AsyncMock(return_value={"complete": True})
         agent._call_global_reflector = AsyncMock(return_value={"approved": True})
         agent._call_summarizer = AsyncMock(return_value="바이오 섹터 최종 요약")
 
@@ -315,7 +319,7 @@ class TestRunFlowDomain:
             {"step": 1, "tool": "search_web", "args": {}, "reason": "search"}
         ])
         agent._call_executor = AsyncMock(return_value="분석")
-        agent._call_local_reflector = AsyncMock(return_value={"valid": True, "issues": []})
+        agent._call_global_replan = AsyncMock(return_value={"complete": True})
         # First global check rejected → triggers debate
         agent._call_global_reflector = AsyncMock(return_value={
             "approved": False, "critique": "CMO 섹터 누락",
@@ -357,7 +361,7 @@ class TestRunFlowDomain:
             {"step": 1, "tool": "search_web", "args": {}, "reason": "search"}
         ])
         agent._call_executor = AsyncMock(return_value="분석")
-        agent._call_local_reflector = AsyncMock(return_value={"valid": True, "issues": []})
+        agent._call_global_replan = AsyncMock(return_value={"complete": True})
         agent._call_global_reflector = AsyncMock(side_effect=[
             {"approved": False, "critique": "CMO 누락", "missing_coverage": ["CMO"], "weak_points": []},
             {"approved": True},
@@ -406,6 +410,7 @@ class TestRunFlowRevision:
             [{"tool": "stock_dcf", "args": {}, "reason": "밸류 보강"}],       # iter1 revise
         ])
         agent._call_executor = AsyncMock(side_effect=["얕은 분석", "보강된 밸류에이션"])
+        agent._call_global_replan = AsyncMock(return_value={"complete": True})
         agent._call_global_reflector = AsyncMock(side_effect=[
             {"approved": False, "critique": "밸류 근거 약함",
              "subtask_verdicts": [{"focus": "제약", "sufficient": False,
@@ -455,6 +460,7 @@ class TestRunFlowRevision:
             agent._call_planner = AsyncMock(return_value=[
                 {"tool": "search_web", "args": {}, "reason": "분석"}])
             agent._call_executor = AsyncMock(return_value="분석 결과")
+            agent._call_global_replan = AsyncMock(return_value={"complete": True})
             # Always insufficient on the same focus.
             agent._call_global_reflector = AsyncMock(return_value={
                 "approved": False, "critique": "여전히 약함",
@@ -493,6 +499,7 @@ class TestRunFlowRevision:
         agent._call_planner = AsyncMock(return_value=[
             {"tool": "search_web", "args": {}, "reason": "분석"}])
         agent._call_executor = AsyncMock(return_value="충분한 분석")
+        agent._call_global_replan = AsyncMock(return_value={"complete": True})
         agent._call_global_reflector = AsyncMock(return_value={"approved": True})
         agent._call_summarizer = AsyncMock(return_value="최종")
 
@@ -514,7 +521,7 @@ class TestRunFlowEmptySubtasks:
         session = _tool_session()
 
         agent._call_planner = AsyncMock(return_value=[])
-        agent._call_local_reflector = AsyncMock(return_value={"valid": True})
+        agent._call_global_replan = AsyncMock(return_value={"complete": True})
         agent._call_global_reflector = AsyncMock(return_value={"approved": True})
         agent._call_summarizer = AsyncMock(return_value="결과 없음")
 
@@ -549,7 +556,7 @@ class TestRunFlowToolCache:
         same_step = [{"tool": "stock_price", "args": {"ticker": "005930.KS"}, "reason": "price"}]
         agent._call_planner = AsyncMock(return_value=same_step)
         agent._call_executor = AsyncMock(return_value="현재가 70,000원.")
-        agent._call_local_reflector = AsyncMock(return_value={"valid": True})
+        agent._call_global_replan = AsyncMock(return_value={"complete": True})
         agent._call_global_reflector = AsyncMock(return_value={"approved": True})
         agent._call_summarizer = AsyncMock(return_value="요약")
 
@@ -579,7 +586,7 @@ class TestRunFlowToolCache:
             ]
         )
         agent._call_executor = AsyncMock(return_value="현재가.")
-        agent._call_local_reflector = AsyncMock(return_value={"valid": True})
+        agent._call_global_replan = AsyncMock(return_value={"complete": True})
         agent._call_global_reflector = AsyncMock(return_value={"approved": True})
         agent._call_summarizer = AsyncMock(return_value="요약")
 
@@ -622,6 +629,7 @@ class TestMemoryLoop:
         agent = _make_agent()
         session = _tool_session()
         agent._call_planner = AsyncMock(return_value=[])
+        agent._call_global_replan = AsyncMock(return_value={"complete": True})
         agent._call_global_reflector = AsyncMock(return_value={"approved": True})
         agent._call_summarizer = AsyncMock(return_value="요약")
 
@@ -643,6 +651,7 @@ class TestMemoryLoop:
         agent._call_planner = AsyncMock(return_value=[
             {"tool": "search_web", "args": {}, "reason": "x"}])
         agent._call_executor = AsyncMock(return_value="분석 결과 있음")
+        agent._call_global_replan = AsyncMock(return_value={"complete": True})
         agent._call_global_reflector = AsyncMock(return_value={"approved": True})
         agent._call_summarizer = AsyncMock(return_value="요약")
 
@@ -661,6 +670,7 @@ class TestMemoryLoop:
         agent._call_planner = AsyncMock(return_value=[
             {"tool": "stock_price", "args": {}, "reason": "price"}])
         agent._call_executor = AsyncMock(return_value="해석")
+        agent._call_global_replan = AsyncMock(return_value={"complete": True})
         agent._call_global_reflector = AsyncMock(return_value={"approved": True})
         agent._call_summarizer = AsyncMock(return_value="요약")
 
