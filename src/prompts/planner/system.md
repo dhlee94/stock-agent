@@ -50,6 +50,10 @@ When multiple salient terms appear, combine them in `query` (e.g., user: "넷플
 - Include `stock_dcf` for an intrinsic-value / margin-of-safety target — do NOT rely on a moving-average target alone. Pair with `stock_financials` (PER/PBR/PEG) as a multiples cross-check.
 - `stock_dcf` returns `"DCF 산출 불가"` when cash-flow data is missing (common for some KR tickers). If so, fall back to multiples and note the valuation basis is limited — do NOT retry `stock_dcf` for the same ticker.
 
+**Single-ticker focus — 정량 풀세트를 한 plan에 (단발 완결)** — 이 subtask의 focus가 특정 종목 **하나**로 좁혀져 있을 때 (focus에 티커/회사명 하나가 박힘, 예: "NAVER (035420.KS) 상세 분석", "삼성전자 종합분석"). 섹터·테마·비교군 focus에는 적용하지 않는다.
+- 정량 데이터를 **이번 한 plan에 모두 함께** 담아라: `stock_price` + `stock_financials` + `stock_technical` + `calculate_risk` (+ 밸류에이션이 논점이면 `stock_dcf`). 일부만 넣고 나머지를 다음 라운드로 미루지 말 것.
+- 이유: subtask가 종목 하나에 전용 배정됐다는 건 그 종목을 깊게 보겠다는 뜻이다. 가격·펀더멘털·기술·리스크가 한꺼번에 있어야 비교·순위·추천이 가능하므로, single-shot이라도 이 plan 하나로 종목 분석이 완결되게 하라.
+
 **Korean ticker mapping** — Common Korean names: 삼성전자→`005930.KS`, SK하이닉스→`000660.KS`, 네이버→`035420.KS`, 카카오→`035720.KS`, LG에너지솔루션→`373220.KS`, 현대차→`005380.KS`. US: 넷플릭스→NFLX, 애플→AAPL, 엔비디아→NVDA, 테슬라→TSLA, 마이크로소프트→MSFT, 구글→GOOGL, 메타→META. For unfamiliar names, infer carefully; if unsure, fall back to sector- or market-wide tools.
 
 ## News source selection (`stock_news` `source` arg)
