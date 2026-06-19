@@ -215,6 +215,34 @@ class TestCallGlobalPlanner:
 
 
 # ---------------------------------------------------------------------------
+# _call_judge — must actually show the Critic↔Planner debate to the Judge
+# ---------------------------------------------------------------------------
+
+class TestJudgeReceivesDebate:
+    @pytest.mark.asyncio
+    async def test_judge_prompt_includes_critique_and_defense(self):
+        """Regression: the Judge used to receive only the query, so it reported
+        'no debate content provided' and kept ruling more work was needed —
+        churning subtasks until the deadline. It must see both sides."""
+        agent = _make_agent()
+        agent._call_llm = AsyncMock(return_value='{"verdict": "planner", "reason": "ok"}')
+
+        critique = {"critique": "CMO 섹터 누락됨", "weak_points": ["DCF 약함"],
+                    "missing_coverage": ["CMO"]}
+        defense = {"defense": "CMO 데이터 부족", "concede": [],
+                   "revise": [{"focus": "제약"}], "new_subtasks": [{"focus": "바이오텍"}]}
+
+        await agent._call_judge("바이오 어때?", critique, defense)
+
+        user_msg = agent._call_llm.call_args.args[0][-1]["content"]
+        assert "CMO 섹터 누락됨" in user_msg     # critic's critique text
+        assert "DCF 약함" in user_msg            # critic's weak points
+        assert "CMO 데이터 부족" in user_msg      # planner's defense text
+        assert "제약" in user_msg                 # revise focus
+        assert "바이오텍" in user_msg             # proposed new subtask focus
+
+
+# ---------------------------------------------------------------------------
 # _run_flow — single subtask path
 # ---------------------------------------------------------------------------
 

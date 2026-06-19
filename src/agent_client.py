@@ -763,9 +763,25 @@ class MementoAgent:
 
     async def _call_judge(self, user_task: str, critique: Dict[str, Any], defense: Dict[str, Any], tool_descriptions: str = "") -> Dict[str, Any]:
         print("\n⚖️ [Judge] Evaluating...")
+        # The Judge arbitrates the Critic↔Planner debate, so it MUST actually see
+        # both sides. Previously only the query was passed, so the Judge reported
+        # "no debate content provided" and defaulted to ruling more work was needed
+        # — which, under the rolling-horizon loops, churned redundant subtasks
+        # until the deadline. Feed it the critic's points and the planner's defense.
+        critic_block = (
+            f"Critic's critique: {critique.get('critique', '')}\n"
+            f"- weak points: {critique.get('weak_points') or []}\n"
+            f"- missing coverage: {critique.get('missing_coverage') or []}"
+        )
+        defense_block = (
+            f"Planner's defense: {defense.get('defense', '')}\n"
+            f"- conceded: {defense.get('concede') or []}\n"
+            f"- proposes re-running (revise): {[r.get('focus') for r in (defense.get('revise') or [])]}\n"
+            f"- proposes new subtasks: {[s.get('focus') for s in (defense.get('new_subtasks') or [])]}"
+        )
         prompt = [
             {"role": "system", "content": load_prompt("judge/system", tool_capabilities=tool_descriptions)},
-            {"role": "user", "content": f"Query: {user_task}"},
+            {"role": "user", "content": f"Query: {user_task}\n\n{critic_block}\n\n{defense_block}"},
         ]
         response = await self._call_llm(prompt, model=JUDGE_MODEL)
         verdict = _parse_llm_json(response) or {"verdict": "planner"}
