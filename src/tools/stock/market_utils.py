@@ -144,8 +144,21 @@ NAME_TO_TICKER.update({
 })
 
 def get_company_name(ticker: str) -> str:
-    """Get company name from ticker."""
-    return TICKER_TO_NAME.get(ticker, ticker.split('.')[0])
+    """Get company name from ticker.
+
+    Order: curated TICKER_TO_NAME (aliases/overrides) → authoritative exchange
+    listing (KRX / US) → bare ticker code. The listing fallback is what keeps the
+    long tail (e.g. 두산에너빌리티 034020.KS) from collapsing to a bare code like
+    '034020', which would otherwise become a useless news search query."""
+    if ticker in TICKER_TO_NAME:
+        return TICKER_TO_NAME[ticker]
+    if detect_market(ticker) == 'KR':
+        from .kr_listing import lookup_kr_name
+        name = lookup_kr_name(ticker)
+    else:
+        from .us_listing import lookup_us_name
+        name = lookup_us_name(ticker)
+    return name or ticker.split('.')[0]
 
 
 def get_english_name(ticker: str) -> str:
@@ -162,4 +175,15 @@ def get_english_name(ticker: str) -> str:
         '373220.KS': 'LG Energy Solution',
         '005490.KS': 'POSCO Holdings',
     }
-    return english_names.get(ticker, TICKER_TO_NAME.get(ticker, ticker))
+    if ticker in english_names:
+        return english_names[ticker]
+    if ticker in TICKER_TO_NAME:
+        return TICKER_TO_NAME[ticker]
+    # US long tail: fall back to the listed (English) company name so the yfinance /
+    # Google News query is a real name, not a bare symbol.
+    if detect_market(ticker) == 'US':
+        from .us_listing import lookup_us_name
+        name = lookup_us_name(ticker)
+        if name:
+            return name
+    return ticker

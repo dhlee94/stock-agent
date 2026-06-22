@@ -18,6 +18,7 @@ _CACHE_TTL = timedelta(hours=24)
 
 _MEM_CACHE: Optional[pd.DataFrame] = None
 _NAME_INDEX: Optional[Dict[str, str]] = None
+_SYMBOL_INDEX: Optional[Dict[str, str]] = None
 
 _CORP_SUFFIXES = (
     " incorporated", " corporation", " holdings", " holding", " companies",
@@ -40,7 +41,7 @@ def _normalize(name: str) -> str:
 
 def load_us_listing(force_refresh: bool = False) -> pd.DataFrame:
     """Return combined US listing with columns Symbol, Name. Cached 24h on disk."""
-    global _MEM_CACHE, _NAME_INDEX
+    global _MEM_CACHE, _NAME_INDEX, _SYMBOL_INDEX
     if _MEM_CACHE is not None and not force_refresh:
         return _MEM_CACHE
 
@@ -65,6 +66,7 @@ def load_us_listing(force_refresh: bool = False) -> pd.DataFrame:
 
     _MEM_CACHE = pd.read_csv(_CACHE_PATH)
     _NAME_INDEX = None
+    _SYMBOL_INDEX = None
     return _MEM_CACHE
 
 
@@ -98,6 +100,28 @@ def lookup_us_ticker(name: str) -> Optional[str]:
     if not norm:
         return None
     return _name_index().get(norm)
+
+
+def lookup_us_name(symbol: str) -> Optional[str]:
+    """Reverse lookup: a US symbol → its listed company name. None if unknown or the
+    listing cannot be loaded. Mirrors lookup_kr_name for the US long tail."""
+    if not symbol:
+        return None
+    s = symbol.strip().upper()
+    if not s:
+        return None
+    global _SYMBOL_INDEX
+    if _SYMBOL_INDEX is None:
+        try:
+            df = load_us_listing()
+        except Exception:
+            return None
+        _SYMBOL_INDEX = {
+            str(sym).upper(): str(name)
+            for sym, name in zip(df["Symbol"], df["Name"])
+            if pd.notna(sym) and pd.notna(name)
+        }
+    return _SYMBOL_INDEX.get(s)
 
 
 def is_valid_us_ticker(symbol: str) -> bool:

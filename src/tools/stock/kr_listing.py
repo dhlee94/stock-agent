@@ -7,7 +7,7 @@ listing via FinanceDataReader once a day and provides an authoritative lookup.
 """
 import os
 from datetime import datetime, timedelta
-from typing import Optional
+from typing import Dict, Optional
 
 import pandas as pd
 
@@ -16,6 +16,7 @@ _CACHE_PATH = os.path.join(_DATA_DIR, "kr_listing.csv")
 _CACHE_TTL = timedelta(hours=24)
 
 _MEM_CACHE: Optional[pd.DataFrame] = None
+_CODE_INDEX: Optional[Dict[str, str]] = None
 
 
 def _market_suffix(market: str) -> str:
@@ -29,9 +30,10 @@ def _market_suffix(market: str) -> str:
 
 def load_kr_listing(force_refresh: bool = False) -> pd.DataFrame:
     """Return KRX listing with columns Code, Name, Market. Cached 24h on disk."""
-    global _MEM_CACHE
+    global _MEM_CACHE, _CODE_INDEX
     if _MEM_CACHE is not None and not force_refresh:
         return _MEM_CACHE
+    _CODE_INDEX = None  # invalidate reverse index whenever the listing reloads
 
     stale = True
     if not force_refresh and os.path.exists(_CACHE_PATH):
@@ -70,3 +72,29 @@ def lookup_kr_ticker(name: str) -> Optional[str]:
     if not suffix:
         return None
     return f"{r['Code']}{suffix}"
+
+
+def lookup_kr_name(ticker: str) -> Optional[str]:
+    """Reverse lookup: a '<code>.KS' / '<code>.KQ' (or bare 6-digit code) → company
+    name. Returns None when the code is unknown or the listing cannot be loaded.
+
+    This is the authoritative ticker→name source for the KRX long tail. Without it,
+    callers fall back to the bare code (e.g. '034020'), which then becomes a useless
+    news search query and yields zero relevant articles."""
+    if not ticker:
+        return None
+    code = ticker.split(".")[0].strip()
+    if not code:
+        return None
+    global _CODE_INDEX
+    if _CODE_INDEX is None:
+        try:
+            df = load_kr_listing()
+        except Exception:
+            return None
+        _CODE_INDEX = {
+            str(c).zfill(6): str(n)
+            for c, n in zip(df["Code"], df["Name"])
+            if pd.notna(c) and pd.notna(n)
+        }
+    return _CODE_INDEX.get(code.zfill(6))
