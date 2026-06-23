@@ -7,6 +7,7 @@ import yfinance as yf
 from datetime import datetime, timedelta
 import pytz
 from utils.response import ToolResponse
+from utils.format import attach_money_display
 
 
 def detect_market(ticker: str, declared: str = "KR") -> str:
@@ -69,7 +70,7 @@ def get_stock_price(ticker: str, market: str = "KR") -> str:
             from .market_utils import get_company_name
             stock_name = get_company_name(ticker) or ticker
 
-            return ToolResponse.success({
+            kr_payload = {
                 "ticker": ticker,
                 "name": stock_name,
                 "current_price": round(current_price, 0),
@@ -82,7 +83,11 @@ def get_stock_price(ticker: str, market: str = "KR") -> str:
                 "day_low": round(day_low, 0),
                 "timestamp": datetime.now(pytz.timezone('Asia/Seoul')).isoformat(),
                 "source": "FinanceDataReader"
-            })
+            }
+            attach_money_display(kr_payload, "KR",
+                                 per_share_keys=("current_price", "previous_close", "change",
+                                                 "day_high", "day_low"))
+            return ToolResponse.success(kr_payload)
 
         # US Market: Use yfinance
         stock = yf.Ticker(ticker)
@@ -106,9 +111,10 @@ def get_stock_price(ticker: str, market: str = "KR") -> str:
         tz = pytz.timezone('US/Eastern') if market == "US" else pytz.timezone('Asia/Seoul')
         currency = "USD" if market == "US" else "KRW"
         
-        return ToolResponse.success({
+        from .market_utils import get_company_name
+        us_payload = {
             "ticker": ticker,
-            "name": info.get('shortName', info.get('longName', ticker)),
+            "name": get_company_name(ticker) or info.get('shortName', info.get('longName', ticker)),
             "current_price": round(current_price, 2),
             "previous_close": round(prev_close, 2),
             "change": round(change, 2),
@@ -122,7 +128,11 @@ def get_stock_price(ticker: str, market: str = "KR") -> str:
             "52_week_low": info.get('fiftyTwoWeekLow'),
             "timestamp": datetime.now(tz).isoformat(),
             "source": "yfinance"
-        })
+        }
+        attach_money_display(us_payload, market, agg_keys=("market_cap",),
+                             per_share_keys=("current_price", "previous_close", "change",
+                                             "day_high", "day_low", "52_week_high", "52_week_low"))
+        return ToolResponse.success(us_payload)
         
     except Exception as e:
         return ToolResponse.error(f"Failed to fetch price data for {ticker}: {str(e)}")

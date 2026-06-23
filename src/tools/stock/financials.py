@@ -5,6 +5,7 @@ import logging
 import yfinance as yf
 
 from utils.response import ToolResponse
+from utils.format import attach_money_display
 from config import KRX_ID, KRX_PW
 from .dcf import _reliable_fcf  # shared FCF sanitizer (rejects corrupted info.freeCashflow)
 
@@ -118,6 +119,19 @@ def get_financials(ticker: str) -> str:
             "recommendation_key": info.get('recommendationKey'),
             "num_analyst_opinions": info.get('numberOfAnalystOpinions'),
         }
+
+        # Deterministic money strings (raw integers → 조/억 or $T/B/M) so the
+        # narrator LLM copies them verbatim instead of mis-converting units.
+        _mkt = "KR" if (ticker.endswith(".KS") or ticker.endswith(".KQ")) else "US"
+        attach_money_display(valuation, _mkt, agg_keys=("market_cap", "enterprise_value"))
+        attach_money_display(per_share, _mkt,
+                             per_share_keys=("eps_trailing", "eps_forward", "book_value", "revenue_per_share"))
+        attach_money_display(dividend, _mkt, per_share_keys=("dividend_rate",))
+        attach_money_display(health, _mkt,
+                             agg_keys=("total_cash", "total_debt", "free_cash_flow", "operating_cash_flow"))
+        attach_money_display(analyst, _mkt,
+                             per_share_keys=("current_price", "target_mean_price", "target_high_price",
+                                             "target_low_price", "target_median_price"))
 
         result_data = {
             "ticker": ticker,

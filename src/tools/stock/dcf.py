@@ -15,6 +15,7 @@ assumptions surfaced for the analyst (and Reflector) to judge.
 import yfinance as yf
 
 from utils.response import ToolResponse
+from utils.format import attach_money_display
 from .market_utils import get_company_name
 
 
@@ -254,19 +255,14 @@ def get_dcf(ticker: str, market: str = "KR",
         # Margin of safety: conservative buy price = base intrinsic × (1 - MOS)
         buy_below = base_iv * (1 - margin_of_safety)
 
-        return ToolResponse.success({
-            "ticker": ticker,
-            "company_name": get_company_name(ticker),
-            "current_price": round(price, 2),
-            "intrinsic_value": {k: (round(v, 2) if v is not None else None)
-                                for k, v in scenarios.items()},
-            "margin_of_safety_pct": round(margin_of_safety * 100, 1),
-            "buy_below_price": round(buy_below, 2),
-            "upside_vs_base_pct": round((base_iv - price) / price * 100, 2),
-            "upside_vs_buy_below_pct": round((buy_below - price) / price * 100, 2),
-            "in_buy_zone": bool(price <= buy_below),
-            "growth_consistency": growth_consistency,
-            "assumptions": {
+        _mkt = "KR" if (ticker.endswith(".KS") or ticker.endswith(".KQ")) else "US"
+        intrinsic = {k: (round(v, 2) if v is not None else None) for k, v in scenarios.items()}
+        attach_money_display(intrinsic, _mkt, per_share_keys=("bear", "base", "bull"))
+        if growth_consistency:
+            attach_money_display(growth_consistency, _mkt,
+                                 per_share_keys=("conservative_iv_revenue_synced",
+                                                 "optimistic_iv_fcf_synced", "conservative_buy_below"))
+        assumptions = {
                 "fcf_ttm": fcf,
                 "fcf_source": fcf_source,
                 "stage1_growth_pct": round(base_growth * 100, 2),
@@ -286,12 +282,28 @@ def get_dcf(ticker: str, market: str = "KR",
                 "net_debt": net_debt,
                 "shares_outstanding": shares,
                 "shares_note": shares_note,
-            },
+        }
+        attach_money_display(assumptions, _mkt, agg_keys=("fcf_ttm", "net_debt"))
+
+        payload = {
+            "ticker": ticker,
+            "company_name": get_company_name(ticker),
+            "current_price": round(price, 2),
+            "intrinsic_value": intrinsic,
+            "margin_of_safety_pct": round(margin_of_safety * 100, 1),
+            "buy_below_price": round(buy_below, 2),
+            "upside_vs_base_pct": round((base_iv - price) / price * 100, 2),
+            "upside_vs_buy_below_pct": round((buy_below - price) / price * 100, 2),
+            "in_buy_zone": bool(price <= buy_below),
+            "growth_consistency": growth_consistency,
+            "assumptions": assumptions,
             "method": ("Lightweight two-stage FCFF DCF: stage-1 growth held for "
                        "high_growth_years, then faded linearly to terminal growth over the "
                        "remaining years; discounted at a WACC proxy (CAPM cost of equity + "
                        "after-tax cost of debt, market-value weighted). Model estimate — judge "
                        "against the bear/bull range and assumptions, not as a precise target."),
-        })
+        }
+        attach_money_display(payload, _mkt, per_share_keys=("current_price", "buy_below_price"))
+        return ToolResponse.success(payload)
     except Exception as e:
         return ToolResponse.error(str(e), {"ticker": ticker})

@@ -4,6 +4,8 @@ Sector Analysis Tool - Analyze market sectors and industries
 import json
 import yfinance as yf
 from utils.response import ToolResponse
+from utils.format import attach_money_display
+from .market_utils import get_company_name
 
 
 # Major Korean stock indices and ETFs by sector
@@ -103,14 +105,17 @@ def _analyze_sector(sector_name: str, tickers: list, market: str) -> str:
             total_market_cap += mc or 0
             returns.append(monthly_return)
             
-            stocks.append({
+            row = {
                 "ticker": ticker,
-                "name": info.get('shortName', ticker),
+                "name": get_company_name(ticker) or info.get('shortName', ticker),
                 "current_price": round(prices[-1], 2) if prices else None,
                 "market_cap": mc,
                 "return_1mo": round(monthly_return, 2),
                 "pe_ratio": info.get('trailingPE'),
-            })
+            }
+            attach_money_display(row, market, agg_keys=("market_cap",),
+                                 per_share_keys=("current_price",))
+            stocks.append(row)
         except Exception:
             continue
     
@@ -122,15 +127,17 @@ def _analyze_sector(sector_name: str, tickers: list, market: str) -> str:
     
     avg_return = sum(returns) / len(returns) if returns else 0
     
+    summary = {
+        "stock_count": len(stocks),
+        "total_market_cap": total_market_cap,
+        "avg_return_1mo": round(avg_return, 2),
+        "trend": "bullish" if avg_return > 0 else "bearish"
+    }
+    attach_money_display(summary, market, agg_keys=("total_market_cap",))
     return json.dumps({
         "status": "success",
         "sector": sector_name,
         "market": market,
         "stocks": stocks,
-        "summary": {
-            "stock_count": len(stocks),
-            "total_market_cap": total_market_cap,
-            "avg_return_1mo": round(avg_return, 2),
-            "trend": "bullish" if avg_return > 0 else "bearish"
-        }
+        "summary": summary,
     }, ensure_ascii=False)

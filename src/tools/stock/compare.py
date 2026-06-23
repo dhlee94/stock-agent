@@ -4,6 +4,8 @@ Stock Comparison Tool - Compare multiple stocks
 import yfinance as yf
 from typing import List
 from utils.response import ToolResponse
+from utils.format import attach_money_display
+from .market_utils import get_company_name
 
 
 def compare_stocks(tickers: List[str], period: str = "1y") -> str:
@@ -45,9 +47,10 @@ def compare_stocks(tickers: List[str], period: str = "1y") -> str:
                 else:
                     volatility = 0.0
                 
-                comparisons.append({
+                _mkt = "KR" if (ticker.endswith(".KS") or ticker.endswith(".KQ")) else "US"
+                comp = {
                     "ticker": ticker,
-                    "name": info.get('shortName', ticker),
+                    "name": get_company_name(ticker) or info.get('shortName', ticker),
                     "sector": info.get('sector'),
                     "current_price": round(end_price, 2),
                     "market_cap": info.get('marketCap'),
@@ -62,7 +65,10 @@ def compare_stocks(tickers: List[str], period: str = "1y") -> str:
                         "return_percent": round(total_return, 2),
                         "volatility_percent": round(volatility, 2),
                     }
-                })
+                }
+                attach_money_display(comp, _mkt, agg_keys=("market_cap",),
+                                     per_share_keys=("current_price",))
+                comparisons.append(comp)
             except Exception as e:
                 print(f"   ⚠️ [Compare] {ticker} skipped: {e}")
                 continue
