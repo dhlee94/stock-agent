@@ -99,6 +99,13 @@ WEB_REQUEST_TIMEOUT_SEC = int(os.environ.get("WEB_REQUEST_TIMEOUT_SEC", "900"))
 # letting the request hard-time-out with no result.
 FLOW_TIME_BUDGET_SEC = int(os.environ.get("FLOW_TIME_BUDGET_SEC", "780"))
 
+# Seconds reserved out of FLOW_TIME_BUDGET_SEC for the final summarizer. Refinement
+# work stops at (FLOW_TIME_BUDGET_SEC - this), guaranteeing the summarizer runs
+# inside the budget instead of overrunning the web timeout. The summarizer is also
+# hard-bounded to this window and falls back to the raw assembled findings if it
+# overruns, so the user always gets a result within budget.
+SUMMARIZER_RESERVE_SEC = int(os.environ.get("SUMMARIZER_RESERVE_SEC", "180"))
+
 # App Settings
 DEFAULT_MARKET = os.environ.get("DEFAULT_MARKET", "KR")
 RISK_TOLERANCE = os.environ.get("RISK_TOLERANCE", "Medium")

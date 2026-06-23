@@ -15,7 +15,7 @@ from config import (
     NEWS_ANALYST_MODEL, TECHNICAL_ANALYST_MODEL,
     GLOBAL_PLANNER_MODEL, GLOBAL_REFLECTOR_MODEL, JUDGE_MODEL,
     MEMORY_COMPRESSOR_MODEL, MAX_GLOBAL_ITER, FLOW_TIME_BUDGET_SEC,
-    MAX_FOCUS_REVISIONS, MAX_REPLAN_ITER,
+    MAX_FOCUS_REVISIONS, MAX_REPLAN_ITER, SUMMARIZER_RESERVE_SEC,
 )
 from database import get_setting, reembed_if_model_changed
 from tools.stock.kr_listing import lookup_kr_ticker, resolve_to_ticker
@@ -295,6 +295,21 @@ _TRAJ_SCORE_BY_OUTCOME = {
     "maxed":            0.5,
     "incomplete":       0.6,
 }
+
+
+def _fallback_report(user_task: str, all_findings: str,
+                     unresolved_points: Optional[List[str]] = None) -> str:
+    """Degraded report assembled from collected findings when the Summarizer can't
+    run within its reserved window. Unpolished but real — far better than the hard
+    web timeout returning nothing after a full run of analysis."""
+    parts = [
+        f"# 분석 리포트 (요약 생성 시간 초과 — 수집된 분석을 그대로 제공합니다)\n",
+        f"**질문:** {user_task}\n",
+        (all_findings or "").strip() or "(수집된 findings 없음)",
+    ]
+    if unresolved_points:
+        parts.append("\n## 미해결·한계\n" + "\n".join(f"- {p}" for p in unresolved_points))
+    return "\n".join(parts)
 
 
 def _build_trajectory_meta(outcome: str, critique: Dict[str, Any],
@@ -1002,13 +1017,15 @@ class MementoAgent:
         # episodic memory records real lessons on unresolved/maxed runs.
         last_critique: Dict[str, Any] = {}
 
-        # Wall-clock deadline. Each refinement round spawns fresh subtasks with
-        # their own tool calls + retries and can take minutes; left unbounded the
-        # cumulative time blows past the web layer's request timeout and the user
-        # gets nothing. Past the deadline we stop launching new work and fall
-        # through to the Summarizer with whatever was collected.
+        # Wall-clock budget. Each refinement round spawns fresh subtasks with their
+        # own tool calls + retries and can take minutes; left unbounded the cumulative
+        # time blows past the web layer's request timeout and the user gets nothing.
+        # `hard_deadline` is the absolute ceiling for the whole flow; refinement work
+        # stops at `deadline` = hard_deadline − reserve, so the Summarizer always has
+        # a window left INSIDE the budget instead of overrunning it.
         loop = asyncio.get_running_loop()
-        deadline = loop.time() + FLOW_TIME_BUDGET_SEC
+        hard_deadline = loop.time() + FLOW_TIME_BUDGET_SEC
+        deadline = hard_deadline - SUMMARIZER_RESERVE_SEC
 
         def _critique_points(c: Dict[str, Any]) -> List[str]:
             return (c.get("weak_points") or []) + (c.get("missing_coverage") or [])
@@ -1219,7 +1236,20 @@ class MementoAgent:
                 # Integration ran out of budget or failed; ship Tier-1 as-is.
                 print(f"   ⏱️ Integration step skipped ({type(e).__name__}); shipping Tier-1 report.")
 
-        summary = await self._call_summarizer(user_task, all_findings, unresolved_points)
+        # Hard-bound the summarizer to the reserved window. It is the single most
+        # expensive call and runs last, so an overrun is what actually trips the web
+        # timeout — and then the user gets NOTHING despite a full run of collected
+        # analysis. On timeout/failure, ship the assembled findings as a degraded but
+        # real report so the run always returns a result inside the budget.
+        summarizer_budget = max(30.0, hard_deadline - loop.time())
+        try:
+            summary = await asyncio.wait_for(
+                self._call_summarizer(user_task, all_findings, unresolved_points),
+                timeout=summarizer_budget)
+        except Exception as e:
+            print(f"   ⏱️ Summarizer {type(e).__name__} after {summarizer_budget:.0f}s "
+                  f"budget — shipping assembled findings as a fallback report.")
+            summary = _fallback_report(user_task, all_findings, unresolved_points)
         # Real outcome-derived score + lessons (was hardcoded 0.8/[], which froze
         # the episodic dedup/overwrite gate and starved semantic memory of lessons).
         meta = _build_trajectory_meta(outcome, last_critique, findings_by_focus,
