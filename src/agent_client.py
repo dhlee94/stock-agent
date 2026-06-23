@@ -868,9 +868,20 @@ class MementoAgent:
                     if not tool_name: continue
                     args = step.get("args", {})
                     key = tool_name + "|" + json.dumps(args, sort_keys=True)
+                    # Stage 1 — fetch. A genuine tool failure is a real data gap.
                     try:
                         result = await _cached_call_tool(tool_name, args, key)
                         tool_output = result.content[0].text
+                    except Exception as e:
+                        findings += f"\n### {tool_name}: Failed - {e}\n"
+                        continue
+                    # Stage 2 — interpret. The data is already in hand; if the
+                    # interpreting LLM fails (e.g. a transient 429 / quota blip on a
+                    # rate-limited model), PRESERVE the raw tool output instead of
+                    # discarding the step. Otherwise an LLM hiccup nukes successfully
+                    # fetched quant data and forces a wasteful re-run over it — the
+                    # exact loop that drove the timeout.
+                    try:
                         if tool_name == "stock_news":
                             interpretation = await self._call_news_analyst(tool_output)
                         elif tool_name == "stock_technical":
@@ -885,7 +896,12 @@ class MementoAgent:
                             interpretation = await self._call_executor(step, tool_output, findings, tips=tips)
                         findings += f"\n### {step.get('reason', tool_name)}\n{interpretation}\n"
                     except Exception as e:
-                        findings += f"\n### {tool_name}: Failed - {e}\n"
+                        raw = (tool_output or "").strip()
+                        if len(raw) > 2000:
+                            raw = raw[:2000] + " …(truncated)"
+                        findings += (f"\n### {step.get('reason', tool_name)} "
+                                     f"(⚠️ 해석 LLM 실패 {type(e).__name__} — raw 데이터 보존)\n"
+                                     f"```\n{raw}\n```\n")
                 return findings
 
             plan = await self._call_planner(user_task, tool_descriptions, context_examples, semantic_knowledge=semantic_knowledge, extracted_intent=global_plan, subtask_focus=focus, subtask_context=subtask.get("context", ""), subtask_search_hints=subtask.get("search_hints", []), subtask_tickers=subtask.get("tickers", []), critique=critique, previous_findings=previous_findings)
