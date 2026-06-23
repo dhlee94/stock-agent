@@ -15,6 +15,7 @@ assumptions surfaced for the analyst (and Reflector) to judge.
 import yfinance as yf
 
 from utils.response import ToolResponse
+from .market_utils import get_company_name
 
 
 def _fcf_cagr(stock):
@@ -255,6 +256,7 @@ def get_dcf(ticker: str, market: str = "KR",
 
         return ToolResponse.success({
             "ticker": ticker,
+            "company_name": get_company_name(ticker),
             "current_price": round(price, 2),
             "intrinsic_value": {k: (round(v, 2) if v is not None else None)
                                 for k, v in scenarios.items()},

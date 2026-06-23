@@ -6,6 +6,7 @@ import yfinance as yf
 import numpy as np
 from typing import List
 from utils.response import ToolResponse
+from .market_utils import get_company_name
 
 
 def _calculate_rsi(prices: List[float], period: int = 14) -> float:
@@ -250,6 +251,7 @@ def technical_analysis(ticker: str, period: str = "6mo") -> str:
         
         return ToolResponse.success({
             "ticker": ticker,
+            "company_name": get_company_name(ticker),
             "period": period,
             "indicators": {
                 "rsi": {"value": rsi, "signal": "oversold" if rsi is not None and rsi < 30 else "overbought" if rsi is not None and rsi > 70 else "neutral"},
