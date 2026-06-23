@@ -18,7 +18,7 @@ from config import (
     MAX_FOCUS_REVISIONS, MAX_REPLAN_ITER,
 )
 from database import get_setting, reembed_if_model_changed
-from tools.stock.kr_listing import lookup_kr_ticker
+from tools.stock.kr_listing import lookup_kr_ticker, resolve_to_ticker
 
 
 def _resolve_active_embedding_model() -> str:
@@ -517,9 +517,59 @@ class MementoAgent:
                 return {}
             plan = json.loads(json_match.group(0))
             _verify_kr_ticker_in_subject(plan)
+            self._ground_subtask_tickers(plan)
             return plan
         except json.JSONDecodeError:
             return {}
+
+    @staticmethod
+    def _resolve_constituent(entry: str) -> Optional[str]:
+        """Resolve a planner-named constituent to a canonical ticker, market-aware.
+
+        Tries the KR namespace first (Korean names / 6-digit codes → '<code>.KS/.KQ').
+        Only an ASCII, non-Hangul entry consults the US listing — so a Korean name
+        that simply isn't listed (e.g. an unlisted subsidiary) resolves to None
+        without triggering a US-listing load."""
+        s = str(entry or "").strip()
+        if not s:
+            return None
+        tk = resolve_to_ticker(s)
+        if tk:
+            return tk
+        if re.search(r"[A-Za-z]", s) and not re.search(r"[가-힣]", s):
+            return lookup_us_ticker(s)
+        return None
+
+    def _ground_subtask_tickers(self, plan: Dict[str, Any]) -> None:
+        """Validate & de-duplicate planner-named constituents against the KRX listing.
+
+        The Global Planner names companies from parametric memory with no data
+        access, so its `tickers` are unverified: codes can be fabricated, names
+        misspelled, and the same mega-cap can be repeated across focuses (the exact
+        cross-block contamination that makes the Reflector reject every round). Here
+        we resolve each entry to a canonical '<code>.KS/.KQ' (dropping the
+        unresolvable) and enforce that each ticker belongs to exactly ONE focus —
+        first focus to claim it keeps it. Mutates `plan` in place."""
+        claimed: set = set()
+        for st in plan.get("subtasks", []):
+            grounded: List[str] = []
+            dropped: List[str] = []
+            for entry in (st.get("tickers") or []):
+                tk = self._resolve_constituent(entry)
+                if not tk:
+                    dropped.append(f"{entry}(미해결)")
+                elif tk in claimed:
+                    dropped.append(f"{entry}(중복)")
+                else:
+                    claimed.add(tk)
+                    grounded.append(tk)
+            st["tickers"] = grounded
+            if grounded or dropped:
+                focus = st.get("focus", "")
+                msg = f"   🎯 [{focus}] grounded {grounded}"
+                if dropped:
+                    msg += f"  · dropped {dropped}"
+                print(msg)
 
     def _format_intent_context(self, intent: Dict[str, Any]) -> str:
         if not intent:
@@ -534,7 +584,7 @@ class MementoAgent:
             notes=intent.get("notes", ""),
         )
 
-    async def _call_planner(self, user_task: str, tool_descriptions: str, context_examples: str, semantic_knowledge: List[str] = None, critique: Optional[Dict] = None, previous_findings: str = "", extracted_intent: Optional[Dict[str, Any]] = None, subtask_focus: str = "", subtask_context: str = "", subtask_search_hints: Optional[List[str]] = None) -> List[Dict]:
+    async def _call_planner(self, user_task: str, tool_descriptions: str, context_examples: str, semantic_knowledge: List[str] = None, critique: Optional[Dict] = None, previous_findings: str = "", extracted_intent: Optional[Dict[str, Any]] = None, subtask_focus: str = "", subtask_context: str = "", subtask_search_hints: Optional[List[str]] = None, subtask_tickers: Optional[List[str]] = None) -> List[Dict]:
         print("\n📋 [Planner] Generating execution plan...")
         memory_context = ""
         if context_examples:
@@ -578,11 +628,13 @@ class MementoAgent:
         )
         if subtask_focus:
             hints = subtask_search_hints or []
+            tickers = subtask_tickers or []
             planner_system += "\n\n" + load_prompt(
                 "planner/subtask_context",
                 focus=subtask_focus,
                 context=subtask_context or "",
                 search_hints=", ".join(hints) if hints else "(none)",
+                tickers=", ".join(tickers) if tickers else "(none — discover via stock_sector, do NOT improvise off-theme names)",
             )
         planner_prompt = [
             {"role": "system", "content": planner_system},
@@ -836,7 +888,7 @@ class MementoAgent:
                         findings += f"\n### {tool_name}: Failed - {e}\n"
                 return findings
 
-            plan = await self._call_planner(user_task, tool_descriptions, context_examples, semantic_knowledge=semantic_knowledge, extracted_intent=global_plan, subtask_focus=focus, subtask_context=subtask.get("context", ""), subtask_search_hints=subtask.get("search_hints", []), critique=critique, previous_findings=previous_findings)
+            plan = await self._call_planner(user_task, tool_descriptions, context_examples, semantic_knowledge=semantic_knowledge, extracted_intent=global_plan, subtask_focus=focus, subtask_context=subtask.get("context", ""), subtask_search_hints=subtask.get("search_hints", []), subtask_tickers=subtask.get("tickers", []), critique=critique, previous_findings=previous_findings)
             findings = await _execute_plan(plan)
             return {"focus": focus, "findings": findings, "valid": _findings_usable(findings)}
 
@@ -917,6 +969,12 @@ class MementoAgent:
         # Summarizer instead of being silently repeated or papered over.
         unresolved_points: List[str] = []
         revision_count: Dict[str, int] = {}
+        # Grounded constituents per focus (from _ground_subtask_tickers). Re-runs and
+        # defense rebuilds reconstruct the subtask dict from scratch, so without this
+        # the validated basket is lost and the worker improvises an off-theme one
+        # again — re-attach it by focus whenever a focus is re-run.
+        tickers_by_focus: Dict[str, List[str]] = {
+            st.get("focus"): st["tickers"] for st in subtasks if st.get("tickers")}
         # (subtask, critique_for_it, previous_findings_for_it). iter 0 = original
         # plan with no critique / prior context.
         work_items: List[tuple] = [(st, None, "") for st in subtasks]
@@ -1002,7 +1060,8 @@ class MementoAgent:
                     if not focus:
                         continue
                     st_norm = {"focus": focus, "context": st.get("context", ""),
-                               "search_hints": st.get("search_hints", [])}
+                               "search_hints": st.get("search_hints", []),
+                               "tickers": tickers_by_focus.get(focus) or []}
                     issues = st.get("issues") or ([st["context"]] if st.get("context") else [])
                     if focus in findings_by_focus:
                         if revision_count.get(focus, 0) >= MAX_FOCUS_REVISIONS:
@@ -1069,7 +1128,8 @@ class MementoAgent:
                 if focus not in findings_by_focus:
                     # Defense named a focus that doesn't exist — run it as new work.
                     next_items.append(({"focus": focus, "context": item.get("context", ""),
-                                        "search_hints": item.get("search_hints", [])},
+                                        "search_hints": item.get("search_hints", []),
+                                        "tickers": tickers_by_focus.get(focus) or []},
                                        global_critique, all_findings))
                     continue
                 if revision_count.get(focus, 0) >= MAX_FOCUS_REVISIONS:
@@ -1086,7 +1146,8 @@ class MementoAgent:
                 }
                 prev = f"## [{focus}]\n{findings_by_focus.get(focus, '')}"
                 next_items.append(({"focus": focus, "context": item.get("context", ""),
-                                    "search_hints": item.get("search_hints", [])},
+                                    "search_hints": item.get("search_hints", []),
+                                    "tickers": tickers_by_focus.get(focus) or []},
                                    focus_critique, prev))
             for st in new_subtasks:
                 next_items.append((st, global_critique, all_findings))

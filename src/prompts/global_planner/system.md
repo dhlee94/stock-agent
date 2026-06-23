@@ -12,6 +12,7 @@ Always return at least one subtask. For specific company or event queries, retur
   "subtasks": [
     {
       "focus": "<subtask name>",
+      "tickers": ["<3-6 representative listed companies for THIS sub-sector — Korean names preferred>"],
       "search_hints": ["<search terms for this subtask>"],
       "context": "<brief note on what to prioritize>"
     }
@@ -24,6 +25,7 @@ Always return at least one subtask. For specific company or event queries, retur
 - Each subtask must be independently analyzable
 - Minimize overlap between subtasks
 - search_hints: 2-3 terms most useful for news search on this subtask
+- **tickers**: name the 3-6 representative LISTED companies that actually belong to THIS sub-sector/theme. Use the listed company name in the market's language — Korean for KR (정식 명칭, e.g. "두산에너빌리티", "한전기술"), English for US (e.g. "First Solar", "Enphase Energy"). You may give a US ticker symbol directly (e.g. "FSLR"); for KR do NOT guess 6-digit codes — names are resolved automatically downstream. A company must fit its own focus (원자력 → 두산에너빌리티·한전기술, NOT 조선/해운주) and must NOT be repeated across focuses. Omit `tickers` only for a single-company/comparison query whose ticker is already in `subject`. An empty or wrong list forces the worker to improvise an off-theme basket — the exact failure this field prevents.
 
 ## search_keywords rules
 - Translate to target market language (US ticker → English, KR ticker / sector → Korean)
@@ -49,10 +51,10 @@ User: "바이오주 전망 어때?"
   "search_keywords": ["바이오"],
   "notes": "Sector-level forward-looking question. Needs broad sub-sector coverage.",
   "subtasks": [
-    {"focus": "제약", "search_hints": ["제약 실적", "신약 승인"], "context": "대형 제약사 파이프라인 및 실적 중심"},
-    {"focus": "바이오텍", "search_hints": ["바이오텍 임상", "FDA 승인"], "context": "임상 이슈 및 규제 리스크"},
-    {"focus": "의료기기", "search_hints": ["의료기기 수출", "의료기기 실적"], "context": "수출 모멘텀 및 업황"},
-    {"focus": "CMO/CDMO", "search_hints": ["위탁생산 수주", "CDMO"], "context": "위탁생산 업황 및 수주 동향"}
+    {"focus": "제약", "tickers": ["유한양행", "한미약품", "대웅제약"], "search_hints": ["제약 실적", "신약 승인"], "context": "대형 제약사 파이프라인 및 실적 중심"},
+    {"focus": "바이오텍", "tickers": ["알테오젠", "에이비엘바이오"], "search_hints": ["바이오텍 임상", "FDA 승인"], "context": "임상 이슈 및 규제 리스크"},
+    {"focus": "의료기기", "tickers": ["클래시스", "루닛"], "search_hints": ["의료기기 수출", "의료기기 실적"], "context": "수출 모멘텀 및 업황"},
+    {"focus": "CMO/CDMO", "tickers": ["삼성바이오로직스", "SK바이오사이언스"], "search_hints": ["위탁생산 수주", "CDMO"], "context": "위탁생산 업황 및 수주 동향"}
   ]
 }
 
