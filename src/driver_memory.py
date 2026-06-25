@@ -72,8 +72,18 @@ TICKER_TO_NAME = {
 }
 
 def get_company_name(ticker: str) -> str:
-    """Get company name from ticker, or return ticker if not found."""
-    return TICKER_TO_NAME.get(ticker, ticker.split('.')[0])
+    """Authoritative ticker→name. Delegates to the same resolver the report path
+    uses (curated map → exchange listing → bare code) so driver memory never
+    trusts an LLM-supplied name. Trusting the caller's name is how S-Oil
+    (010950.KS) data once got persisted under "SK Innovation"."""
+    try:
+        from tools.stock.market_utils import get_company_name as _resolve
+    except ImportError:
+        from src.tools.stock.market_utils import get_company_name as _resolve
+    try:
+        return _resolve(ticker)
+    except Exception:
+        return TICKER_TO_NAME.get(ticker, ticker.split('.')[0])
 
 
 class DriverMemory:
@@ -93,7 +103,7 @@ class DriverMemory:
         Retrieve cached drivers for a ticker.
         Returns None if not found or older than 30 days.
         """
-        from database import get_drivers, get_ticker_info, get_connection
+        from database import get_drivers, get_connection
 
         drivers = get_drivers(ticker)
         if not drivers:
@@ -114,8 +124,8 @@ class DriverMemory:
             except ValueError:
                 pass
 
-        ticker_info = get_ticker_info(ticker)
-        name = ticker_info['name'] if ticker_info else ticker
+        # Canonical name from the ticker, not the (possibly legacy-polluted) row.
+        name = get_company_name(ticker)
         keyword_drivers = [d['description'] for d in drivers if d['driver_type'] == 'keyword']
 
         return {
@@ -125,17 +135,28 @@ class DriverMemory:
             "volatility_dates": []
         }
     
-    def save_drivers(self, ticker: str, name: str, keywords: List[str], 
+    def save_drivers(self, ticker: str, name: str, keywords: List[str],
                      volatility_dates: List[str]):
-        """Save driver keywords for a ticker to database."""
+        """Save driver keywords for a ticker to database.
+
+        The stored name is always derived from the ticker, never from the
+        (LLM-supplied) caller. This is the write boundary that enforces the
+        invariant: driver analysis fetched price/news by *ticker*, so the
+        ticker's canonical name is the only self-consistent label."""
         from database import add_driver, add_ticker, get_ticker_info
-        
-        # Ensure ticker exists
+
+        canonical = get_company_name(ticker)
+        if name and name != canonical:
+            print(f"   ⚠️ [DriverMemory] name mismatch: caller said '{name}' but "
+                  f"{ticker} resolves to '{canonical}' — using canonical.")
+        name = canonical
+
+        # Ensure ticker exists (register with canonical name + correct market)
         info = get_ticker_info(ticker)
         if not info:
-             market = 'KR' if '.KS' in ticker else 'US'
-             add_ticker(ticker, name, None, market)
-             
+            market = 'KR' if ticker.split('.')[0].isdigit() else 'US'
+            add_ticker(ticker, name, None, market)
+
         # Add drivers
         for keyword in keywords:
             add_driver(
@@ -146,8 +167,8 @@ class DriverMemory:
                 impact_direction='neutral',
                 confidence=0.8
             )
-        
-        print(f"   💾 Saved drivers for {ticker} to database: {keywords}")
+
+        print(f"   💾 Saved drivers for {ticker} ({name}) to database: {keywords}")
     
     def _call_llm(self, prompt: str) -> str:
         """Call LLM for keyword extraction. Provider selected via KEYWORD_LLM_PROVIDER."""
@@ -228,11 +249,16 @@ class DriverMemory:
             
             if hist.empty:
                 return {"error": f"No price data for {ticker}"}
-            
-            # Get company name if not provided
-            if not name:
-                info = stock.info
-                name = info.get("shortName", info.get("longName", ticker))
+
+            # Canonical name from the ticker (exchange listing) — not yfinance
+            # .info (inconsistent EN/KR) nor the caller-supplied name. yfinance
+            # fetched by *ticker*, so the ticker's listed name is the only label
+            # consistent with the data we analyzed.
+            canonical = get_company_name(ticker)
+            if name and name != canonical:
+                print(f"   ⚠️ [DriverMemory] name mismatch: caller said '{name}' "
+                      f"but {ticker} resolves to '{canonical}' — using canonical.")
+            name = canonical
         except Exception as e:
             return {"error": f"Failed to fetch data: {str(e)}"}
         
