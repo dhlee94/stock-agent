@@ -109,7 +109,13 @@ except ImportError:
 try:
     import anthropic as _anthropic_module
     if ANTHROPIC_API_KEY:
-        _provider_clients["anthropic"] = _anthropic_module.Anthropic(api_key=ANTHROPIC_API_KEY)
+        # Explicit timeout (not the SDK default) disables anthropic's
+        # "Streaming is required for operations >10min" guard, which otherwise
+        # raises a spurious ValueError once max_tokens crosses ~21k (non-opus) or
+        # a model's max_nonstreaming_tokens (opus = 8192). Our calls finish in
+        # seconds; 600s is a safe ceiling that keeps that guard from firing.
+        _provider_clients["anthropic"] = _anthropic_module.Anthropic(
+            api_key=ANTHROPIC_API_KEY, timeout=600.0)
 except ImportError:
     pass
 
@@ -458,7 +464,7 @@ class MementoAgent:
                         max_tokens=max_tokens,
                     )
                 )
-                return response.choices[0].message.content
+                return response.choices[0].message.content or ""
 
             if provider == "anthropic":
                 system_parts = [m["content"] for m in messages if m["role"] == "system"]
@@ -482,7 +488,11 @@ class MementoAgent:
                     None,
                     lambda: client.messages.create(**kwargs),
                 )
-                return response.content[0].text
+                # Defensive: content can be [] (refusal/max_tokens-no-text) or
+                # hold non-text blocks. Join text blocks; "" flows to the empty
+                # handling below instead of raising IndexError/AttributeError.
+                blocks = getattr(response, "content", None) or []
+                return "".join(getattr(b, "text", "") or "" for b in blocks)
 
             prompt = ""
             for msg in messages:
@@ -495,19 +505,46 @@ class MementoAgent:
                 elif role == "assistant":
                     prompt += f"Assistant: {content}\n\n"
             response = await client.aio.models.generate_content(model=effective_model, contents=prompt)
-            return response.text
+            # response.text raises ValueError when no valid Part was returned
+            # (safety block / truncation / RESOURCE_EXHAUSTED-shaped). Extract
+            # defensively so an empty result flows to the retry/empty handling
+            # below instead of crashing the step into a raw-data dump.
+            try:
+                txt = response.text or ""
+            except Exception:
+                txt = ""
+            if not txt:
+                for c in (getattr(response, "candidates", None) or []):
+                    content = getattr(c, "content", None)
+                    for p in (getattr(content, "parts", None) or []):
+                        txt += getattr(p, "text", "") or ""
+            return txt
 
         last_err = None
+        empty_retries = 0
         for attempt in range(_LLM_MAX_RETRIES + 1):
             await self._rate_limit_gate(provider)
             try:
-                return await _do_call()
+                out = await _do_call()
             except Exception as e:
                 last_err = e
                 if attempt >= _LLM_MAX_RETRIES or not _is_retryable_error(e):
                     raise
                 backoff = min(2.0 ** attempt, 8.0) + random.uniform(0, 0.5)
                 await asyncio.sleep(backoff)
+                continue
+            if (out or "").strip():
+                return out
+            # Empty/blocked response (safety filter / truncation). Retry once for
+            # a transient blip, but don't burn the flow's wall-clock budget
+            # hammering a hard block. Then raise so the caller's fallback handles
+            # it cleanly (executor → preserve raw tool data; summarizer →
+            # degraded report) instead of shipping a blank section.
+            last_err = RuntimeError("empty LLM response (blocked/truncated)")
+            empty_retries += 1
+            if empty_retries > 1 or attempt >= _LLM_MAX_RETRIES:
+                raise last_err
+            await asyncio.sleep(0.5)
         raise last_err
 
     async def _rate_limit_gate(self, provider: str):
@@ -1113,6 +1150,17 @@ class MementoAgent:
                 attempting_issues = [s.get("focus", "") for s in comp_subtasks]
 
             if deadline_hit:
+                outcome = "deadline"
+                break
+
+            # Reserve guard. The quality gate below (Reflector → defense → Judge)
+            # is 2-3 more LLM calls; the round loop only checks the deadline at its
+            # TOP, so a round that finishes just under `deadline` lets these calls
+            # run INSIDE the summarizer's reserved window and starve it into a
+            # timeout → ugly fallback report. If we're already at the deadline,
+            # stop refining and summarize what we have with the full reserve intact.
+            if loop.time() > deadline:
+                unresolved_points.extend(attempting_issues)
                 outcome = "deadline"
                 break
 
