@@ -252,12 +252,35 @@ def get_dcf(ticker: str, market: str = "KR",
                              "(optimistic) values; the base case is anchored to the conservative rate."),
                 }
 
-        # Margin of safety: conservative buy price = base intrinsic × (1 - MOS)
-        buy_below = base_iv * (1 - margin_of_safety)
+        # Headline fair value. When FCF-history and revenue growth diverge, the
+        # honest anchor is the MIDPOINT of the conservative (revenue-synced) and
+        # optimistic (FCF-synced) intrinsic values — NOT the conservative extreme
+        # alone. Leading with the low end produced absurd targets (e.g. NFLX $42
+        # fair / $31.63 buy-below on a $69 stock) that make the model look broken
+        # and drive the Reflector to loop "reconciling" a price-vs-value gap that is
+        # really just growth being priced in. The full range stays visible below.
+        if growth_consistency and growth_consistency.get("optimistic_iv_fcf_synced") is not None:
+            fair_low = growth_consistency["conservative_iv_revenue_synced"]
+            fair_high = growth_consistency["optimistic_iv_fcf_synced"]
+            fair_value = (fair_low + fair_high) / 2.0
+        else:
+            fair_low = fair_high = None
+            fair_value = base_iv
+
+        # Margin of safety: conservative buy price = fair value × (1 - MOS)
+        buy_below = fair_value * (1 - margin_of_safety)
 
         _mkt = "KR" if (ticker.endswith(".KS") or ticker.endswith(".KQ")) else "US"
         intrinsic = {k: (round(v, 2) if v is not None else None) for k, v in scenarios.items()}
-        attach_money_display(intrinsic, _mkt, per_share_keys=("bear", "base", "bull"))
+        # Surface the divergence-adjusted fair value + range as first-class fields so
+        # the report leads with them instead of the lone conservative "base".
+        intrinsic["fair_value"] = round(fair_value, 2)
+        if fair_low is not None:
+            intrinsic["range_low"] = round(fair_low, 2)
+            intrinsic["range_high"] = round(fair_high, 2)
+        attach_money_display(intrinsic, _mkt,
+                             per_share_keys=("bear", "base", "bull",
+                                             "fair_value", "range_low", "range_high"))
         if growth_consistency:
             attach_money_display(growth_consistency, _mkt,
                                  per_share_keys=("conservative_iv_revenue_synced",
@@ -291,7 +314,9 @@ def get_dcf(ticker: str, market: str = "KR",
             "current_price": round(price, 2),
             "intrinsic_value": intrinsic,
             "margin_of_safety_pct": round(margin_of_safety * 100, 1),
+            "fair_value": round(fair_value, 2),
             "buy_below_price": round(buy_below, 2),
+            "upside_vs_fair_pct": round((fair_value - price) / price * 100, 2),
             "upside_vs_base_pct": round((base_iv - price) / price * 100, 2),
             "upside_vs_buy_below_pct": round((buy_below - price) / price * 100, 2),
             "in_buy_zone": bool(price <= buy_below),
@@ -301,9 +326,15 @@ def get_dcf(ticker: str, market: str = "KR",
                        "high_growth_years, then faded linearly to terminal growth over the "
                        "remaining years; discounted at a WACC proxy (CAPM cost of equity + "
                        "after-tax cost of debt, market-value weighted). Model estimate — judge "
-                       "against the bear/bull range and assumptions, not as a precise target."),
+                       "against the range and assumptions, not as a precise target. When growth_"
+                       "consistency.diverged is true, `fair_value` is the MIDPOINT of the "
+                       "conservative (revenue-synced) and optimistic (FCF-synced) intrinsic "
+                       "values — lead with fair_value and the range_low–range_high band, NOT the "
+                       "lone conservative `base`. A fair value below the current price is a normal "
+                       "'growth priced in / possibly rich' signal, not a model error."),
         }
-        attach_money_display(payload, _mkt, per_share_keys=("current_price", "buy_below_price"))
+        attach_money_display(payload, _mkt,
+                             per_share_keys=("current_price", "fair_value", "buy_below_price"))
         return ToolResponse.success(payload)
     except Exception as e:
         return ToolResponse.error(str(e), {"ticker": ticker})
