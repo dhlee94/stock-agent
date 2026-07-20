@@ -103,8 +103,39 @@ def get_stock_price(ticker: str, market: str = "KR") -> str:
             return ToolResponse.error(f"Failed to fetch price data for {ticker}. Check ticker symbol.")
 
         last = hist.iloc[-1]
-        current_price = last['Close']
-        prev_close = hist['Close'].iloc[-2] if len(hist) > 1 else current_price
+        # Regular-session price. history() and regularMarketPrice both lag during
+        # extended hours — after an earnings print a stock can trade at $67 in the
+        # pre-market while regularMarketPrice stays frozen at the prior $74 close.
+        reg_price = info.get("currentPrice") or info.get("regularMarketPrice")
+        reg_prev_close = (info.get("regularMarketPreviousClose") or info.get("previousClose")
+                          or (hist['Close'].iloc[-2] if len(hist) > 1 else None))
+
+        # Extended-hours awareness. In PRE/POST, prefer the actual pre/post-market
+        # print (this is the number Google and brokers show), measured against the
+        # last regular-session close so the % change matches. This is the $74-vs-$68
+        # gap: regularMarketPrice $74.35 is stale, preMarketPrice $67.3 is live.
+        market_state = info.get("marketState")
+        ext_price = None
+        if market_state == "PRE":
+            ext_price = info.get("preMarketPrice")
+        elif market_state in ("POST", "POSTPOST"):
+            ext_price = info.get("postMarketPrice")
+
+        if ext_price is not None:
+            current_price = ext_price
+            prev_close = reg_price if reg_price is not None else reg_prev_close
+        else:
+            current_price = reg_price if reg_price is not None else last['Close']
+            prev_close = reg_prev_close if reg_prev_close is not None else current_price
+
+        # Intraday range/volume from the live snapshot, widened to include the
+        # extended-hours print so current_price never sits outside its own reported
+        # range (which would trip a false internal-inconsistency flag downstream).
+        day_high = info.get("regularMarketDayHigh") or info.get("dayHigh") or last['High']
+        day_low = info.get("regularMarketDayLow") or info.get("dayLow") or last['Low']
+        day_volume = info.get("regularMarketVolume") or info.get("volume") or last['Volume']
+        day_high = max(day_high, current_price)
+        day_low = min(day_low, current_price)
         change = current_price - prev_close
         change_pct = (change / prev_close) * 100 if prev_close != 0 else 0.0
 
@@ -120,18 +151,26 @@ def get_stock_price(ticker: str, market: str = "KR") -> str:
             "change": round(change, 2),
             "change_percent": round(change_pct, 2),
             "currency": currency,
-            "volume": int(last['Volume']),
-            "day_high": round(last['High'], 2),
-            "day_low": round(last['Low'], 2),
+            "volume": int(day_volume),
+            "day_high": round(day_high, 2),
+            "day_low": round(day_low, 2),
             "market_cap": info.get('marketCap'),
             "52_week_high": info.get('fiftyTwoWeekHigh'),
             "52_week_low": info.get('fiftyTwoWeekLow'),
+            "market_state": market_state,
             "timestamp": datetime.now(tz).isoformat(),
             "source": "yfinance"
         }
+        # When reporting an extended-hours price, also carry the frozen regular
+        # close so the report can say "프리마켓 $67.3 (정규장 종가 $74.35)" instead of
+        # silently presenting a pre-market print as the regular price.
+        if ext_price is not None and reg_price is not None:
+            us_payload["regular_market_price"] = round(reg_price, 2)
+        us_payload["extended_hours"] = ext_price is not None
         attach_money_display(us_payload, market, agg_keys=("market_cap",),
                              per_share_keys=("current_price", "previous_close", "change",
-                                             "day_high", "day_low", "52_week_high", "52_week_low"))
+                                             "day_high", "day_low", "52_week_high", "52_week_low",
+                                             "regular_market_price"))
         return ToolResponse.success(us_payload)
         
     except Exception as e:
