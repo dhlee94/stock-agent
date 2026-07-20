@@ -711,7 +711,7 @@ class MementoAgent:
             pass
         return []
 
-    async def _call_executor(self, step: Dict, tool_result: str, accumulated_context: str, tips: List[Dict] = None) -> str:
+    async def _call_executor(self, step: Dict, tool_result: str, accumulated_context: str, tips: List[Dict] = None, market_facts: str = "") -> str:
         print(f"\n🔧 [Executor] Processing: {step.get('tool', 'unknown')}")
         tips_context = ""
         if tips:
@@ -720,9 +720,17 @@ class MementoAgent:
                 tips_context = load_prompt("executor/tips_context", tips_lines="\n".join(tips_lines))
 
         executor_system = load_prompt("executor/system", tips_context=tips_context)
+        user_content = f"Step: {step.get('reason', 'Execute tool')}\nTool: {step.get('tool')}\n\nTool Output: {tool_result[:12000]}"
+        # Inject the deterministic market-fact snapshot (price/shares/market cap/
+        # 52-week range) so every subtask's executor anchors per-share and aggregate
+        # figures to the SAME canonical values instead of re-deriving them off each
+        # tool payload — the executor prompt already forbids inventing aggregates and
+        # cites price×shares≈market cap; this hands it the reference to check against.
+        if market_facts:
+            user_content = f"{market_facts}\n\n{user_content}"
         executor_prompt = [
             {"role": "system", "content": executor_system},
-            {"role": "user", "content": f"Step: {step.get('reason', 'Execute tool')}\nTool: {step.get('tool')}\n\nTool Output: {tool_result[:12000]}"}
+            {"role": "user", "content": user_content}
         ]
         return await self._call_llm(executor_prompt, model=EXECUTOR_MODEL)
 
@@ -910,7 +918,7 @@ class MementoAgent:
             print(f"   ❌ Dismissed/out-of-scope: {verdict['invalid_critique_points']}")
         return verdict
 
-    async def _run_subtask(self, subtask: Dict[str, Any], session, tool_descriptions: str, semaphore: asyncio.Semaphore, user_task: str, global_plan: Dict[str, Any], critique: Optional[Dict[str, Any]] = None, previous_findings: str = "", tool_cache: Optional[Dict] = None, embedded_raw: Optional[set] = None, context_examples: str = "", semantic_knowledge: Optional[List[str]] = None) -> Dict[str, Any]:
+    async def _run_subtask(self, subtask: Dict[str, Any], session, tool_descriptions: str, semaphore: asyncio.Semaphore, user_task: str, global_plan: Dict[str, Any], critique: Optional[Dict[str, Any]] = None, previous_findings: str = "", tool_cache: Optional[Dict] = None, embedded_raw: Optional[set] = None, context_examples: str = "", semantic_knowledge: Optional[List[str]] = None, market_facts: str = "") -> Dict[str, Any]:
         async with semaphore:
             focus = subtask.get("focus", "")
             print(f"\n📌 [Subtask] Starting: {focus}")
@@ -955,7 +963,7 @@ class MementoAgent:
                                 tips = self.procedural_memory.get_tool_tips(tool_name)
                             except Exception:
                                 tips = []
-                            interpretation = await self._call_executor(step, tool_output, findings, tips=tips)
+                            interpretation = await self._call_executor(step, tool_output, findings, tips=tips, market_facts=market_facts)
                         findings += f"\n### {step.get('reason', tool_name)}\n{interpretation}\n"
                     except Exception as e:
                         raw = (tool_output or "").strip()
@@ -976,7 +984,8 @@ class MementoAgent:
 
     async def _gather_subtasks_bounded(self, work_items, session, tool_descriptions,
                                        semaphore, user_task, global_plan, tool_cache,
-                                       context_examples, semantic_knowledge, timeout):
+                                       context_examples, semantic_knowledge, timeout,
+                                       market_facts=""):
         """Run a round's subtasks concurrently, bounded by a wall-clock `timeout`.
 
         Returns (results, unfinished_focuses). Subtasks that finish within the
@@ -993,7 +1002,8 @@ class MementoAgent:
                 self._run_subtask(st, session, tool_descriptions, semaphore, user_task,
                                   global_plan, critique=crit, previous_findings=prev,
                                   tool_cache=tool_cache, context_examples=context_examples,
-                                  semantic_knowledge=semantic_knowledge)): st.get("focus", "")
+                                  semantic_knowledge=semantic_knowledge,
+                                  market_facts=market_facts)): st.get("focus", "")
             for (st, crit, prev) in work_items}
         done, pending = await asyncio.wait(task_focus.keys(), timeout=max(1.0, timeout))
         unfinished = [task_focus[t] for t in pending]
@@ -1108,7 +1118,7 @@ class MementoAgent:
                 results, unfinished = await self._gather_subtasks_bounded(
                     work_items, session, tool_descriptions, semaphore, user_task,
                     global_plan, tool_cache, context_examples, semantic_knowledge,
-                    timeout=deadline - loop.time())
+                    timeout=deadline - loop.time(), market_facts=market_facts)
                 # Overwrite by focus — a re-run focus replaces its prior block in
                 # place (true revision); a new focus is added.
                 for r in results:
@@ -1284,7 +1294,7 @@ class MementoAgent:
                         synth_subtask, session, tool_descriptions, semaphore, user_task,
                         global_plan, critique=synth_critique, previous_findings=all_findings,
                         tool_cache=tool_cache, context_examples=context_examples,
-                        semantic_knowledge=semantic_knowledge),
+                        semantic_knowledge=semantic_knowledge, market_facts=market_facts),
                     timeout=max(1.0, deadline - loop.time()))
                 if synth_result.get("valid"):
                     findings_by_focus[synth_result["focus"]] = synth_result["findings"]
