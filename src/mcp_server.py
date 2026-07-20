@@ -95,17 +95,21 @@ def stock_dcf(ticker: str, market: str = "KR", margin_of_safety: float = 0.25,
     """
     Estimate intrinsic value per share via a lightweight two-stage DCF.
 
-    By default the base case anchors to revenue growth when the FCF-history CAGR
-    diverges high, and the output is a hedged range (see growth_consistency).
-    Pass growth_override to force a specific, justified stage-1 rate — e.g. when
-    you have a thesis-driven growth estimate, set growth_override=0.17 for 17%.
+    The headline fields (fair_value, intrinsic_value, buy_below_price, upside) are
+    ALWAYS data-derived and identical for a given ticker on every call — the base
+    case anchors to revenue growth when the FCF-history CAGR diverges high, and the
+    output is a hedged range (see growth_consistency). growth_override does NOT move
+    those headline fields; it only adds a separate, clearly-labeled `override_scenario`
+    what-if block. So re-running with a thesis/catalyst rate never contradicts the
+    canonical valuation — prefer omitting it unless you specifically want the scenario.
 
     Args:
         ticker: Stock ticker
         market: "KR" or "US"
-        margin_of_safety: haircut on base intrinsic value
-        growth_override: explicit stage-1 annual growth as a decimal (0.17 = 17%);
-            omit to use the model's revenue/FCF-derived rate
+        margin_of_safety: haircut on intrinsic value (buy_below = fair_value × (1−MOS))
+        growth_override: explicit stage-1 annual growth as a decimal (0.17 = 17%) for
+            an ALTERNATIVE scenario only; the canonical headline stays data-derived.
+            Omit to report just the data-derived valuation.
     """
     return get_dcf(ticker, market=market, margin_of_safety=margin_of_safety,
                    growth_override=growth_override)

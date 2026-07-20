@@ -164,17 +164,21 @@ def get_dcf(ticker: str, market: str = "KR",
 
         DIVERGENCE_THRESHOLD_PP = 0.05
 
-        # Base stage-1 rate selection. Prefer an explicit override; otherwise the
-        # FCF-history CAGR — UNLESS it diverges materially ABOVE revenue growth, in
-        # which case the FCF CAGR is treated as an unjustified transient swing (not
-        # a durable growth rate) and the more conservative revenue growth anchors
-        # the base case. Without this, a one-off FCF surge capped at 25% becomes the
-        # headline base case (e.g. NFLX 25% vs ~16% revenue), overstating intrinsic
-        # value; the FCF-synced figure is still surfaced as the optimistic end of
-        # the range in growth_consistency below.
-        if growth_override is not None:
-            base_growth, growth_source = growth_override, "override"
-        elif (fcf_cagr is not None and rev_growth is not None
+        # Base stage-1 rate selection — ALWAYS data-derived, so the canonical
+        # intrinsic value is identical on every call for this ticker no matter what
+        # (or whether) a caller passes growth_override. A thesis/catalyst override is
+        # NOT allowed to move these headline fields; it is folded in separately as a
+        # clearly-labeled `override_scenario` below. This is what stops the same
+        # stock from showing contradictory DCFs across rounds (a re-run with an
+        # override used to overwrite "the" intrinsic value).
+        # Prefer the FCF-history CAGR — UNLESS it diverges materially ABOVE revenue
+        # growth, in which case the FCF CAGR is treated as an unjustified transient
+        # swing (not a durable growth rate) and the more conservative revenue growth
+        # anchors the base case. Without this, a one-off FCF surge capped at 25%
+        # becomes the headline base case (e.g. NFLX 25% vs ~16% revenue), overstating
+        # intrinsic value; the FCF-synced figure is still surfaced as the optimistic
+        # end of the range in growth_consistency below.
+        if (fcf_cagr is not None and rev_growth is not None
               and _cap_growth(fcf_cagr) - _cap_growth(rev_growth) > DIVERGENCE_THRESHOLD_PP):
             base_growth, growth_source = rev_growth, "revenue growth (FCF CAGR diverged high — discounted)"
         elif fcf_cagr is not None:
@@ -240,9 +244,9 @@ def get_dcf(ticker: str, market: str = "KR",
         # the revenue-synced (conservative) and FCF-synced (optimistic) intrinsic
         # values so the output is always a hedged RANGE, never a lone number. The
         # base case is anchored to the conservative rate above; this surfaces the
-        # other end explicitly. Skipped when the caller passed an explicit override.
+        # other end explicitly. Always data-derived (independent of any override).
         growth_consistency = None
-        if fcf_cagr is not None and rev_growth is not None and growth_override is None:
+        if fcf_cagr is not None and rev_growth is not None:
             fcf_capped = _cap_growth(fcf_cagr)
             rev_capped = _cap_growth(rev_growth)
             divergence = fcf_capped - rev_capped
@@ -298,6 +302,34 @@ def get_dcf(ticker: str, market: str = "KR",
             attach_money_display(growth_consistency, _mkt,
                                  per_share_keys=("conservative_iv_revenue_synced",
                                                  "optimistic_iv_fcf_synced", "conservative_buy_below"))
+
+        # Override as a labeled ALTERNATIVE scenario — never the canonical anchor.
+        # A caller (e.g. the Tier-2 integration slot folding in a news catalyst) may
+        # pass a thesis growth rate; it is computed here as a what-if alongside the
+        # data-derived headline, so a re-run ADDS a scenario instead of silently
+        # changing "the" intrinsic value across rounds.
+        override_scenario = None
+        if growth_override is not None:
+            og = _cap_growth(growth_override)
+            ov_iv = _intrinsic(og, discount_base)
+            if ov_iv is not None:
+                ov_buy = ov_iv * (1 - margin_of_safety)
+                override_scenario = {
+                    "growth_override_pct": round(growth_override * 100, 2),
+                    "growth_override_used_pct": round(og * 100, 2),
+                    "intrinsic_value": round(ov_iv, 2),
+                    "fair_value": round(ov_iv, 2),
+                    "buy_below_price": round(ov_buy, 2),
+                    "upside_vs_fair_pct": round((ov_iv - price) / price * 100, 2),
+                    "in_buy_zone": bool(price <= ov_buy),
+                    "note": ("촉매/논지 반영 대안 시나리오(what-if)일 뿐, 헤드라인 값을 대체하지 않음. "
+                             f"기준선인 데이터 기반 canonical fair_value(성장률 {round(base_growth * 100, 2)}%)는 "
+                             f"라운드와 무관하게 동일하며, 이 블록은 growth_override={round(growth_override * 100, 2)}% "
+                             "가정에서의 값입니다."),
+                }
+                attach_money_display(override_scenario, _mkt,
+                                     per_share_keys=("intrinsic_value", "fair_value", "buy_below_price"))
+
         assumptions = {
                 "fcf_ttm": fcf,
                 "fcf_source": fcf_source,
@@ -336,6 +368,7 @@ def get_dcf(ticker: str, market: str = "KR",
             "upside_vs_buy_below_pct": round((buy_below - price) / price * 100, 2),
             "in_buy_zone": bool(price <= buy_below),
             "growth_consistency": growth_consistency,
+            "override_scenario": override_scenario,
             "assumptions": assumptions,
             "method": ("Lightweight two-stage FCFF DCF: stage-1 growth held for "
                        "high_growth_years, then faded linearly to terminal growth over the "
@@ -346,7 +379,10 @@ def get_dcf(ticker: str, market: str = "KR",
                        "conservative (revenue-synced) and optimistic (FCF-synced) intrinsic "
                        "values — lead with fair_value and the range_low–range_high band, NOT the "
                        "lone conservative `base`. A fair value below the current price is a normal "
-                       "'growth priced in / possibly rich' signal, not a model error."),
+                       "'growth priced in / possibly rich' signal, not a model error. All headline "
+                       "fields are data-derived and identical across calls for a ticker; a caller's "
+                       "growth_override never moves them — it appears only under `override_scenario` "
+                       "as a labeled what-if, so DCFs never contradict across rounds."),
         }
         attach_money_display(payload, _mkt,
                              per_share_keys=("current_price", "fair_value", "buy_below_price"))
