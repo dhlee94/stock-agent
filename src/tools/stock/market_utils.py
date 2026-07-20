@@ -187,3 +187,39 @@ def get_english_name(ticker: str) -> str:
         if name:
             return name
     return ticker
+
+
+def resolve_current_price(info: dict, fallback_close=None):
+    """The single canonical 'current price' for a ticker, extended-hours aware.
+
+    yfinance freezes info.currentPrice / regularMarketPrice at the prior
+    regular-session close during PRE/POST, while the live print sits in
+    pre/postMarketPrice — after an earnings gap a stock can show $67 pre-market
+    while regularMarketPrice stays $74. Every tool that reports a current price
+    (stock_price, DCF, financials, the market-consistency anchor) MUST resolve it
+    through here, so one report never carries two different current prices for the
+    same stock and every downstream upside/undervaluation figure is measured
+    against the same number.
+
+    Returns (price, reg_price, is_extended, market_state):
+      - price        : the number to REPORT as current (live in PRE/POST).
+      - reg_price    : the regular-session close — same basis as marketCap, so use
+                       THIS (not `price`) for price×shares≈marketCap identity checks.
+      - is_extended  : True when `price` is a pre/post-market print.
+      - market_state : yfinance marketState (PRE/POST/REGULAR/…), for context.
+    """
+    reg_price = info.get("currentPrice") or info.get("regularMarketPrice")
+    market_state = info.get("marketState")
+    ext_price = None
+    if market_state == "PRE":
+        ext_price = info.get("preMarketPrice")
+    elif market_state in ("POST", "POSTPOST"):
+        ext_price = info.get("postMarketPrice")
+    is_extended = ext_price is not None
+    if is_extended:
+        price = ext_price
+    elif reg_price is not None:
+        price = reg_price
+    else:
+        price = fallback_close
+    return price, reg_price, is_extended, market_state

@@ -337,23 +337,33 @@ def _market_consistency_anchor(ticker: str) -> str:
     try:
         import yfinance as yf
         from datetime import datetime
+        from tools.stock.market_utils import resolve_current_price
         tk = yf.Ticker(ticker)
         info = tk.info
-        price = info.get("currentPrice") or info.get("regularMarketPrice")
+        # `price` is the canonical current price (live in PRE/POST) — the same one
+        # every tool now reports; `reg_price` is the regular-session close, which
+        # shares marketCap's basis and so anchors the price×shares identity check.
+        price, reg_price, is_extended, _state = resolve_current_price(info)
         shares = info.get("sharesOutstanding")
         mktcap = info.get("marketCap")
         if not (price and shares and mktcap):
             return ""
-        implied = price * shares
+        basis_price = reg_price or price
+        implied = basis_price * shares
         consistent = abs(implied - mktcap) <= 0.02 * mktcap
 
         lines = [ f"[VERIFIED MARKET FACTS — {ticker}]" ]
         if consistent:
-            lines.append(f"- Price ${price:,.2f} × shares {shares/1e9:.3f}B = ${implied/1e9:.1f}B ≈ market cap ${mktcap/1e9:.1f}B")
+            lines.append(f"- Price ${basis_price:,.2f} × shares {shares/1e9:.3f}B = ${implied/1e9:.1f}B ≈ market cap ${mktcap/1e9:.1f}B")
         else:
-            lines.append(f"- ⚠️ INCONSISTENT: price ${price:,.2f} × shares {shares/1e9:.3f}B = ${implied/1e9:.1f}B "
+            lines.append(f"- ⚠️ INCONSISTENT: price ${basis_price:,.2f} × shares {shares/1e9:.3f}B = ${implied/1e9:.1f}B "
                          f"≠ reported market cap ${mktcap/1e9:.1f}B. One of these figures is corrupt — "
                          f"flag any per-share valuation built on them as unreliable.")
+        # In extended hours the live price legitimately differs from the frozen
+        # regular close — state both so the Reflector doesn't read the gap as corrupt.
+        if is_extended and reg_price is not None and abs(price - reg_price) > 1e-9:
+            lines.append(f"- Live (extended-hours) price ${price:,.2f} vs regular-session close ${reg_price:,.2f} "
+                         f"(both real — use ${price:,.2f} as the current price).")
         lo, hi = info.get("fiftyTwoWeekLow"), info.get("fiftyTwoWeekHigh")
         if lo and hi:
             lines.append(f"- 52-week range ${lo:,.2f}–${hi:,.2f}; current price ${price:,.2f}")

@@ -8,6 +8,7 @@ from datetime import datetime, timedelta
 import pytz
 from utils.response import ToolResponse
 from utils.format import attach_money_display
+from .market_utils import resolve_current_price
 
 
 def detect_market(ticker: str, declared: str = "KR") -> str:
@@ -103,29 +104,21 @@ def get_stock_price(ticker: str, market: str = "KR") -> str:
             return ToolResponse.error(f"Failed to fetch price data for {ticker}. Check ticker symbol.")
 
         last = hist.iloc[-1]
-        # Regular-session price. history() and regularMarketPrice both lag during
-        # extended hours — after an earnings print a stock can trade at $67 in the
-        # pre-market while regularMarketPrice stays frozen at the prior $74 close.
-        reg_price = info.get("currentPrice") or info.get("regularMarketPrice")
+        # Canonical current price via the shared resolver — the SINGLE source of the
+        # extended-hours-aware rule that DCF/financials/anchor also route through, so
+        # every tool agrees on one current price. In PRE/POST it returns the live
+        # pre/post-market print (what Google and brokers show); history() and
+        # regularMarketPrice both lag there — the $74-vs-$68 earnings gap.
+        current_price, reg_price, is_extended, market_state = resolve_current_price(
+            info, fallback_close=last['Close'])
         reg_prev_close = (info.get("regularMarketPreviousClose") or info.get("previousClose")
                           or (hist['Close'].iloc[-2] if len(hist) > 1 else None))
 
-        # Extended-hours awareness. In PRE/POST, prefer the actual pre/post-market
-        # print (this is the number Google and brokers show), measured against the
-        # last regular-session close so the % change matches. This is the $74-vs-$68
-        # gap: regularMarketPrice $74.35 is stale, preMarketPrice $67.3 is live.
-        market_state = info.get("marketState")
-        ext_price = None
-        if market_state == "PRE":
-            ext_price = info.get("preMarketPrice")
-        elif market_state in ("POST", "POSTPOST"):
-            ext_price = info.get("postMarketPrice")
-
-        if ext_price is not None:
-            current_price = ext_price
+        # % change is measured against the last regular-session close so it matches
+        # the brokers' quote even when current_price is an extended-hours print.
+        if is_extended:
             prev_close = reg_price if reg_price is not None else reg_prev_close
         else:
-            current_price = reg_price if reg_price is not None else last['Close']
             prev_close = reg_prev_close if reg_prev_close is not None else current_price
 
         # Intraday range/volume from the live snapshot, widened to include the
@@ -164,9 +157,9 @@ def get_stock_price(ticker: str, market: str = "KR") -> str:
         # When reporting an extended-hours price, also carry the frozen regular
         # close so the report can say "프리마켓 $67.3 (정규장 종가 $74.35)" instead of
         # silently presenting a pre-market print as the regular price.
-        if ext_price is not None and reg_price is not None:
+        if is_extended and reg_price is not None:
             us_payload["regular_market_price"] = round(reg_price, 2)
-        us_payload["extended_hours"] = ext_price is not None
+        us_payload["extended_hours"] = is_extended
         attach_money_display(us_payload, market, agg_keys=("market_cap",),
                              per_share_keys=("current_price", "previous_close", "change",
                                              "day_high", "day_low", "52_week_high", "52_week_low",

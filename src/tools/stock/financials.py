@@ -8,6 +8,7 @@ from utils.response import ToolResponse
 from utils.format import attach_money_display
 from config import KRX_ID, KRX_PW
 from .dcf import _reliable_fcf  # shared FCF sanitizer (rejects corrupted info.freeCashflow)
+from .market_utils import resolve_current_price  # canonical extended-hours-aware current price
 
 # pykrx has a bug in its logging call (logging.info(args, kwargs) instead of
 # logging.info("%s %s", args, kwargs)) that prints a noisy 50-line traceback.
@@ -105,7 +106,9 @@ def get_financials(ticker: str) -> str:
         # Analyst consensus — target prices & recommendation. Often the single most
         # decision-relevant block for a valuation question, and previously fetched by
         # no tool at all. recommendation_mean: 1=Strong Buy … 5=Sell.
-        _cur = info.get('currentPrice') or info.get('regularMarketPrice')
+        # Canonical current price (live in PRE/POST) so 상승여력(upside) is measured
+        # against the same price the report header shows, not a frozen close.
+        _cur, _, _, _ = resolve_current_price(info)
         _tgt = info.get('targetMeanPrice')
         analyst = {
             "current_price": _cur,

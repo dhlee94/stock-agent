@@ -16,7 +16,7 @@ import yfinance as yf
 
 from utils.response import ToolResponse
 from utils.format import attach_money_display
-from .market_utils import get_company_name
+from .market_utils import get_company_name, resolve_current_price
 
 
 def _fcf_cagr(stock):
@@ -96,7 +96,10 @@ def get_dcf(ticker: str, market: str = "KR",
 
         fcf, fcf_source = _reliable_fcf(stock, info)
         shares = info.get("sharesOutstanding")
-        price = info.get("currentPrice") or info.get("regularMarketPrice")
+        # Canonical, extended-hours-aware current price — the same number
+        # stock_price reports — so DCF's per-share verdicts (buy_below, in_buy_zone,
+        # upside) never disagree with the price shown in the report header.
+        price, _reg_price, _is_ext, _mkt_state = resolve_current_price(info)
 
         # Graceful decline — DCF is impossible without a sane FCF
         if not fcf or fcf <= 0:
@@ -121,10 +124,14 @@ def get_dcf(ticker: str, market: str = "KR",
         # shares are both off by the same factor they cancel in marketCap and
         # pass this check; that class is caught instead by the 52-week-range
         # sanity check in _market_consistency_anchor (agent_client.py).
+        # Use the regular-session close here, not the (possibly extended-hours)
+        # `price`: marketCap is quoted on the regular-session basis, so dividing it
+        # by a live pre/post-market print would fabricate a share-count divergence.
         shares_note = None
         mktcap = info.get("marketCap")
-        if mktcap and price:
-            implied_shares = mktcap / price
+        basis_price = _reg_price or price
+        if mktcap and basis_price:
+            implied_shares = mktcap / basis_price
             if abs(shares - implied_shares) > 0.05 * implied_shares:
                 shares_note = (
                     f"발행주식수 정합성 경고: 보고된 sharesOutstanding {shares:,.0f}이 "
