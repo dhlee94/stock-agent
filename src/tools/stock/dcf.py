@@ -136,7 +136,13 @@ def get_dcf(ticker: str, market: str = "KR",
                 shares = implied_shares
 
         beta = info.get("beta")
-        beta_used = beta if (beta and beta > 0) else 1.0
+        beta_source = beta if (beta and beta > 0) else 1.0
+        # Blume adjustment: pull the raw (noisy, often stale) beta toward the market
+        # mean of 1.0 — adj = 0.67·raw + 0.33·1.0. A single spurious beta swings WACC
+        # and dominates the whole DCF (e.g. NFLX raw β=1.52 → WACC 11.2% → fair $57;
+        # Blume β=1.35 → WACC 10.4% → fair $64, closer to consensus). Symmetric, so it
+        # tames both too-high and too-low betas across every ticker.
+        beta_used = 0.67 * beta_source + 0.33 * 1.0
         net_debt = (info.get("totalDebt") or 0) - (info.get("totalCash") or 0)
 
         # Growth inputs — compute BOTH the FCF-history CAGR and revenue/earnings
@@ -297,7 +303,9 @@ def get_dcf(ticker: str, market: str = "KR",
                 "discount_basis": "WACC" if total_debt > 0 else "cost of equity (no debt)",
                 "cost_of_equity_pct": round(cost_of_equity * 100, 2),
                 "after_tax_cost_of_debt_pct": round(after_tax_cost_of_debt * 100, 2),
+                "beta_raw": round(beta, 2) if (beta and beta > 0) else None,
                 "beta_used": round(beta_used, 2),
+                "beta_adjustment": "Blume (0.67·raw + 0.33·1.0)",
                 "beta_was_default": not (beta and beta > 0),
                 "risk_free_rate_pct": round(risk_free_rate * 100, 2),
                 "equity_risk_premium_pct": round(equity_risk_premium * 100, 2),
