@@ -712,7 +712,7 @@ class MementoAgent:
         executor_system = load_prompt("executor/system", tips_context=tips_context)
         executor_prompt = [
             {"role": "system", "content": executor_system},
-            {"role": "user", "content": f"Step: {step.get('reason', 'Execute tool')}\nTool: {step.get('tool')}\n\nTool Output: {tool_result[:2000]}"}
+            {"role": "user", "content": f"Step: {step.get('reason', 'Execute tool')}\nTool: {step.get('tool')}\n\nTool Output: {tool_result[:12000]}"}
         ]
         return await self._call_llm(executor_prompt, model=EXECUTOR_MODEL)
 
@@ -745,7 +745,7 @@ class MementoAgent:
         print("\n📈 [Technical Analyst] Interpreting...")
         prompt = [
             {"role": "system", "content": load_prompt("technical_analyst/system")},
-            {"role": "user", "content": f"Analyze:\n\n{tool_result[:3000]}"},
+            {"role": "user", "content": f"Analyze:\n\n{tool_result[:8000]}"},
         ]
         return await self._call_llm(prompt, model=TECHNICAL_ANALYST_MODEL)
 

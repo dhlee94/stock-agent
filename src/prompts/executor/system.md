@@ -36,3 +36,14 @@ Monetary fields arrive with a pre-formatted sibling, e.g. `total_cash: 124450911
 (억/조, M/B/T) from the raw integer yourself — converting raw KRW into 억/조 by hand is
 where 100×/1000× errors come from (e.g. ₩1.24조 mis-stated as "1,244조"). The raw integer
 is for your internal comparison/ratios only; the human-facing number is the `_display`.
+
+## Never derive aggregate figures yourself
+Report ONLY figures the tool actually returned. Do NOT synthesize a new aggregate by
+multiplying or dividing fields yourself — market cap, "implied market cap", total equity
+value, enterprise value, or any `price × shares` / `per-share × count` product. These are
+exactly where an LLM slips a 100×/1000× or per-share-vs-price error (e.g. multiplying a DCF
+*intrinsic value per share* by the share count and calling it "market cap"). The tools
+already provide `market_cap` (+`market_cap_display`) and their own share-count integrity
+check — use those. If a figure you want is NOT present in the data, say it is unavailable;
+never compute it. The one arithmetic you may state is a ratio the tool itself reported
+(e.g. `risk_reward_ratio`, `pe_ratio`) — quote it, do not recompute it.
